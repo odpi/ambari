@@ -18,7 +18,9 @@ limitations under the License.
 
 """
 
-from resource_management import *
+from resource_management.core.resources.system import Execute
+from resource_management.core.exceptions import ComponentIsNotRunning, Fail
+from resource_management.libraries.functions.format import format
 
 
 def mysql_service(daemon_name=None, action='start'): 
@@ -26,7 +28,10 @@ def mysql_service(daemon_name=None, action='start'):
   cmd = ('service', daemon_name, action)
 
   if action == 'status':
-    Execute(status_cmd)
+    try:
+      Execute(status_cmd)
+    except Fail:
+      raise ComponentIsNotRunning()
   elif action == 'stop':
     import params
     Execute(cmd,

@@ -45,11 +45,18 @@ public class Services {
   private static final String YARN_RESOURCEMANAGER_HA_RM_IDS_KEY = "yarn.resourcemanager.ha.rm-ids";
   private static final String YARN_RESOURCEMANAGER_HTTP_HA_PARTIAL_KEY = "yarn.resourcemanager.webapp.address.";
   private static final String YARN_RESOURCEMANAGER_HTTPS_HA_PARTIAL_KEY = "yarn.resourcemanager.webapp.https.address.";
+  private static final String YARN_RESOURCEMANAGER_HOSTNAME_KEY = "yarn.resourcemanager.hostname";
+  private static final String YARN_RESOURCEMANAGER_HOSTNAME_PARTIAL_KEY = YARN_RESOURCEMANAGER_HOSTNAME_KEY + ".";
+  private static final String YARN_RESOURCEMANAGER_DEFAULT_HTTP_PORT = "8088";
+  private static final String YARN_RESOURCEMANAGER_DEFAULT_HTTPS_PORT = "8090";
 
-  private static final String YARN_ATS_URL = "yarn.timeline-server.url";
+
+  private static final String YARN_ATS_URL = "yarn.ats.url";
   private final static String YARN_TIMELINE_WEBAPP_HTTP_ADDRESS_KEY = "yarn.timeline-service.webapp.address";
   private final static String YARN_TIMELINE_WEBAPP_HTTPS_ADDRESS_KEY = "yarn.timeline-service.webapp.https.address";
   public static final String RM_INFO_API_ENDPOINT = "/ws/v1/cluster/info";
+  public static final String TIMELINE_AUTH_TYPE_PROP_KEY = "timeline.http.auth.type";
+  public static final String HADOOP_HTTP_AUTH_TYPE_KEY = "hadoop.http.auth.type";
 
   private final AmbariApi ambariApi;
   private ViewContext context;
@@ -70,7 +77,7 @@ public class Services {
   public String getRMUrl() {
     String url;
 
-    if (ambariApi.isClusterAssociated()) {
+    if (context.getCluster() != null) {
       url = getRMUrlFromClusterConfig();
     } else {
       url = getRmUrlFromCustomConfig();
@@ -80,10 +87,9 @@ public class Services {
 
   private String getRMUrlFromClusterConfig() {
     String url;
-    String protocol;
 
-    String haEnabled = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_RESOURCEMANAGER_HA_ENABLED);
-    String httpPolicy = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_HTTP_POLICY);
+    String haEnabled = getYarnConfig(YARN_RESOURCEMANAGER_HA_ENABLED);
+    String httpPolicy = getYarnConfig(YARN_HTTP_POLICY);
 
     if (!(HTTP_ONLY.equals(httpPolicy) || HTTPS_ONLY.equals(httpPolicy))) {
       LOG.error(String.format("RA030 Unknown value %s of yarn-site/yarn.http.policy. HTTP_ONLY assumed.", httpPolicy));
@@ -94,34 +100,32 @@ public class Services {
       String[] urls = getRMHAUrls(httpPolicy);
       url = getActiveRMUrl(urls);
     } else {
-      if (httpPolicy.equals(HTTPS_ONLY)) {
-        protocol = "https";
-        url = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_RESOURCEMANAGER_HTTPS_KEY);
-      } else {
-        protocol = "http";
-        url = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_RESOURCEMANAGER_HTTP_KEY);
+      url =  (httpPolicy.equals(HTTPS_ONLY)) ? getYarnConfig(YARN_RESOURCEMANAGER_HTTPS_KEY)
+        : getYarnConfig(YARN_RESOURCEMANAGER_HTTP_KEY);
+
+      if (url == null || url.isEmpty()) {
+        url = getYarnConfig(YARN_RESOURCEMANAGER_HOSTNAME_KEY).trim() + ":" + getDefaultRMPort(httpPolicy);
       }
-      url = addProtocolIfMissing(url, protocol);
+
+      url = addProtocolIfMissing(url, getProtocol(httpPolicy));
     }
     return url;
   }
 
   private String[] getRMHAUrls(String httpPolicy) {
-    String haRmIds = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_RESOURCEMANAGER_HA_RM_IDS_KEY);
+    String haRmIds = getYarnConfig(YARN_RESOURCEMANAGER_HA_RM_IDS_KEY);
     String[] ids = haRmIds.split(",");
     int index = 0;
     String[] urls = new String[ids.length];
     for (String id : ids) {
-      String url, protocol;
-      if (HTTPS_ONLY.equals(httpPolicy)) {
-        url = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_RESOURCEMANAGER_HTTPS_HA_PARTIAL_KEY + id);
-        protocol = "https";
-      } else {
-        url = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_RESOURCEMANAGER_HTTP_HA_PARTIAL_KEY + id);
-        protocol = "http";
+      String url = (HTTPS_ONLY.equals(httpPolicy)) ? getYarnConfig(YARN_RESOURCEMANAGER_HTTPS_HA_PARTIAL_KEY + id)
+        : getYarnConfig(YARN_RESOURCEMANAGER_HTTP_HA_PARTIAL_KEY + id);
+
+      if (url == null || url.isEmpty()) {
+        url = getYarnConfig(YARN_RESOURCEMANAGER_HOSTNAME_PARTIAL_KEY + id).trim() + ":" + getDefaultRMPort(httpPolicy);
       }
 
-      urls[index++] = addProtocolIfMissing(url.trim(), protocol);
+      urls[index++] = addProtocolIfMissing(url.trim(), getProtocol(httpPolicy));
     }
     return urls;
   }
@@ -214,8 +218,8 @@ public class Services {
   public String getWebHCatURL() {
     String host = null;
 
-    if (ambariApi.isClusterAssociated()) {
-      List<String> hiveServerHosts = ambariApi.getHostsWithComponent("WEBHCAT_SERVER");
+    if (context.getCluster() != null) {
+      List<String> hiveServerHosts = context.getCluster().getHostsForServiceComponent("HIVE","WEBHCAT_SERVER");
 
       if (!hiveServerHosts.isEmpty()) {
         host = hiveServerHosts.get(0);
@@ -247,7 +251,7 @@ public class Services {
    * yarn-site.xml else it is retrieved from the view configuration.
    */
   public String getTimelineServerUrl() {
-    String url = ambariApi.isClusterAssociated() ? getATSUrlFromCluster() : getATSUrlFromCustom();
+    String url = context.getCluster() != null ? getATSUrlFromCluster() : getATSUrlFromCustom();
     return removeTrailingSlash(url);
   }
 
@@ -265,11 +269,25 @@ public class Services {
     }
   }
 
+  /**
+   * @return Returns the protocol used by YARN daemons, the value is always taken from the
+   * yarn-site.xml.
+   */
+  public String getYARNProtocol() {
+    String httpPolicy = getYarnConfig(YARN_HTTP_POLICY);
+
+    if (!(HTTP_ONLY.equals(httpPolicy) || HTTPS_ONLY.equals(httpPolicy))) {
+      LOG.error(String.format("RA030 Unknown value %s of yarn-site/yarn.http.policy. HTTP_ONLY assumed.", httpPolicy));
+      httpPolicy = HTTP_ONLY;
+    }
+
+    return getProtocol(httpPolicy);
+  }
+
   private String getATSUrlFromCluster() {
     String url;
-    String protocol;
 
-    String httpPolicy = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_HTTP_POLICY);
+    String httpPolicy = getYarnConfig(YARN_HTTP_POLICY);
 
     if (!(HTTP_ONLY.equals(httpPolicy) || HTTPS_ONLY.equals(httpPolicy))) {
       LOG.error(String.format("RA030 Unknown value %s of yarn-site/yarn.http.policy. HTTP_ONLY assumed.", httpPolicy));
@@ -277,13 +295,11 @@ public class Services {
     }
 
     if (httpPolicy.equals(HTTPS_ONLY)) {
-      protocol = "https";
-      url = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_TIMELINE_WEBAPP_HTTPS_ADDRESS_KEY);
+      url = getYarnConfig(YARN_TIMELINE_WEBAPP_HTTPS_ADDRESS_KEY);
     } else {
-      protocol = "http";
-      url = ambariApi.getCluster().getConfigurationValue(YARN_SITE, YARN_TIMELINE_WEBAPP_HTTP_ADDRESS_KEY);
+      url = getYarnConfig(YARN_TIMELINE_WEBAPP_HTTP_ADDRESS_KEY);
     }
-    url = addProtocolIfMissing(url, protocol);
+    url = addProtocolIfMissing(url, getProtocol(httpPolicy));
 
     return url;
   }
@@ -316,5 +332,35 @@ public class Services {
    */
   public static boolean hasProtocol(String url) {
     return url.matches("^[^:]+://.*$");
+  }
+
+  private String getProtocol(String yarnHttpPolicyConfig) {
+    return HTTPS_ONLY.equals(yarnHttpPolicyConfig) ? "https" : "http";
+  }
+
+  private String getYarnConfig(String key) {
+    return context.getCluster().getConfigurationValue(YARN_SITE, key);
+  }
+
+  /**
+   * @param yarnHttpPolicy - The HTTP Policy configured in YARN site file
+   * @return The default resource manager port depending on the http policy
+   */
+  private String getDefaultRMPort(String yarnHttpPolicy) {
+    return (HTTPS_ONLY.equals(yarnHttpPolicy)) ? YARN_RESOURCEMANAGER_DEFAULT_HTTPS_PORT : YARN_RESOURCEMANAGER_DEFAULT_HTTP_PORT;
+  }
+
+  /**
+   * @return The authentication type for RM. Check: https://hadoop.apache.org/docs/r1.2.1/HttpAuthentication.html
+   */
+  public String getHadoopHttpWebAuthType() {
+    return context.getProperties().get(HADOOP_HTTP_AUTH_TYPE_KEY);
+  }
+
+  /**
+   * @return Authentication used for the timeline server HTTP endpoint. Check: https://hadoop.apache.org/docs/r2.7.1/hadoop-yarn/hadoop-yarn-site/TimelineServer.html
+   */
+  public String getTimelineServerAuthType() {
+    return context.getProperties().get(TIMELINE_AUTH_TYPE_PROP_KEY);
   }
 }

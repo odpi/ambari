@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,9 +26,13 @@ import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.JoinColumn;
 import javax.persistence.JoinColumns;
+import javax.persistence.JoinTable;
+import javax.persistence.ManyToMany;
 import javax.persistence.ManyToOne;
+import javax.persistence.OneToOne;
 import javax.persistence.Table;
 import javax.persistence.TableGenerator;
+import java.util.Collection;
 
 /**
  * Represents an admin permission.
@@ -38,25 +42,28 @@ import javax.persistence.TableGenerator;
 @TableGenerator(name = "permission_id_generator",
     table = "ambari_sequences", pkColumnName = "sequence_name", valueColumnName = "sequence_value"
     , pkColumnValue = "permission_id_seq"
-    , initialValue = 5
+    , initialValue = 100
 )
 public class PermissionEntity {
 
   /**
    * Admin permission id constants.
    */
-  public static final int AMBARI_ADMIN_PERMISSION    = 1;
-  public static final int CLUSTER_READ_PERMISSION    = 2;
-  public static final int CLUSTER_OPERATE_PERMISSION = 3;
-  public static final int VIEW_USE_PERMISSION        = 4;
+  public static final int AMBARI_ADMINISTRATOR_PERMISSION = 1;
+  public static final int CLUSTER_USER_PERMISSION = 2;
+  public static final int CLUSTER_ADMINISTRATOR_PERMISSION = 3;
+  public static final int VIEW_USER_PERMISSION = 4;
 
   /**
    * Admin permission name constants.
    */
-  public static final String AMBARI_ADMIN_PERMISSION_NAME    = "AMBARI.ADMIN";
-  public static final String CLUSTER_READ_PERMISSION_NAME    = "CLUSTER.READ";
-  public static final String CLUSTER_OPERATE_PERMISSION_NAME = "CLUSTER.OPERATE";
-  public static final String VIEW_USE_PERMISSION_NAME        = "VIEW.USE";
+  public static final String AMBARI_ADMINISTRATOR_PERMISSION_NAME = "AMBARI.ADMINISTRATOR";
+  public static final String CLUSTER_ADMINISTRATOR_PERMISSION_NAME = "CLUSTER.ADMINISTRATOR";
+  public static final String CLUSTER_OPERATOR_PERMISSION_NAME = "CLUSTER.OPERATOR";
+  public static final String SERVICE_ADMINISTRATOR_PERMISSION_NAME = "SERVICE.ADMINISTRATOR";
+  public static final String SERVICE_OPERATOR_PERMISSION_NAME = "SERVICE.OPERATOR";
+  public static final String CLUSTER_USER_PERMISSION_NAME = "CLUSTER.USER";
+  public static final String VIEW_USER_PERMISSION_NAME = "VIEW.USER";
 
   /**
    * The permission id.
@@ -73,12 +80,46 @@ public class PermissionEntity {
   @Column(name = "permission_name")
   private String permissionName;
 
+  /**
+   * The permission's (descriptive) label
+   */
+  @Column(name = "permission_label")
+  private String permissionLabel;
+
+  /**
+   * The permission's (admin)principal reference
+   */
+  @OneToOne
+  @JoinColumns({
+      @JoinColumn(name = "principal_id", referencedColumnName = "principal_id", nullable = false),
+  })
+  private PrincipalEntity principal;
+
   @ManyToOne
   @JoinColumns({
       @JoinColumn(name = "resource_type_id", referencedColumnName = "resource_type_id", nullable = false),
   })
   private ResourceTypeEntity resourceType;
 
+  /**
+   * The set of authorizations related to this permission.
+   *
+   * This value declares the granular details for which operations this PermissionEntity grants
+   * access.
+   */
+  @ManyToMany
+  @JoinTable(
+      name = "permission_roleauthorization",
+      joinColumns = {@JoinColumn(name = "permission_id")},
+      inverseJoinColumns = {@JoinColumn(name = "authorization_id")}
+  )
+  private Collection<RoleAuthorizationEntity> authorizations;
+
+  /**
+   * The permission's explicit sort order
+   */
+  @Column(name = "sort_order", nullable = false)
+  private Integer sortOrder = 1;
 
   // ----- PermissionEntity ---------------------------------------------------
 
@@ -119,6 +160,42 @@ public class PermissionEntity {
   }
 
   /**
+   * Get the permission's label.
+   *
+   * @return the permission's label
+   */
+  public String getPermissionLabel() {
+    return permissionLabel;
+  }
+
+  /**
+   * Set the permission's label.
+   *
+   * @param permissionLabel  the permission's label
+   */
+  public void setPermissionLabel(String permissionLabel) {
+    this.permissionLabel = permissionLabel;
+  }
+
+  /**
+   * Get the principal entity.
+   *
+   * @return the principal entity
+   */
+  public PrincipalEntity getPrincipal() {
+    return principal;
+  }
+
+  /**
+   * Set the principal entity.
+   *
+   * @param principal  the principal entity
+   */
+  public void setPrincipal(PrincipalEntity principal) {
+    this.principal = principal;
+  }
+
+  /**
    * Get the resource type entity.
    *
    * @return  the resource type entity
@@ -136,6 +213,44 @@ public class PermissionEntity {
     this.resourceType = resourceType;
   }
 
+  /**
+   * Gets the collection of granular authorizations for this PermissionEntity
+   *
+   * @return a collection of granular authorizations
+   */
+  public Collection<RoleAuthorizationEntity> getAuthorizations() {
+    return authorizations;
+  }
+
+  /**
+   * Sets the collection of granular authorizations for this PermissionEntity
+   *
+   * @param authorizations a collection of granular authorizations
+   */
+  public void setAuthorizations(Collection<RoleAuthorizationEntity> authorizations) {
+    this.authorizations = authorizations;
+  }
+
+  /**
+   * Gets the explicit sort order value for this PermissionEntity
+   * <p/>
+   * This value is used to help explicitly order permission entities. For example, order from most
+   * permissive to least permissive.
+   *
+   * @return the explict sorting order value
+   */
+  public Integer getSortOrder() {
+    return sortOrder;
+  }
+
+  /**
+   * Sets the explicit sort order value for this PermissionEntity
+   *
+   * @param sortOrder a sorting order value
+   */
+  public void setSortOrder(Integer sortOrder) {
+    this.sortOrder = sortOrder;
+  }
 
   // ----- Object overrides --------------------------------------------------
 
@@ -148,14 +263,20 @@ public class PermissionEntity {
 
     return !(id != null ? !id.equals(that.id) : that.id != null) &&
         !(permissionName != null ? !permissionName.equals(that.permissionName) : that.permissionName != null) &&
-        !(resourceType != null ? !resourceType.equals(that.resourceType) : that.resourceType != null);
+        !(permissionLabel != null ? !permissionLabel.equals(that.permissionLabel) : that.permissionLabel != null) &&
+        !(resourceType != null ? !resourceType.equals(that.resourceType) : that.resourceType != null) &&
+        !(sortOrder != null ? !sortOrder.equals(that.sortOrder) : that.sortOrder != null) &&
+        !(authorizations != null ? !authorizations.equals(that.authorizations) : that.authorizations != null);
   }
 
   @Override
   public int hashCode() {
     int result = id != null ? id.hashCode() : 0;
     result = 31 * result + (permissionName != null ? permissionName.hashCode() : 0);
+    result = 31 * result + (permissionLabel != null ? permissionLabel.hashCode() : 0);
     result = 31 * result + (resourceType != null ? resourceType.hashCode() : 0);
+    result = 31 * result + (sortOrder != null ? sortOrder.hashCode() : 0);
+    result = 31 * result + (authorizations != null ? authorizations.hashCode() : 0);
     return result;
   }
 }

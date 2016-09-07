@@ -18,19 +18,21 @@
 
 package org.apache.ambari.server.orm.dao;
 
-import com.google.inject.Inject;
-import com.google.inject.Provider;
-import com.google.inject.Singleton;
-import com.google.inject.persist.Transactional;
+import java.util.List;
+
+import javax.persistence.EntityManager;
+import javax.persistence.NoResultException;
+import javax.persistence.TypedQuery;
+
 import org.apache.ambari.server.orm.RequiresSession;
 import org.apache.ambari.server.orm.entities.HostComponentDesiredStateEntity;
 import org.apache.ambari.server.orm.entities.HostComponentDesiredStateEntityPK;
 import org.apache.ambari.server.orm.entities.HostEntity;
 
-import javax.persistence.EntityManager;
-import javax.persistence.NoResultException;
-import javax.persistence.TypedQuery;
-import java.util.List;
+import com.google.inject.Inject;
+import com.google.inject.Provider;
+import com.google.inject.Singleton;
+import com.google.inject.persist.Transactional;
 
 @Singleton
 public class HostComponentDesiredStateDAO {
@@ -93,7 +95,12 @@ public class HostComponentDesiredStateDAO {
 
   @Transactional
   public void remove(HostComponentDesiredStateEntity hostComponentDesiredStateEntity) {
-    HostEntity hostEntity = hostComponentDesiredStateEntity.getHostEntity();
+    HostEntity hostEntity = hostDAO.findById(hostComponentDesiredStateEntity.getHostId());
+
+    if (hostEntity == null) {
+      throw new IllegalStateException(String.format("Missing hostEntity for host id %1d",
+              hostComponentDesiredStateEntity.getHostId()));
+    }
 
     entityManagerProvider.get().remove(merge(hostComponentDesiredStateEntity));
 
@@ -106,4 +113,5 @@ public class HostComponentDesiredStateDAO {
   public void removeByPK(HostComponentDesiredStateEntityPK primaryKey) {
     remove(findByPK(primaryKey));
   }
+
 }

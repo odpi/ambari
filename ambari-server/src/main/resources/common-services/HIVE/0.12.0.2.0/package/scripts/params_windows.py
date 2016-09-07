@@ -18,17 +18,18 @@ limitations under the License.
 
 """
 
-from resource_management import *
+from resource_management.libraries.functions.version import format_stack_version
+from resource_management.libraries.script.script import Script
 from status_params import *
 
 # server configurations
 config = Script.get_config()
 
 # This is expected to be of the form #.#.#.#
-stack_version_unformatted = str(config['hostLevelParams']['stack_version'])
-hdp_stack_version = format_hdp_stack_version(stack_version_unformatted)
+stack_version_unformatted = config['hostLevelParams']['stack_version']
+stack_version_formatted = format_stack_version(stack_version_unformatted)
 
-hdp_root = None
+stack_root = None
 hive_conf_dir = None
 hive_home = None
 hive_lib_dir = None
@@ -39,7 +40,7 @@ hcat_config_dir = None
 hive_bin = None
 
 try:
-  hdp_root = os.path.abspath(os.path.join(os.environ["HADOOP_HOME"],".."))
+  stack_root = os.path.abspath(os.path.join(os.environ["HADOOP_HOME"],".."))
   hive_conf_dir = os.environ["HIVE_CONF_DIR"]
   hive_home = os.environ["HIVE_HOME"]
   hive_lib_dir = os.environ["HIVE_LIB_DIR"]
@@ -60,8 +61,6 @@ hcat_user = hadoop_user
 hive_metastore_db_type = config['configurations']['hive-env']['hive_database_type']
 hive_metastore_user_name = config['configurations']['hive-site']['javax.jdo.option.ConnectionUserName']
 hive_metastore_user_passwd = config['configurations']['hive-site']['javax.jdo.option.ConnectionPassword']
-
-hive_exclude_packages = []
 
 hive_execution_engine = config["configurations"]["hive-site"]["hive.execution.engine"]
 

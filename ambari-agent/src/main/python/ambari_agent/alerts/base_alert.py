@@ -29,6 +29,9 @@ logger = logging.getLogger()
 AlertUri = namedtuple('AlertUri', 'uri is_ssl_enabled')
 
 class BaseAlert(object):
+  # will force a kinit even if klist says there are valid tickets (4 hour default)
+  _DEFAULT_KINIT_TIMEOUT = 14400000
+
   RESULT_OK = "OK"
   RESULT_WARNING = "WARNING"
   RESULT_CRITICAL = "CRITICAL"
@@ -38,12 +41,12 @@ class BaseAlert(object):
   HA_NAMESERVICE_PARAM = "{{ha-nameservice}}"
   HA_ALIAS_PARAM = "{{alias}}"
 
-  def __init__(self, alert_meta, alert_source_meta):
+  def __init__(self, alert_meta, alert_source_meta, config):
     self.alert_meta = alert_meta
     self.alert_source_meta = alert_source_meta
     self.cluster_name = ''
     self.host_name = ''
-    
+    self.config = config
     
   def interval(self):
     """ gets the defined interval this check should run """
@@ -109,15 +112,6 @@ class BaseAlert(object):
       res = self._collect()
       result_state = res[0]
       reporting_state = result_state.lower()
-
-      # if the alert reports that it should be SKIPPED, then skip it
-      # this is useful for cases where the alert might run on multiple hosts
-      # but only 1 host should report the data
-      if result_state == BaseAlert.RESULT_SKIPPED:
-        logger.debug('[Alert][{0}] Skipping UUID {1}.'.format(self.get_name(),
-          self.get_uuid()))
-
-        return
 
       # it's possible that the alert definition doesn't have reporting; safely
       # check for it and fallback to default text if it doesn't exist
@@ -401,22 +395,29 @@ class BaseAlert(object):
     ha_http_pattern = alert_uri_lookup_keys.ha_http_pattern
     ha_https_pattern = alert_uri_lookup_keys.ha_https_pattern
 
-    # at least one of these keys is needed
-    if ha_nameservice is None and ha_alias_key is None:
+    # if HA alias key is not defined then it's not HA environment
+    if ha_alias_key is None:
       return None
 
-    # convert dfs.ha.namenodes.{{ha-nameservice}} into
-    # dfs.ha.namenodes.c1ha
-    if ha_nameservice is not None:
+    if alert_uri_lookup_keys.ha_nameservice is not None:
+      # if there is a HA nameservice defined, but it can not be evaluated then it's not HA environment
+      if ha_nameservice is None:
+        return None
+      
+      # convert dfs.ha.namenodes.{{ha-nameservice}} into dfs.ha.namenodes.c1ha
       ha_alias_key = ha_alias_key.replace(self.HA_NAMESERVICE_PARAM, ha_nameservice)
-
-    # grab the alias value which should be like nn1, nn2
-    ha_nameservice_alias = self._get_configuration_value(ha_alias_key)
-    if ha_nameservice_alias is None:
-      logger.warning("[Alert][{0}] HA nameservice value is present but there are no aliases for {1}".format(
-        self.get_name(), ha_alias_key))
-
-      return None
+      ha_nameservice_alias = self._get_configuration_value(ha_alias_key)
+      
+      if ha_nameservice_alias is None:
+        logger.warning("[Alert][{0}] HA nameservice value is present but there are no aliases for {1}".format(
+          self.get_name(), ha_alias_key))
+        return None
+    else:
+      ha_nameservice_alias = self._get_configuration_value(ha_alias_key)
+      
+      # if HA nameservice is not defined then the fact that the HA alias_key could not be evaluated shows that it's not HA environment
+      if ha_nameservice_alias is None:
+        return None
 
     # determine which pattern to use (http or https)
     ha_pattern = ha_http_pattern

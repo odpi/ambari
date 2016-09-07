@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 
-var Ember = require('ember');
 var App = require('app');
 
 require('models/host');
@@ -50,28 +49,21 @@ describe('App.hostsMapper', function () {
     });
     it("Host not in the model", function() {
       var host = Em.Object.create({
-        hostName: 'host2',
-        isRequested: true
+        hostName: 'host2'
       });
-      this.mock.returns([host]);
-      mapper.setMetrics(data);
-      expect(host.get('loadOne')).to.be.undefined;
-    });
-    it("Host not in the filter", function() {
-      var host = Em.Object.create({
-        hostName: 'host1',
-        isRequested: false
-      });
-      this.mock.returns([host]);
+      var mockedModel = [host];
+      mockedModel.content = mockedModel;
+      this.mock.returns(mockedModel);
       mapper.setMetrics(data);
       expect(host.get('loadOne')).to.be.undefined;
     });
     it("Host should have updated metrics", function() {
       var host = Em.Object.create({
-        hostName: 'host1',
-        isRequested: true
+        hostName: 'host1'
       });
-      this.mock.returns([host]);
+      var mockedModel = [host];
+      mockedModel.content = mockedModel;
+      this.mock.returns(mockedModel);
       mapper.setMetrics(data);
       expect(host.get('loadOne')).to.equal(1);
     });

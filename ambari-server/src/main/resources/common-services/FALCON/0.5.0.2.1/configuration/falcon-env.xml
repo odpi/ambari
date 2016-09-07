@@ -1,3 +1,4 @@
+<?xml version="1.0"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <!--
 /**
@@ -18,18 +19,28 @@
  * limitations under the License.
  */
 -->
-<configuration>
+<configuration supports_adding_forbidden="true">
   <property>
     <name>falcon_user</name>
+    <display-name>Falcon User</display-name>
     <value>falcon</value>
     <property-type>USER</property-type>
     <description>Falcon user.</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>falcon_port</name>
     <value>15000</value>
     <display-name>Falcon server port</display-name>
     <description>Port the Falcon Server listens on.</description>
+    <value-attributes>
+      <type>int</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>falcon_log_dir</name>
@@ -37,9 +48,10 @@
     <display-name>Falcon Log Dir</display-name>
     <description>Falcon log directory.</description>
     <value-attributes>
-      <editable-only-at-install>true</editable-only-at-install>
+      <type>directory</type>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>falcon_pid_dir</name>
@@ -47,21 +59,21 @@
     <display-name>Falcon PID Dir</display-name>
     <description>Falcon pid-file directory.</description>
     <value-attributes>
+      <type>directory</type>
       <editable-only-at-install>true</editable-only-at-install>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>falcon_local_dir</name>
     <value>/hadoop/falcon</value>
     <display-name>Falcon data directory</display-name>
     <description>Directory where Falcon data, such as activemq data, is stored.</description>
-  </property>
-  <property>
-    <name>falcon_store_uri</name>
-    <value>file:///hadoop/falcon/store</value>
-    <display-name>Falcon store URI</display-name>
-    <description>Directory where entity definitions are stored.</description>
+    <value-attributes>
+      <type>directory</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <!--embeddedmq properties-->
   <property>
@@ -69,8 +81,10 @@
     <value>/hadoop/falcon/embeddedmq/data</value>
     <description>Directory in which embeddedmq data is stored.</description>
     <value-attributes>
+      <type>directory</type>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>falcon.embeddedmq</name>
@@ -79,6 +93,7 @@
     <value-attributes>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>falcon.emeddedmq.port</name>
@@ -87,11 +102,25 @@
     <value-attributes>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-  
+  <property>
+    <name>falcon_apps_hdfs_dir</name>
+    <value>/apps/falcon</value>
+    <description>Falcon Apps HDFS Dir</description>
+    <display-name>Falcon Apps HDFS Dir</display-name>
+    <property-type>NOT_MANAGED_HDFS_PATH</property-type>
+    <value-attributes>
+      <read-only>true</read-only>
+      <overridable>false</overridable>
+      <visible>false</visible>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
   <!-- falcon-env.sh -->
   <property>
     <name>content</name>
+    <display-name>falcon-env template</display-name>
     <description>This is the jinja template for falcon-env.sh file</description>
     <value>
 # The java implementation to use. If JAVA_HOME is not found we expect java and jar to be in path
@@ -132,11 +161,21 @@ export FALCON_DATA_DIR={{falcon_embeddedmq_data}}
 
 # Where do you want to expand the war file. By Default it is in /server/webapp dir under the base install dir.
 #export FALCON_EXPANDED_WEBAPP_DIR=
+
+{% if falcon_atlas_support %}
+# Add the Atlas Falcon hook to the Falcon classpath
+export FALCON_EXTRA_CLASS_PATH={{atlas_hook_cp}}${FALCON_EXTRA_CLASS_PATH}
+{% endif %}
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>supports_hive_dr</name>
     <value>false</value>
     <description>Enable support of Falcon Hive DR</description>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

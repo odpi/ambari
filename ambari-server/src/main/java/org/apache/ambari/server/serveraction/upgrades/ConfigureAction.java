@@ -45,9 +45,16 @@ import org.apache.ambari.server.state.ConfigMergeHelper.ThreeWayValue;
 import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.PropertyInfo;
 import org.apache.ambari.server.state.StackId;
+import org.apache.ambari.server.state.stack.upgrade.ConfigUpgradeChangeDefinition.ConfigurationKeyValue;
+import org.apache.ambari.server.state.stack.upgrade.ConfigUpgradeChangeDefinition.Masked;
+import org.apache.ambari.server.state.stack.upgrade.ConfigUpgradeChangeDefinition.Replace;
+import org.apache.ambari.server.state.stack.upgrade.ConfigUpgradeChangeDefinition.Transfer;
 import org.apache.ambari.server.state.stack.upgrade.ConfigureTask;
-import org.apache.ambari.server.state.stack.upgrade.ConfigureTask.ConfigurationKeyValue;
+import org.apache.ambari.server.state.stack.upgrade.PropertyKeyState;
+import org.apache.ambari.server.state.stack.upgrade.TransferOperation;
 import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -75,6 +82,8 @@ import com.google.inject.Provider;
  * </ul>
  */
 public class ConfigureAction extends AbstractServerAction {
+
+  private static Logger LOG = LoggerFactory.getLogger(ConfigureAction.class);
 
   /**
    * Used to lookup the cluster.
@@ -171,32 +180,36 @@ public class ConfigureAction extends AbstractServerAction {
     }
 
     String clusterName = commandParameters.get("clusterName");
+    Cluster cluster = m_clusters.getCluster(clusterName);
 
     // such as hdfs-site or hbase-env
     String configType = commandParameters.get(ConfigureTask.PARAMETER_CONFIG_TYPE);
 
     // extract transfers
-    List<ConfigureTask.ConfigurationKeyValue> keyValuePairs = Collections.emptyList();
+    List<ConfigurationKeyValue> keyValuePairs = Collections.emptyList();
     String keyValuePairJson = commandParameters.get(ConfigureTask.PARAMETER_KEY_VALUE_PAIRS);
     if (null != keyValuePairJson) {
       keyValuePairs = m_gson.fromJson(
-          keyValuePairJson, new TypeToken<List<ConfigureTask.ConfigurationKeyValue>>(){}.getType());
+          keyValuePairJson, new TypeToken<List<ConfigurationKeyValue>>(){}.getType());
+      keyValuePairs = getAllowedSets(cluster, configType, keyValuePairs);
     }
 
     // extract transfers
-    List<ConfigureTask.Transfer> transfers = Collections.emptyList();
+    List<Transfer> transfers = Collections.emptyList();
     String transferJson = commandParameters.get(ConfigureTask.PARAMETER_TRANSFERS);
     if (null != transferJson) {
       transfers = m_gson.fromJson(
-        transferJson, new TypeToken<List<ConfigureTask.Transfer>>(){}.getType());
+        transferJson, new TypeToken<List<Transfer>>(){}.getType());
+      transfers = getAllowedTransfers(cluster, configType, transfers);
     }
 
     // extract replacements
-    List<ConfigureTask.Replace> replacements = Collections.emptyList();
+    List<Replace> replacements = Collections.emptyList();
     String replaceJson = commandParameters.get(ConfigureTask.PARAMETER_REPLACEMENTS);
     if (null != replaceJson) {
       replacements = m_gson.fromJson(
-          replaceJson, new TypeToken<List<ConfigureTask.Replace>>(){}.getType());
+          replaceJson, new TypeToken<List<Replace>>(){}.getType());
+      replacements = getAllowedReplacements(cluster, configType, replacements);
     }
 
     // if there is nothing to do, then skip the task
@@ -222,11 +235,15 @@ public class ConfigureAction extends AbstractServerAction {
       return createCommandReport(0, HostRoleStatus.FAILED, "{}", "", message);
     }
 
-    Cluster cluster = m_clusters.getCluster(clusterName);
-
     Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
     DesiredConfig desiredConfig = desiredConfigs.get(configType);
+    if (desiredConfig == null) {
+      throw new AmbariException("Could not find desired config type with name " + configType);
+    }
     Config config = cluster.getConfig(configType, desiredConfig.getTag());
+    if (config == null) {
+      throw new AmbariException("Could not find config type with name " + configType);
+    }
 
     StackId currentStack = cluster.getCurrentStackVersion();
     StackId targetStack = cluster.getDesiredStackVersion();
@@ -240,7 +257,7 @@ public class ConfigureAction extends AbstractServerAction {
 
     // !!! do transfers first before setting defined values
     StringBuilder outputBuffer = new StringBuilder(250);
-    for (ConfigureTask.Transfer transfer : transfers) {
+    for (Transfer transfer : transfers) {
       switch (transfer.operation) {
         case COPY:
           String valueToCopy = null;
@@ -323,11 +340,13 @@ public class ConfigureAction extends AbstractServerAction {
             outputBuffer.append(MessageFormat.format("Deleted all keys from {0}\n", configType));
 
             for (String keeper : transfer.keepKeys) {
-              newValues.put(keeper, base.get(keeper));
+              if (base.containsKey(keeper) && base.get(keeper) != null) {
+                newValues.put(keeper, base.get(keeper));
 
-              // append standard output
-              outputBuffer.append(MessageFormat.format("Preserved {0}/{1} after delete\n",
+                // append standard output
+                outputBuffer.append(MessageFormat.format("Preserved {0}/{1} after delete\n",
                   configType, keeper));
+              }
             }
 
             // !!! with preserved edits, find the values that are different from
@@ -400,10 +419,11 @@ public class ConfigureAction extends AbstractServerAction {
     }
 
     // !!! string replacements happen only on the new values.
-    for (ConfigureTask.Replace replacement : replacements) {
-      if (newValues.containsKey(replacement.key)) {
-        String toReplace = newValues.get(replacement.key);
-
+    for (Replace replacement : replacements) {
+      // the key might exist but might be null, so we need to check this
+      // condition when replacing a part of the value
+      String toReplace = newValues.get(replacement.key);
+      if (StringUtils.isNotBlank(toReplace)) {
         if (!toReplace.contains(replacement.find)) {
           outputBuffer.append(MessageFormat.format("String \"{0}\" was not found in {1}/{2}\n",
               replacement.find, configType, replacement.key));
@@ -412,15 +432,19 @@ public class ConfigureAction extends AbstractServerAction {
 
           newValues.put(replacement.key, replaced);
 
-          outputBuffer.append(MessageFormat.format("Replaced {0}/{1} containing \"{2}\" with \"{3}\"\n",
-            configType, replacement.key, replacement.find, replacement.replaceWith));
+          outputBuffer.append(
+              MessageFormat.format("Replaced {0}/{1} containing \"{2}\" with \"{3}\"", configType,
+                  replacement.key, replacement.find, replacement.replaceWith));
+
+          outputBuffer.append(System.lineSeparator());
         }
       } else {
-        outputBuffer.append(MessageFormat.format("Property \"{0}\" was not found in {1} to replace content\n",
-            replacement.key, configType));
+        outputBuffer.append(MessageFormat.format(
+            "Skipping replacement for {0}/{1} because it does not exist or is empty.",
+            configType, replacement.key));
+        outputBuffer.append(System.lineSeparator());
       }
     }
-
 
     // !!! check to see if we're going to a new stack and double check the
     // configs are for the target.  Then simply update the new properties instead
@@ -534,11 +558,142 @@ public class ConfigureAction extends AbstractServerAction {
     return result;
   }
 
-  private static String mask(ConfigureTask.Masked mask, String value) {
+  private static String mask(Masked mask, String value) {
     if (mask.mask) {
       return StringUtils.repeat("*", value.length());
     }
     return value;
   }
 
+  private List<Replace> getAllowedReplacements(Cluster cluster, String configType, List<Replace> replacements){
+    List<Replace> allowedReplacements= new ArrayList<>();
+
+    for(Replace replacement: replacements){
+      if(isOperationAllowed(cluster, configType, replacement.key,
+          replacement.ifKey, replacement.ifType, replacement.ifValue, replacement.ifKeyState))
+        allowedReplacements.add(replacement);
+    }
+
+    return allowedReplacements;
+  }
+
+  private List<ConfigurationKeyValue> getAllowedSets(Cluster cluster, String configType, List<ConfigurationKeyValue> sets){
+    List<ConfigurationKeyValue> allowedSets = new ArrayList<>();
+
+    for(ConfigurationKeyValue configurationKeyValue: sets){
+      if(isOperationAllowed(cluster, configType, configurationKeyValue.key,
+          configurationKeyValue.ifKey, configurationKeyValue.ifType, configurationKeyValue.ifValue, configurationKeyValue.ifKeyState))
+        allowedSets.add(configurationKeyValue);
+    }
+
+    return allowedSets;
+  }
+
+  private List<Transfer> getAllowedTransfers(Cluster cluster, String configType, List<Transfer> transfers){
+    List<Transfer> allowedTransfers = new ArrayList<>();
+    for (Transfer transfer : transfers) {
+      String key = "";
+      if(transfer.operation == TransferOperation.DELETE)
+        key = transfer.deleteKey;
+      else
+        key = transfer.fromKey;
+
+      if(isOperationAllowed(cluster, configType, key,
+          transfer.ifKey, transfer.ifType, transfer.ifValue, transfer.ifKeyState))
+        allowedTransfers.add(transfer);
+    }
+
+    return allowedTransfers;
+  }
+
+  private boolean isOperationAllowed(Cluster cluster, String configType, String targetPropertyKey,
+      String ifKey, String ifType, String ifValue, PropertyKeyState ifKeyState){
+    boolean isAllowed = true;
+
+    boolean ifKeyIsNotBlank = StringUtils.isNotBlank(ifKey);
+    boolean ifTypeIsNotBlank = StringUtils.isNotBlank(ifType);
+
+    if (ifKeyIsNotBlank && ifTypeIsNotBlank && ifKeyState == PropertyKeyState.ABSENT) {
+      boolean keyPresent = getDesiredConfigurationKeyPresence(cluster, ifType, ifKey);
+      if (keyPresent) {
+        LOG.info("Skipping property operation for {}/{} as the key {} for {} is present",
+          configType, targetPropertyKey, ifKey, ifType);
+        isAllowed = false;
+      }
+    } else if (ifKeyIsNotBlank && ifTypeIsNotBlank && ifValue == null &&
+      ifKeyState == PropertyKeyState.PRESENT) {
+      boolean keyPresent = getDesiredConfigurationKeyPresence(cluster, ifType, ifKey);
+      if (!keyPresent) {
+        LOG.info("Skipping property operation for {}/{} as the key {} for {} is not present",
+          configType, targetPropertyKey, ifKey, ifType);
+        isAllowed = false;
+      }
+    } else if (ifKeyIsNotBlank && ifTypeIsNotBlank && ifValue != null) {
+
+      String ifConfigType = ifType;
+      String checkValue = getDesiredConfigurationValue(cluster, ifConfigType, ifKey);
+      if (!ifValue.toLowerCase().equals(StringUtils.lowerCase(checkValue))) {
+        // skip adding
+        LOG.info("Skipping property operation for {}/{} as the value {} for {}/{} is not equal to {}",
+                 configType, targetPropertyKey, checkValue, ifConfigType, ifKey, ifValue);
+        isAllowed = false;
+      }
+    }
+
+    return isAllowed;
+  }
+
+  /**
+   * Gets the property presence state
+   * @param cluster
+   *          the cluster (not {@code null}).
+   * @param configType
+   *          the configuration type (ie hdfs-site) (not {@code null}).
+   * @param propertyKey
+   *          the key to retrieve (not {@code null}).
+   * @return {@code true} if property key exists or {@code false} if not.
+   */
+  private boolean getDesiredConfigurationKeyPresence(Cluster cluster,
+      String configType, String propertyKey) {
+
+    Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
+    DesiredConfig desiredConfig = desiredConfigs.get(configType);
+    if (null == desiredConfig) {
+      return false;
+    }
+
+    Config config = cluster.getConfig(configType, desiredConfig.getTag());
+    if (null == config) {
+      return false;
+    }
+    return config.getProperties().containsKey(propertyKey);
+  }
+
+  /**
+   * Gets the value of the specified cluster property.
+   *
+   * @param cluster
+   *          the cluster (not {@code null}).
+   * @param configType
+   *          the configuration type (ie hdfs-site) (not {@code null}).
+   * @param propertyKey
+   *          the key to retrieve (not {@code null}).
+   * @return the value or {@code null} if it does not exist.
+   */
+  private String getDesiredConfigurationValue(Cluster cluster,
+      String configType, String propertyKey) {
+
+    Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
+    DesiredConfig desiredConfig = desiredConfigs.get(configType);
+    if (null == desiredConfig) {
+      return null;
+    }
+
+    Config config = cluster.getConfig(configType, desiredConfig.getTag());
+    if (null == config) {
+      return null;
+    }
+
+    return config.getProperties().get(propertyKey);
+  }
 }

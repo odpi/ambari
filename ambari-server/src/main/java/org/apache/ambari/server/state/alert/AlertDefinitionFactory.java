@@ -187,6 +187,7 @@ public class AlertDefinitionFactory {
     definition.setScope(entity.getScope());
     definition.setServiceName(entity.getServiceName());
     definition.setLabel(entity.getLabel());
+    definition.setHelpURL(entity.getHelpURL());
     definition.setDescription(entity.getDescription());
     definition.setUuid(entity.getHash());
 
@@ -252,6 +253,7 @@ public class AlertDefinitionFactory {
     entity.setLabel(definition.getLabel());
     entity.setDescription(definition.getDescription());
     entity.setScheduleInterval(definition.getInterval());
+    entity.setHelpURL(definition.getHelpURL());
     entity.setServiceName(definition.getServiceName());
 
     Scope scope = definition.getScope();
@@ -308,6 +310,10 @@ public class AlertDefinitionFactory {
           clazz = MetricSource.class;
           break;
         }
+        case AMS:{
+          clazz = AmsSource.class;
+          break;
+        }
         case PORT:{
           clazz = PortSource.class;
           break;
@@ -326,6 +332,10 @@ public class AlertDefinitionFactory {
         }
         case WEB: {
           clazz = WebSource.class;
+          break;
+        }
+        case RECOVERY: {
+          clazz = RecoverySource.class;
           break;
         }
         case SERVER:{

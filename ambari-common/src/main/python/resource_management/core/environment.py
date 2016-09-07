@@ -23,9 +23,11 @@ Ambari Agent
 __all__ = ["Environment"]
 
 import os
+import types
 import logging
 import shutil
 import time
+import threading
 from datetime import datetime
 
 from resource_management.core import shell
@@ -34,12 +36,14 @@ from resource_management.core.providers import find_provider
 from resource_management.core.utils import AttributeDictionary
 from resource_management.core.system import System
 from resource_management.core.logger import Logger
+from threading import Thread, local
 
+_local_data = local()
+_instance_name = 'instance'
 
 class Environment(object):
-  _instances = []
 
-  def __init__(self, basedir=None, tmp_dir=None, test_mode=False, logging_level=logging.INFO):
+  def __init__(self, basedir=None, tmp_dir=None, test_mode=False, logger=None, logging_level=logging.INFO):
     """
     @param basedir: basedir/files, basedir/templates are the places where templates / static files
     are looked up
@@ -47,7 +51,9 @@ class Environment(object):
     """   
     self.reset(basedir, test_mode, tmp_dir)
     
-    if not Logger.logger:
+    if logger:
+      Logger.logger = logger
+    else:
       Logger.initialize_logger(__name__, logging_level)
 
   def reset(self, basedir, test_mode, tmp_dir):
@@ -118,6 +124,9 @@ class Environment(object):
     provider_action()
 
   def _check_condition(self, cond):
+    if type(cond) == types.BooleanType:
+      return cond
+
     if hasattr(cond, '__call__'):
       return cond()
 
@@ -128,7 +137,6 @@ class Environment(object):
     raise Exception("Unknown condition type %r" % cond) 
     
   def run(self):
-    with self:
       # Run resource actions
       while self.resource_list:
         resource = self.resource_list.pop(0)
@@ -139,12 +147,12 @@ class Environment(object):
 
         if resource.not_if is not None and self._check_condition(
           resource.not_if):
-          Logger.info("Skipping %s due to not_if" % resource)
+          Logger.info("Skipping {0} due to not_if".format(resource))
           continue
 
         if resource.only_if is not None and not self._check_condition(
           resource.only_if):
-          Logger.info("Skipping %s due to only_if" % resource)
+          Logger.info("Skipping {0} due to only_if".format(resource))
           continue
 
         for action in resource.action:
@@ -154,7 +162,7 @@ class Environment(object):
             try:
               self.run_action(resource, action)
             except Exception as ex:
-              Logger.info("Skipping failure of %s due to ignore_failures. Failure reason: %s" % (resource, str(ex)))
+              Logger.info("Skipping failure of {0} due to ignore_failures. Failure reason: {1}".format(resource, ex.message))
               pass
 
       # Run delayed actions
@@ -163,8 +171,16 @@ class Environment(object):
         self.run_action(resource, action)
 
   @classmethod
+  def has_instance(cls):
+    instance = getattr(_local_data, _instance_name, None)
+    return not instance is None
+  
+  @classmethod
   def get_instance(cls):
-    return cls._instances[-1]
+    instance = getattr(_local_data, _instance_name, None)
+    if instance is None:
+      raise Exception("No Environment present for retrieving for thread %s" % threading.current_thread())
+    return instance
   
   @classmethod
   def get_instance_copy(cls):
@@ -178,11 +194,17 @@ class Environment(object):
     return new_instance
 
   def __enter__(self):
-    self.__class__._instances.append(self)
+    instance = getattr(_local_data, _instance_name, None)
+    if instance is not None:
+      raise Exception("Trying to enter to Environment from thread %s second time" % threading.current_thread())
+    setattr(_local_data, 'instance', self)
     return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
-    self.__class__._instances.pop()
+    instance = getattr(_local_data, _instance_name, None)
+    if instance is None:
+      raise Exception("Trying to exit from Environment without enter before for thread %s" % threading.current_thread())
+    setattr(_local_data, 'instance', None)
     return False
 
   def __getstate__(self):

@@ -23,6 +23,7 @@ import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.replay;
 import static org.easymock.EasyMock.verify;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -31,11 +32,13 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import javax.persistence.EntityManager;
-
-import junit.framework.Assert;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.actionmanager.RequestFactory;
@@ -48,7 +51,9 @@ import org.apache.ambari.server.controller.spi.ClusterController;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
+import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
 import org.apache.ambari.server.security.SecurityHelper;
+import org.apache.ambari.server.security.TestAuthenticationFactory;
 import org.apache.ambari.server.stack.StackManagerFactory;
 import org.apache.ambari.server.state.cluster.ClusterFactory;
 import org.apache.ambari.server.state.cluster.ClustersImpl;
@@ -56,11 +61,15 @@ import org.apache.ambari.server.state.configgroup.ConfigGroup;
 import org.apache.ambari.server.state.configgroup.ConfigGroupFactory;
 import org.apache.ambari.server.state.host.HostFactory;
 import org.apache.ambari.server.state.stack.OsFamily;
+import org.apache.ambari.server.utils.SynchronousThreadPoolExecutor;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.runners.Enclosed;
 import org.junit.runner.RunWith;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
@@ -68,31 +77,35 @@ import com.google.inject.Injector;
 import com.google.inject.persist.PersistService;
 import com.google.inject.persist.Transactional;
 
+import junit.framework.Assert;
 
 
 @RunWith(Enclosed.class)
 public class ConfigHelperTest {
   public static class RunWithInMemoryDefaultTestModule {
+    private final static Logger LOG = LoggerFactory.getLogger(ConfigHelperTest.class);
     private Clusters clusters;
-    private AmbariMetaInfo metaInfo;
     private Injector injector;
     private String clusterName;
     private Cluster cluster;
     private ConfigGroupFactory configGroupFactory;
-    private ConfigFactory configFactory;
     private ConfigHelper configHelper;
     private AmbariManagementController managementController;
+    private AmbariMetaInfo metaInfo;
 
     @Before
     public void setup() throws Exception {
+      // Set the authenticated user
+      // TODO: remove this or replace the authenticated user to test authorization rules
+      SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator("admin"));
+
       injector = Guice.createInjector(new InMemoryDefaultTestModule());
       injector.getInstance(GuiceJpaInitializer.class);
       clusters = injector.getInstance(Clusters.class);
-      metaInfo = injector.getInstance(AmbariMetaInfo.class);
-      configFactory = injector.getInstance(ConfigFactory.class);
       configGroupFactory = injector.getInstance(ConfigGroupFactory.class);
       configHelper = injector.getInstance(ConfigHelper.class);
       managementController = injector.getInstance(AmbariManagementController.class);
+      metaInfo = injector.getInstance(AmbariMetaInfo.class);
 
       clusterName = "c1";
       clusters.addCluster(clusterName, new StackId("HDP-2.0.6"));
@@ -169,16 +182,39 @@ public class ConfigHelperTest {
       managementController.updateClusters(new HashSet<ClusterRequest>() {{
         add(clusterRequest3);
       }}, null);
+
+      // oozie-site
+      ConfigurationRequest cr4 = new ConfigurationRequest();
+      cr4.setClusterName(clusterName);
+      cr4.setType("oozie-site");
+      cr4.setVersionTag("version1");
+      cr4.setProperties(new HashMap<String, String>() {{
+        put("oozie.authentication.type", "simple");
+        put("oozie.service.HadoopAccessorService.kerberos.enabled", "false");
+      }});
+      cr4.setPropertiesAttributes(null);
+
+      final ClusterRequest clusterRequest4 =
+          new ClusterRequest(cluster.getClusterId(), clusterName,
+              cluster.getDesiredStackVersion().getStackVersion(), null);
+
+      clusterRequest4.setDesiredConfig(Collections.singletonList(cr4));
+      managementController.updateClusters(new HashSet<ClusterRequest>() {{
+        add(clusterRequest4);
+      }}, null);
     }
 
     @After
     public void tearDown() {
       injector.getInstance(PersistService.class).stop();
+
+      // Clear the authenticated user
+      SecurityContextHolder.getContext().setAuthentication(null);
     }
 
     @Transactional
-    private Long addConfigGroup(String name, String tag, List<String> hosts,
-                                List<Config> configs) throws AmbariException {
+    Long addConfigGroup(String name, String tag, List<String> hosts,
+                        List<Config> configs) throws AmbariException {
 
       Map<Long, Host> hostMap = new HashMap<Long, Host>();
       Map<String, Config> configMap = new HashMap<String, Config>();
@@ -196,11 +232,72 @@ public class ConfigHelperTest {
 
       ConfigGroup configGroup = configGroupFactory.createNew(cluster, name,
           tag, "", configMap, hostMap);
+      LOG.info("Config group created with tag " + tag);
+      configGroup.setTag(tag);
 
       configGroup.persist();
       cluster.addConfigGroup(configGroup);
 
       return configGroup.getId();
+    }
+
+    void applyConfig(Map<String, String> properties, String configType, String configTag) throws Exception {
+      ConfigurationRequest cr = new ConfigurationRequest();
+      cr.setClusterName(clusterName);
+      cr.setType(configType);
+      cr.setVersionTag(configTag);
+      cr.setProperties(properties);
+
+      final ClusterRequest clusterRequest =
+          new ClusterRequest(cluster.getClusterId(), clusterName,
+              cluster.getDesiredStackVersion().getStackVersion(), null);
+
+      clusterRequest.setDesiredConfig(Collections.singletonList(cr));
+      managementController.updateClusters(new HashSet<ClusterRequest>() {{
+        add(clusterRequest);
+      }}, null);
+    }
+
+    @Test
+    public void testProcessHiddenAttribute() throws Exception {
+      StackInfo stackInfo = metaInfo.getStack("HDP", "2.0.5");
+      Map<String, Map<String, Map<String, String>>> configAttributes = new HashMap<String, Map<String, Map<String, String>>>();
+      configAttributes.put("hive-site", stackInfo.getDefaultConfigAttributesForConfigType("hive-site"));
+
+      Map<String, Map<String, String>> originalConfig_hiveClient = createHiveConfig();
+
+      Map<String, Map<String, String>> expectedConfig_hiveClient = new HashMap<String, Map<String, String>>() {{
+        put("hive-site", new HashMap<String, String>() {{
+          put("javax.jdo.option.ConnectionDriverName", "oracle");
+          put("hive.metastore.warehouse.dir", "/tmp");
+        }});
+      }};
+
+      ConfigHelper.processHiddenAttribute(originalConfig_hiveClient, configAttributes, "HIVE_CLIENT", false);
+      Assert.assertEquals(expectedConfig_hiveClient, originalConfig_hiveClient);
+
+      Map<String, Map<String, String>> originalConfig_hiveServer = createHiveConfig();
+      Map<String, Map<String, String>> expectedConfig_hiveServer = createHiveConfig();
+
+      ConfigHelper.processHiddenAttribute(originalConfig_hiveServer, configAttributes, "HIVE_SERVER", false);
+      Assert.assertEquals(expectedConfig_hiveServer, originalConfig_hiveServer);
+
+      Map<String, Map<String, String>> originalConfig_hiveServer1 = createHiveConfig();
+      Map<String, Map<String, String>> expectedConfig_hiveServer1 = expectedConfig_hiveClient;
+
+      // config download removes hidden properties without respecting of component
+      ConfigHelper.processHiddenAttribute(originalConfig_hiveServer1, configAttributes, "HIVE_SERVER", true);
+      Assert.assertEquals(expectedConfig_hiveServer1, originalConfig_hiveServer1);
+    }
+
+    private Map<String, Map<String, String>> createHiveConfig() {
+      return new HashMap<String, Map<String, String>>() {{
+        put("hive-site", new HashMap<String, String>() {{
+          put("javax.jdo.option.ConnectionDriverName", "oracle");
+          put("javax.jdo.option.ConnectionPassword", "1");
+          put("hive.metastore.warehouse.dir", "/tmp");
+        }});
+      }};
     }
 
     @Test
@@ -309,7 +406,7 @@ public class ConfigHelperTest {
               configHelper.getEffectiveDesiredTags(cluster, "h1"));
 
       Assert.assertNotNull(effectiveAttributes);
-      Assert.assertEquals(3, effectiveAttributes.size());
+      Assert.assertEquals(4, effectiveAttributes.size());
 
       Assert.assertTrue(effectiveAttributes.containsKey("global"));
       Map<String, Map<String, String>> globalAttrs = effectiveAttributes.get("global");
@@ -563,7 +660,7 @@ public class ConfigHelperTest {
       Assert.assertEquals(1, propertiesAttributes.size());
       Assert.assertTrue(propertiesAttributes.containsKey("attribute1"));
       // Config tag before update
-      Assert.assertEquals("version1",currentConfig.getTag());
+      Assert.assertEquals("version1", currentConfig.getTag());
       // Properties before update
       Assert.assertEquals("30", properties.get("fs.trash.interval"));
       // Property and attribute exist
@@ -600,6 +697,61 @@ public class ConfigHelperTest {
     }
 
     @Test
+    public void testUpdateConfigTypeNoPropertyAttributes() throws Exception {
+      Config currentConfig = cluster.getDesiredConfigByType("oozie-site");
+      Map<String, String> properties = currentConfig.getProperties();
+      // Config tag before update
+      Assert.assertEquals("version1", currentConfig.getTag());
+      // Properties before update
+      Assert.assertEquals("simple", properties.get("oozie.authentication.type"));
+      Assert.assertEquals("false", properties.get("oozie.service.HadoopAccessorService.kerberos.enabled"));
+
+      Map<String, String> updates = new HashMap<String, String>();
+      updates.put("oozie.authentication.type", "kerberos");
+      updates.put("oozie.service.HadoopAccessorService.kerberos.enabled", "true");
+
+      configHelper.updateConfigType(cluster, managementController, "oozie-site", updates, null, "admin", "Test " +
+          "note");
+
+      Config updatedConfig = cluster.getDesiredConfigByType("oozie-site");
+      // Config tag updated
+      Assert.assertFalse("version1".equals(updatedConfig.getTag()));
+      // Property added
+      properties = updatedConfig.getProperties();
+      Assert.assertTrue(properties.containsKey("oozie.authentication.type"));
+      Assert.assertEquals("kerberos", properties.get("oozie.authentication.type"));
+      // Property updated
+      Assert.assertTrue(properties.containsKey("oozie.service.HadoopAccessorService.kerberos.enabled"));
+      Assert.assertEquals("true", properties.get("oozie.service.HadoopAccessorService.kerberos.enabled"));
+    }
+
+    @Test
+    public void testUpdateConfigTypeRemovals() throws Exception {
+      Config currentConfig = cluster.getDesiredConfigByType("oozie-site");
+      Map<String, String> properties = currentConfig.getProperties();
+      // Config tag before update
+      Assert.assertEquals("version1", currentConfig.getTag());
+      // Properties before update
+      Assert.assertEquals("simple", properties.get("oozie.authentication.type"));
+      Assert.assertEquals("false", properties.get("oozie.service.HadoopAccessorService.kerberos.enabled"));
+
+      List<String> removals = new ArrayList<String>();
+      removals.add("oozie.authentication.type");
+
+      configHelper.updateConfigType(cluster, managementController, "oozie-site", null, removals, "admin", "Test note");
+
+      Config updatedConfig = cluster.getDesiredConfigByType("oozie-site");
+      // Config tag updated
+      Assert.assertFalse("version1".equals(updatedConfig.getTag()));
+      // Property removed
+      properties = updatedConfig.getProperties();
+      Assert.assertFalse(properties.containsKey("oozie.authentication.type"));
+      // Property unchanged
+      Assert.assertTrue(properties.containsKey("oozie.service.HadoopAccessorService.kerberos.enabled"));
+      Assert.assertEquals("false", properties.get("oozie.service.HadoopAccessorService.kerberos.enabled"));
+    }
+
+    @Test
     public void testCalculateIsStaleConfigs() throws Exception {
 
       Map<String, HostConfig> schReturn = new HashMap<String, HostConfig>();
@@ -607,31 +759,62 @@ public class ConfigHelperTest {
       // Put a different version to check for change
       hc.setDefaultVersionTag("version2");
       schReturn.put("flume-conf", hc);
+
       // set up mocks
       ServiceComponentHost sch = createNiceMock(ServiceComponentHost.class);
       // set up expectations
-      expect(sch.getActualConfigs()).andReturn(schReturn).times(3);
-      expect(sch.getHostName()).andReturn("h1").times(6);
-      expect(sch.getClusterId()).andReturn(1l).times(3);
-      expect(sch.getServiceName()).andReturn("FLUME").times(3);
-      expect(sch.getServiceComponentName()).andReturn("FLUME_HANDLER").times(3);
+      expect(sch.getActualConfigs()).andReturn(schReturn).times(6);
+      expect(sch.getHostName()).andReturn("h1").anyTimes();
+      expect(sch.getClusterId()).andReturn(1l).anyTimes();
+      expect(sch.getServiceName()).andReturn("FLUME").anyTimes();
+      expect(sch.getServiceComponentName()).andReturn("FLUME_HANDLER").anyTimes();
       replay(sch);
       // Cluster level config changes
-      Assert.assertTrue(configHelper.isStaleConfigs(sch));
+      Assert.assertTrue(configHelper.isStaleConfigs(sch, null));
+
       HostConfig hc2 = new HostConfig();
       hc2.setDefaultVersionTag("version1");
       schReturn.put("flume-conf", hc2);
       // invalidate cache to test new sch
-      configHelper.invalidateStaleConfigsCache();
       // Cluster level same configs
-      Assert.assertFalse(configHelper.isStaleConfigs(sch));
+      Assert.assertFalse(configHelper.isStaleConfigs(sch, null));
+
       // Cluster level same configs but group specific configs for host have been updated
       List<String> hosts = new ArrayList<String>();
       hosts.add("h1");
       List<Config> configs = new ArrayList<Config>();
-      configs.add(new ConfigImpl("flume-conf"));
+      ConfigImpl configImpl = new ConfigImpl("flume-conf");
+      configImpl.setTag("FLUME1");
+      configs.add(configImpl);
       addConfigGroup("configGroup1", "FLUME", hosts, configs);
-      Assert.assertTrue(configHelper.isStaleConfigs(sch));
+
+      // config group added for host - expect staleness
+      Assert.assertTrue(configHelper.isStaleConfigs(sch, null));
+
+      HostConfig hc3 = new HostConfig();
+      hc3.setDefaultVersionTag("version1");
+      hc3.getConfigGroupOverrides().put(1l, "FLUME1");
+      schReturn.put("flume-conf", hc3);
+
+      // version1 and FLUME1 - stale=false
+      Assert.assertFalse(configHelper.isStaleConfigs(sch, null));
+
+      HostConfig hc4 = new HostConfig();
+      hc4.setDefaultVersionTag("version1");
+      hc4.getConfigGroupOverrides().put(1l, "FLUME2");
+      schReturn.put("flume-conf", hc4);
+
+      // version1 and FLUME2 - stale=true
+      Assert.assertTrue(configHelper.isStaleConfigs(sch, null));
+
+      HostConfig hc5 = new HostConfig();
+      hc5.setDefaultVersionTag("version3");
+      hc5.getConfigGroupOverrides().put(1l, "FLUME1");
+      schReturn.put("flume-conf", hc5);
+
+      // version3 and FLUME1 - stale=true
+      Assert.assertTrue(configHelper.isStaleConfigs(sch, null));
+
       verify(sch);
     }
   }
@@ -661,9 +844,19 @@ public class ConfigHelperTest {
           bind(Clusters.class).toInstance(createNiceMock(ClustersImpl.class));
           bind(ClusterController.class).toInstance(clusterController);
           bind(StackManagerFactory.class).toInstance(createNiceMock(StackManagerFactory.class));
+          bind(HostRoleCommandDAO.class).toInstance(createNiceMock(HostRoleCommandDAO.class));
         }
       });
 
+      // Set the authenticated user
+      // TODO: remove this or replace the authenticated user to test authorization rules
+      SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator("admin"));
+    }
+
+    @After
+    public void teardown() {
+      // Clear the authenticated user
+      SecurityContextHolder.getContext().setAuthentication(null);
     }
 
     @Test

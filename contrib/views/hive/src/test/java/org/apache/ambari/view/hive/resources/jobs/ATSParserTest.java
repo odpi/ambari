@@ -18,7 +18,11 @@
 
 package org.apache.ambari.view.hive.resources.jobs;
 
-import org.apache.ambari.view.hive.resources.jobs.atsJobs.*;
+import org.apache.ambari.view.hive.resources.jobs.atsJobs.ATSParser;
+import org.apache.ambari.view.hive.resources.jobs.atsJobs.ATSRequestsDelegate;
+import org.apache.ambari.view.hive.resources.jobs.atsJobs.HiveQueryId;
+import org.apache.ambari.view.hive.resources.jobs.atsJobs.IATSParser;
+import org.apache.ambari.view.hive.resources.jobs.atsJobs.TezDagId;
 import org.apache.commons.codec.binary.Base64;
 import org.json.simple.JSONObject;
 import org.json.simple.JSONValue;
@@ -39,21 +43,28 @@ public class ATSParserTest {
   public void testGetHiveJobsList() throws Exception {
     IATSParser jobLoader = new ATSParser(new ATSRequestsDelegateStub());
 
-    List<HiveQueryId> jobs = jobLoader.getHiveQueryIdsList("hive");
+    List<HiveQueryId> jobs = jobLoader.getHiveQueryIdsForUser("hive");
 
     Assert.assertEquals(1, jobs.size());
 
     HiveQueryId job = jobs.get(0);
     Assert.assertEquals("hive_20150209144848_c3a5a07b-c3b6-4f57-a6d5-3dadecdd6fd0", job.entity);
-    Assert.assertEquals(1423493324L, job.starttime);
+    Assert.assertEquals(1423493324355L, job.starttime);
     Assert.assertEquals("hive", job.user);
-    Assert.assertEquals(1423493342L - 1423493324L, job.duration);
+    Assert.assertEquals((1423493342843L - 1423493324355L) / 1000L, job.duration);
     Assert.assertEquals("select count(*) from z", job.query);
 
     Assert.assertEquals(1, job.dagNames.size());
     Assert.assertEquals("hive_20150209144848_c3a5a07b-c3b6-4f57-a6d5-3dadecdd6fd0:4", job.dagNames.get(0));
 
     Assert.assertEquals(2, job.stages.size());
+    Assert.assertTrue(HiveQueryId.ATS_15_RESPONSE_VERSION > job.version);
+
+    jobLoader = new ATSParser(new ATSV15RequestsDelegateStub());
+    List<HiveQueryId> jobsv2 = jobLoader.getHiveQueryIdsForUser("hive");
+    Assert.assertEquals(1, jobsv2.size());
+    HiveQueryId jobv2 = jobsv2.get(0);
+    Assert.assertTrue(HiveQueryId.ATS_15_RESPONSE_VERSION <= jobv2.version);
   }
 
   @Test
@@ -67,7 +78,61 @@ public class ATSParserTest {
     Assert.assertEquals("SUCCEEDED", tezDag.status);
   }
 
+  @Test
+  public void testGetTezDagByEntity() throws Exception {
+    IATSParser jobLoader = new ATSParser(new ATSV15RequestsDelegateStub());
+
+    TezDagId tezDag = jobLoader.getTezDAGByEntity("hive_20150209144848_c3a5a07b-c3b6-4f57-a6d5-3dadecdd6fd0:4");
+
+    Assert.assertEquals("dag_1423156117563_0005_2", tezDag.entity);
+    Assert.assertEquals("application_1423156117563_0005", tezDag.applicationId);
+    Assert.assertEquals("SUCCEEDED", tezDag.status);
+  }
+
+  protected static class ATSV15RequestsDelegateStub extends ATSRequestsDelegateStub {
+    /**
+     * This returns the version field that the ATS v1.5 returns.
+     */
+    @Override
+    public JSONObject hiveQueryIdsForUser(String username) {
+      return (JSONObject) JSONValue.parse(
+        "{ \"entities\" : [ { \"domain\" : \"DEFAULT\",\n" +
+          "        \"entity\" : \"hive_20150209144848_c3a5a07b-c3b6-4f57-a6d5-3dadecdd6fd0\",\n" +
+          "        \"entitytype\" : \"HIVE_QUERY_ID\",\n" +
+          "        \"events\" : [ { \"eventinfo\" : {  },\n" +
+          "              \"eventtype\" : \"QUERY_COMPLETED\",\n" +
+          "              \"timestamp\" : 1423493342843\n" +
+          "            },\n" +
+          "            { \"eventinfo\" : {  },\n" +
+          "              \"eventtype\" : \"QUERY_SUBMITTED\",\n" +
+          "              \"timestamp\" : 1423493324355\n" +
+          "            }\n" +
+          "          ],\n" +
+          "        \"otherinfo\" : { \"MAPRED\" : false,\n" +
+          "            \"QUERY\" : \"{\\\"queryText\\\":\\\"select count(*) from z\\\",\\\"queryPlan\\\":{\\\"STAGE PLANS\\\":{\\\"Stage-1\\\":{\\\"Tez\\\":{\\\"DagName:\\\":\\\"hive_20150209144848_c3a5a07b-c3b6-4f57-a6d5-3dadecdd6fd0:4\\\",\\\"Vertices:\\\":{\\\"Reducer 2\\\":{\\\"Reduce Operator Tree:\\\":{\\\"Group By Operator\\\":{\\\"mode:\\\":\\\"mergepartial\\\",\\\"aggregations:\\\":[\\\"count(VALUE._col0)\\\"],\\\"outputColumnNames:\\\":[\\\"_col0\\\"],\\\"children\\\":{\\\"Select Operator\\\":{\\\"expressions:\\\":\\\"_col0 (type: bigint)\\\",\\\"outputColumnNames:\\\":[\\\"_col0\\\"],\\\"children\\\":{\\\"File Output Operator\\\":{\\\"Statistics:\\\":\\\"Num rows: 1 Data size: 8 Basic stats: COMPLETE Column stats: COMPLETE\\\",\\\"compressed:\\\":\\\"false\\\",\\\"table:\\\":{\\\"serde:\\\":\\\"org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe\\\",\\\"input format:\\\":\\\"org.apache.hadoop.mapred.TextInputFormat\\\",\\\"output format:\\\":\\\"org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat\\\"}}},\\\"Statistics:\\\":\\\"Num rows: 1 Data size: 8 Basic stats: COMPLETE Column stats: COMPLETE\\\"}},\\\"Statistics:\\\":\\\"Num rows: 1 Data size: 8 Basic stats: COMPLETE Column stats: COMPLETE\\\"}}},\\\"Map 1\\\":{\\\"Map Operator Tree:\\\":[{\\\"TableScan\\\":{\\\"alias:\\\":\\\"z\\\",\\\"children\\\":{\\\"Select Operator\\\":{\\\"children\\\":{\\\"Group By Operator\\\":{\\\"mode:\\\":\\\"hash\\\",\\\"aggregations:\\\":[\\\"count()\\\"],\\\"outputColumnNames:\\\":[\\\"_col0\\\"],\\\"children\\\":{\\\"Reduce Output Operator\\\":{\\\"sort order:\\\":\\\"\\\",\\\"value expressions:\\\":\\\"_col0 (type: bigint)\\\",\\\"Statistics:\\\":\\\"Num rows: 1 Data size: 8 Basic stats: COMPLETE Column stats: COMPLETE\\\"}},\\\"Statistics:\\\":\\\"Num rows: 1 Data size: 8 Basic stats: COMPLETE Column stats: COMPLETE\\\"}},\\\"Statistics:\\\":\\\"Num rows: 0 Data size: 40 Basic stats: PARTIAL Column stats: COMPLETE\\\"}},\\\"Statistics:\\\":\\\"Num rows: 0 Data size: 40 Basic stats: PARTIAL Column stats: COMPLETE\\\"}}]}},\\\"Edges:\\\":{\\\"Reducer 2\\\":{\\\"parent\\\":\\\"Map 1\\\",\\\"type\\\":\\\"SIMPLE_EDGE\\\"}}}},\\\"Stage-0\\\":{\\\"Fetch Operator\\\":{\\\"limit:\\\":\\\"-1\\\",\\\"Processor Tree:\\\":{\\\"ListSink\\\":{}}}}},\\\"STAGE DEPENDENCIES\\\":{\\\"Stage-1\\\":{\\\"ROOT STAGE\\\":\\\"TRUE\\\"},\\\"Stage-0\\\":{\\\"DEPENDENT STAGES\\\":\\\"Stage-1\\\"}}}}\",\n" +
+          "            \"STATUS\" : true,\n" +
+          "            \"TEZ\" : true\n" +
+          "            \"VERSION\" : 2\n" +
+          "          },\n" +
+          "        \"primaryfilters\" : { \"user\" : [ \"hive\" ] },\n" +
+          "        \"relatedentities\" : {  },\n" +
+          "        \"starttime\" : 1423493324355\n" +
+          "      } ] }"
+      );
+    }
+  }
+
   protected static class ATSRequestsDelegateStub implements ATSRequestsDelegate {
+
+
+    public JSONObject hiveQueryIdsForUserByTime(String username, long startTime, long endTime) {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public JSONObject hiveQueryEntityByEntityId(String hiveEntityId) {
+      return null;
+    }
 
     @Override
     public String hiveQueryIdDirectUrl(String entity) {
@@ -95,7 +160,7 @@ public class ATSParserTest {
     }
 
     @Override
-    public JSONObject hiveQueryIdList(String username) {
+    public JSONObject hiveQueryIdsForUser(String username) {
       return (JSONObject) JSONValue.parse(
           "{ \"entities\" : [ { \"domain\" : \"DEFAULT\",\n" +
               "        \"entity\" : \"hive_20150209144848_c3a5a07b-c3b6-4f57-a6d5-3dadecdd6fd0\",\n" +
@@ -437,6 +502,11 @@ public class ATSParserTest {
     @Override
     public JSONObject tezVerticesListForDAG(String dagId) {
       return null;
+    }
+
+    @Override
+    public JSONObject tezDagByEntity(String entity) {
+      return tezDagByName(entity);
     }
   }
 }

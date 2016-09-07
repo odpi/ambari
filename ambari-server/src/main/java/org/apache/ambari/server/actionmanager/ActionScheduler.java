@@ -31,7 +31,10 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import javax.persistence.EntityManager;
+
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.ClusterNotFoundException;
 import org.apache.ambari.server.Role;
 import org.apache.ambari.server.RoleCommand;
 import org.apache.ambari.server.ServiceComponentHostNotFoundException;
@@ -44,11 +47,16 @@ import org.apache.ambari.server.agent.ExecutionCommand;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.HostsMap;
 import org.apache.ambari.server.events.ActionFinalReportReceivedEvent;
+import org.apache.ambari.server.events.jpa.EntityManagerCacheInvalidationEvent;
 import org.apache.ambari.server.events.publishers.AmbariEventPublisher;
+import org.apache.ambari.server.events.publishers.JPAEventPublisher;
+import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
+import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
 import org.apache.ambari.server.orm.entities.RequestEntity;
 import org.apache.ambari.server.serveraction.ServerActionExecutor;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.ConfigHelper;
 import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.HostState;
 import org.apache.ambari.server.state.Service;
@@ -66,7 +74,12 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
+import com.google.common.eventbus.Subscribe;
 import com.google.common.reflect.TypeToken;
+import com.google.inject.Inject;
+import com.google.inject.Provider;
+import com.google.inject.Singleton;
+import com.google.inject.name.Named;
 import com.google.inject.persist.UnitOfWork;
 
 
@@ -75,6 +88,7 @@ import com.google.inject.persist.UnitOfWork;
  * Action schedule frequently looks at action database and determines if
  * there is an action that can be scheduled.
  */
+@Singleton
 class ActionScheduler implements Runnable {
 
   private static Logger LOG = LoggerFactory.getLogger(ActionScheduler.class);
@@ -82,21 +96,56 @@ class ActionScheduler implements Runnable {
   public static final String FAILED_TASK_ABORT_REASONING =
           "Server considered task failed and automatically aborted it";
 
+  @Inject
+  private UnitOfWork unitOfWork;
+
+  @Inject
+  private ActionQueue actionQueue;
+
+  @Inject
+  private Clusters clusters;
+
+  @Inject
+  private AmbariEventPublisher ambariEventPublisher;
+
+  @Inject
+  private HostsMap hostsMap;
+
+  @Inject
+  private Configuration configuration;
+
+  @Inject
+  Provider<EntityManager> entityManagerProvider;
+
+  /**
+   * Used for turning instances of {@link HostRoleCommandEntity} into
+   * {@link HostRoleCommand}.
+   */
+  @Inject
+  private HostRoleCommandFactory hostRoleCommandFactory;
+
+  /**
+   * Used for retrieving {@link HostRoleCommandEntity} instances which need to
+   * be cancelled.
+   */
+  @Inject
+  private HostRoleCommandDAO hostRoleCommandDAO;
+
+  /**
+   * The current thread's reference to the {@link EntityManager}.
+   */
+  volatile EntityManager threadEntityManager;
+
   private final long actionTimeout;
   private final long sleepTime;
-  private final UnitOfWork unitOfWork;
   private volatile boolean shouldRun = true;
   private Thread schedulerThread = null;
   private final ActionDBAccessor db;
-  private final short maxAttempts;
-  private final ActionQueue actionQueue;
-  private final Clusters clusters;
-  private final AmbariEventPublisher ambariEventPublisher;
+  private short maxAttempts = 2;
+  private final JPAEventPublisher jpaPublisher;
   private boolean taskTimeoutAdjustment = true;
-  private final HostsMap hostsMap;
   private final Object wakeupSyncObject = new Object();
   private final ServerActionExecutor serverActionExecutor;
-  private final Configuration configuration;
 
   private final Set<Long> requestsInProgress = new HashSet<Long>();
 
@@ -126,31 +175,87 @@ class ActionScheduler implements Runnable {
   private Cache<String, Map<String, String>> commandParamsStageCache;
   private Cache<String, Map<String, String>> hostParamsStageCache;
 
-  public ActionScheduler(long sleepTimeMilliSec, long actionTimeoutMilliSec,
-                         ActionDBAccessor db, ActionQueue actionQueue, Clusters fsmObject,
-                         int maxAttempts, HostsMap hostsMap,
-                         UnitOfWork unitOfWork, AmbariEventPublisher ambariEventPublisher,
-                         Configuration configuration) {
+  /**
+   * Guice-injected Constructor.
+   *
+   * @param sleepTime
+   * @param actionTimeout
+   * @param db
+   * @param jpaPublisher
+   */
+  @Inject
+  public ActionScheduler(@Named("schedulerSleeptime") long sleepTime,
+      @Named("actionTimeout") long actionTimeout, ActionDBAccessor db,
+      JPAEventPublisher jpaPublisher) {
+
+    this.sleepTime = sleepTime;
+    this.actionTimeout = actionTimeout;
+    this.db = db;
+
+    this.jpaPublisher = jpaPublisher;
+    this.jpaPublisher.register(this);
+
+    serverActionExecutor = new ServerActionExecutor(db, sleepTime);
+
+    initializeCaches();
+  }
+
+  /**
+   * Unit Test Constructor.
+   *
+   * @param sleepTimeMilliSec
+   * @param actionTimeoutMilliSec
+   * @param db
+   * @param actionQueue
+   * @param fsmObject
+   * @param maxAttempts
+   * @param hostsMap
+   * @param unitOfWork
+   * @param ambariEventPublisher
+   * @param configuration
+   * @param hostRoleCommandDAO
+   * @param hostRoleCommandFactory
+   */
+  protected ActionScheduler(long sleepTimeMilliSec, long actionTimeoutMilliSec, ActionDBAccessor db,
+      ActionQueue actionQueue, Clusters fsmObject, int maxAttempts, HostsMap hostsMap,
+      UnitOfWork unitOfWork, AmbariEventPublisher ambariEventPublisher,
+      Configuration configuration, Provider<EntityManager> entityManagerProvider,
+      HostRoleCommandDAO hostRoleCommandDAO, HostRoleCommandFactory hostRoleCommandFactory) {
+
     sleepTime = sleepTimeMilliSec;
-    this.hostsMap = hostsMap;
     actionTimeout = actionTimeoutMilliSec;
     this.db = db;
     this.actionQueue = actionQueue;
     clusters = fsmObject;
-    this.ambariEventPublisher = ambariEventPublisher;
     this.maxAttempts = (short) maxAttempts;
-    serverActionExecutor = new ServerActionExecutor(db, sleepTimeMilliSec);
+    this.hostsMap = hostsMap;
     this.unitOfWork = unitOfWork;
+    this.ambariEventPublisher = ambariEventPublisher;
+    this.configuration = configuration;
+    this.entityManagerProvider = entityManagerProvider;
+    this.hostRoleCommandDAO = hostRoleCommandDAO;
+    this.hostRoleCommandFactory = hostRoleCommandFactory;
+    jpaPublisher = null;
+
+    serverActionExecutor = new ServerActionExecutor(db, sleepTime);
+    initializeCaches();
+  }
+
+  /**
+   * Initializes the caches.
+   */
+  private void initializeCaches(){
     clusterHostInfoCache = CacheBuilder.newBuilder().
         expireAfterAccess(5, TimeUnit.MINUTES).
         build();
+
     commandParamsStageCache = CacheBuilder.newBuilder().
       expireAfterAccess(5, TimeUnit.MINUTES).
       build();
+
     hostParamsStageCache = CacheBuilder.newBuilder().
       expireAfterAccess(5, TimeUnit.MINUTES).
       build();
-    this.configuration = configuration;
   }
 
   public void start() {
@@ -193,7 +298,9 @@ class ActionScheduler implements Runnable {
           }
           activeAwakeRequest = false;
         }
+
         doWork();
+
       } catch (InterruptedException ex) {
         LOG.warn("Scheduler thread is interrupted going to stop", ex);
         shouldRun = false;
@@ -210,6 +317,9 @@ class ActionScheduler implements Runnable {
   public void doWork() throws AmbariException {
     try {
       unitOfWork.begin();
+
+      // grab a reference to this UnitOfWork's EM
+      threadEntityManager = entityManagerProvider.get();
 
       // The first thing to do is to abort requests that are cancelled
       processCancelledRequestsList();
@@ -274,7 +384,7 @@ class ActionScheduler implements Runnable {
 
         if (runningRequestIds.contains(requestId)) {
           // We don't want to process different stages from the same request in parallel
-          LOG.debug("==> We don't want to process different stages from the same request in parallel" );
+          LOG.debug("==> We don't want to process different stages from the same request in parallel");
           continue;
         } else {
           runningRequestIds.add(requestId);
@@ -315,7 +425,7 @@ class ActionScheduler implements Runnable {
         }
 
         if (failed) {
-          LOG.warn("Operation completely failed, aborting request id: {}", stage.getRequestId());
+          LOG.error("Operation completely failed, aborting request id: {}", stage.getRequestId());
           cancelHostRoleCommands(stage.getOrderedHostRoleCommands(), FAILED_TASK_ABORT_REASONING);
           abortOperationsForStage(stage);
           return;
@@ -327,12 +437,7 @@ class ActionScheduler implements Runnable {
         //Schedule what we have so far
 
         for (ExecutionCommand cmd : commandsToSchedule) {
-
-          // Hack - Remove passwords from configs
-          if (cmd.getRole().equals(Role.HIVE_CLIENT.toString()) &&
-                  cmd.getConfigurations().containsKey(Configuration.HIVE_CONFIG_TAG)) {
-            cmd.getConfigurations().get(Configuration.HIVE_CONFIG_TAG).remove(Configuration.HIVE_METASTORE_PASSWORD_PROPERTY);
-          }
+          ConfigHelper.processHiddenAttribute(cmd.getConfigurations(), cmd.getConfigurationAttributes(), cmd.getRole(), false);
           processHostRole(stage, cmd, commandsToStart, commandsToUpdate);
         }
 
@@ -430,32 +535,103 @@ class ActionScheduler implements Runnable {
   }
 
   /**
-   * Returns filtered list of stages following the rule:
-   * 1) remove stages that has the same host. Leave only first stage, the rest that have same host of any operation will be filtered
-   * 2) do not remove stages intersected by host if they have intersection by background command
-   * @param stages
-   * @return
+   * Returns filtered list of stages such that the returned list is an ordered list of stages that may
+   * be executed in parallel or in the order in which they are presented
+   * <p/>
+   * Assumption: the list of stages supplied as input are ordered by request id and then stage id.
+   * <p/>
+   * Rules:
+   * <ul>
+   * <li>
+   * Stages are filtered such that the first stage in the list (assumed to be the first pending
+   * stage from the earliest active request) has priority
+   * </li>
+   * <li>
+   * No stage in any request may be executed before an earlier stage in the same request
+   * </li>
+   * <li>
+   * A stages in different requests may be performed in parallel if the relevant hosts for the
+   * stage in the later requests do not intersect with the union of hosts from (pending) stages
+   * in earlier requests
+   * </li>
+   * </ul>
+   *
+   * @param stages the stages to process
+   * @return a list of stages that may be executed in parallel
    */
   private List<Stage> filterParallelPerHostStages(List<Stage> stages) {
     List<Stage> retVal = new ArrayList<Stage>();
     Set<String> affectedHosts = new HashSet<String>();
-    for(Stage s : stages){
+    Set<Long> affectedRequests = new HashSet<Long>();
+
+    for (Stage s : stages) {
+      long requestId = s.getRequestId();
+
+      if (LOG.isTraceEnabled()) {
+        LOG.trace("==> Processing stage: {}/{} ({}) for {}", requestId, s.getStageId(), s.getRequestContext());
+      }
+
+      boolean addStage = true;
+
+      // Iterate over the relevant hosts for this stage to see if any intersect with the set of
+      // hosts needed for previous stages.  If any intersection occurs, this stage may not be
+      // executed in parallel.
       for (String host : s.getHosts()) {
-        if (!affectedHosts.contains(host)) {
-          if(!isStageHasBackgroundCommandsOnly(s, host)){
+        LOG.trace("===> Processing Host {}", host);
+
+        if (affectedHosts.contains(host)) {
+          if (LOG.isTraceEnabled()) {
+            LOG.trace("===>  Skipping stage since it utilizes at least one host that a previous stage requires: {}/{} ({})", s.getRequestId(), s.getStageId(), s.getRequestContext());
+          }
+
+          addStage &= false;
+        } else {
+          if (!Stage.INTERNAL_HOSTNAME.equalsIgnoreCase(host) && !isStageHasBackgroundCommandsOnly(s, host)) {
+            LOG.trace("====>  Adding host to affected hosts: {}", host);
             affectedHosts.add(host);
           }
-          retVal.add(s);
+
+          addStage &= true;
         }
       }
+
+      // If this stage is for a request that we have already processed, the it cannot execute in
+      // parallel since only one stage per request my execute at a time. The first time we encounter
+      // a request id, will be for the first pending stage for that request, so it is a candidate
+      // for execution at this time - if the previous test for host intersection succeeds.
+      if (affectedRequests.contains(requestId)) {
+        if (LOG.isTraceEnabled()) {
+          LOG.trace("===>  Skipping stage since the request it is in has been processed already: {}/{} ({})", s.getRequestId(), s.getStageId(), s.getRequestContext());
+        }
+
+        addStage = false;
+      } else {
+        if (LOG.isTraceEnabled()) {
+          LOG.trace("====>  Adding request to affected requests: {}", requestId);
+        }
+
+        affectedRequests.add(requestId);
+        addStage &= true;
+      }
+
+      // If both tests pass - the stage is the first pending stage in its request and the hosts
+      // required in the stage do not intersect with hosts from stages that should occur before this,
+      // than add it to the list of stages that may be executed in parallel.
+      if (addStage) {
+        if (LOG.isTraceEnabled()) {
+          LOG.trace("===>  Adding stage to return value: {}/{} ({})", s.getRequestId(), s.getStageId(), s.getRequestContext());
+        }
+
+        retVal.add(s);
+      }
     }
+
     return retVal;
   }
 
   private boolean isStageHasBackgroundCommandsOnly(Stage s, String host) {
     for (ExecutionCommandWrapper c : s.getExecutionCommands(host)) {
-      if(c.getExecutionCommand().getCommandType() != AgentCommandType.BACKGROUND_EXECUTION_COMMAND)
-      {
+      if (c.getCommandType() != AgentCommandType.BACKGROUND_EXECUTION_COMMAND) {
         return false;
       }
     }
@@ -467,7 +643,7 @@ class ActionScheduler implements Runnable {
 
     long prevStageId = stage.getStageId() - 1;
 
-    if (prevStageId > 0) {
+    if (prevStageId >= 0) {
       // Find previous stage instance
       String actionId = StageUtils.getActionId(stage.getRequestId(), prevStageId);
       Stage prevStage = db.getStage(actionId);
@@ -490,7 +666,7 @@ class ActionScheduler implements Runnable {
           }
           int hostCount = hostCountsForRoles.get(c.getRole());
           hostCountsForRoles.put(c.getRole(), hostCount + 1);
-          if (c.getStatus().isFailedState()) {
+          if (c.getStatus().isFailedAndNotSkippableState()) {
             int failedHostCount = failedHostCountsForRoles.get(c.getRole());
             failedHostCountsForRoles.put(c.getRole(), failedHostCount + 1);
           }
@@ -515,7 +691,7 @@ class ActionScheduler implements Runnable {
    * @return the stats for the roles in the stage which are used to determine
    * whether stage has succeeded or failed
    */
-  private Map<String, RoleStats> processInProgressStage(Stage s,
+  protected Map<String, RoleStats> processInProgressStage(Stage s,
       List<ExecutionCommand> commandsToSchedule) throws AmbariException {
     LOG.debug("==> Collecting commands to schedule...");
     // Map to track role status
@@ -616,15 +792,28 @@ class ActionScheduler implements Runnable {
           status = HostRoleStatus.ABORTED;
         } else if (timeOutActionNeeded(status, s, hostObj, roleStr, now, commandTimeout)) {
           // Process command timeouts
-          LOG.info("Host:" + host + ", role:" + roleStr + ", actionId:" + s.getActionId() + " timed out");
           if (s.getAttemptCount(host, roleStr) >= maxAttempts) {
-            LOG.warn("Host:" + host + ", role:" + roleStr + ", actionId:" + s.getActionId() + " expired");
-            db.timeoutHostRole(host, s.getRequestId(), s.getStageId(), c.getRole());
+            LOG.warn("Host: {}, role: {}, actionId: {} expired and will be failed", host, roleStr,
+                s.getActionId());
+
+            // determine if the task should be auto skipped
+            boolean isSkipSupported = s.isAutoSkipOnFailureSupported();
+            HostRoleCommand hostRoleCommand = s.getHostRoleCommand(c.getTaskId());
+            if (isSkipSupported && null != hostRoleCommand) {
+              isSkipSupported = hostRoleCommand.isFailureAutoSkipped();
+            }
+
+            db.timeoutHostRole(host, s.getRequestId(), s.getStageId(), c.getRole(), isSkipSupported);
             //Reinitialize status
             status = s.getHostRoleStatus(host, roleStr);
 
             if (null != cluster) {
-              transitionToFailedState(cluster.getClusterName(), c.getServiceName(), roleStr, host, now, false);
+              if (!RoleCommand.CUSTOM_COMMAND.equals(c.getRoleCommand())
+                && !RoleCommand.SERVICE_CHECK.equals(c.getRoleCommand())
+                && !RoleCommand.ACTIONEXECUTE.equals(c.getRoleCommand())) {
+                //commands above don't affect host component state (e.g. no in_progress state in process), transition will fail
+                transitionToFailedState(cluster.getClusterName(), c.getServiceName(), roleStr, host, now, false);
+              }
               if (c.getRoleCommand().equals(RoleCommand.ACTIONEXECUTE)) {
                 processActionDeath(cluster.getClusterName(), c.getHostname(), roleStr);
               }
@@ -634,6 +823,11 @@ class ActionScheduler implements Runnable {
             LOG.info("Removing command from queue, host={}, commandId={} ", host, c.getCommandId());
             actionQueue.dequeue(host, c.getCommandId());
           } else {
+            cancelCommandOnTimeout(Collections.singletonList(s.getHostRoleCommand(host, roleStr)));
+
+            LOG.info("Host: {}, role: {}, actionId: {} timed out and will be rescheduled", host,
+                roleStr, s.getActionId());
+
             // reschedule command
             commandsToSchedule.add(c);
             LOG.trace("===> commandsToSchedule(reschedule)=" + commandsToSchedule.size());
@@ -758,6 +952,19 @@ class ActionScheduler implements Runnable {
   }
 
   /**
+   * Checks if ambari-agent was restarted during role command execution
+   * @param host the host with ambari-agent to check
+   * @param stage the stage
+   * @param role the role to check
+   * @return {@code true} if ambari-agent was restarted
+   */
+  protected boolean wasAgentRestartedDuringOperation(Host host, Stage stage, String role) {
+    String hostName = host.getHostName();
+    long taskStartTime = stage.getHostRoleCommand(hostName, role).getStartTime();
+    return taskStartTime > 0 && taskStartTime <= host.getLastRegistrationTime();
+  }
+
+  /**
    * Checks if timeout is required.
    * @param status      the status of the current role
    * @param stage       the stage
@@ -768,7 +975,7 @@ class ActionScheduler implements Runnable {
    * @return {@code true} if timeout is needed
    * @throws AmbariException
    */
-  private boolean timeOutActionNeeded(HostRoleStatus status, Stage stage,
+  protected boolean timeOutActionNeeded(HostRoleStatus status, Stage stage,
       Host host, String role, long currentTime, long taskTimeout) throws
     AmbariException {
     if (( !status.equals(HostRoleStatus.QUEUED) ) &&
@@ -777,8 +984,9 @@ class ActionScheduler implements Runnable {
     }
 
     // Fast fail task if host state is unknown
-    if (null != host && host.getState().equals(HostState.HEARTBEAT_LOST)) {
-      LOG.debug("Timing out action since agent is not heartbeating.");
+    if (null != host &&
+      (host.getState().equals(HostState.HEARTBEAT_LOST) || wasAgentRestartedDuringOperation(host, stage, role))) {
+      LOG.debug("Timing out action since agent is not heartbeating or agent was restarted.");
       return true;
     }
 
@@ -791,7 +999,7 @@ class ActionScheduler implements Runnable {
             && !status.equals(HostRoleStatus.IN_PROGRESS)) {
       return false;
     }
-    if (currentTime > stage.getLastAttemptTime(hostName, role)
+    if (currentTime >= stage.getLastAttemptTime(hostName, role)
         + taskTimeout) {
       return true;
     }
@@ -867,6 +1075,17 @@ class ActionScheduler implements Runnable {
     commandParamsCmd.putAll(commandParams);
     cmd.setCommandParams(commandParamsCmd);
 
+    try {
+      Cluster cluster = clusters.getCluster(s.getClusterName());
+      if (null != cluster) {
+        // Generate localComponents
+        for (ServiceComponentHost sch : cluster.getServiceComponentHosts(hostname)) {
+          cmd.getLocalComponents().add(sch.getServiceComponentName());
+        }
+      }
+    } catch (ClusterNotFoundException cnfe) {
+      //NOP
+    }
 
     //Try to get hostParams from cache and merge them with command-level parameters
     Map<String, String> hostParams = hostParamsStageCache.getIfPresent(stagePk);
@@ -903,14 +1122,32 @@ class ActionScheduler implements Runnable {
     synchronized (requestsToBeCancelled) {
       // Now, cancel stages completely
       for (Long requestId : requestsToBeCancelled) {
-        List<HostRoleCommand> tasksToDequeue = db.getRequestTasks(requestId);
-        String reason = requestCancelReasons.get(requestId);
-        cancelHostRoleCommands(tasksToDequeue, reason);
-        List<Stage> stages = db.getAllStages(requestId);
-        for (Stage stage : stages) {
-          abortOperationsForStage(stage);
+        // only pull back entities that have not completed; pulling back all
+        // entities for the request can cause OOM problems on large requests,
+        // like those for upgrades
+        List<HostRoleCommandEntity> entitiesToDequeue = hostRoleCommandDAO.findByRequestIdAndStatuses(
+            requestId, HostRoleStatus.NOT_COMPLETED_STATUSES);
+
+        if (!entitiesToDequeue.isEmpty()) {
+          List<HostRoleCommand> tasksToDequeue = new ArrayList<>(entitiesToDequeue.size());
+          for (HostRoleCommandEntity hrcEntity : entitiesToDequeue) {
+            HostRoleCommand task = hostRoleCommandFactory.createExisting(hrcEntity);
+            tasksToDequeue.add(task);
+          }
+
+          String reason = requestCancelReasons.get(requestId);
+          cancelHostRoleCommands(tasksToDequeue, reason);
+        }
+
+        // abort any stages in progress; don't execute this for all stages since
+        // that could lead to OOM errors on large requests, like those for
+        // upgrades
+        List<Stage> stagesInProgress = db.getStagesInProgress();
+        for (Stage stageInProgress : stagesInProgress) {
+          abortOperationsForStage(stageInProgress);
         }
       }
+
       requestsToBeCancelled.clear();
       requestCancelReasons.clear();
     }
@@ -927,18 +1164,21 @@ class ActionScheduler implements Runnable {
    */
   void cancelHostRoleCommands(Collection<HostRoleCommand> hostRoleCommands, String reason) {
     for (HostRoleCommand hostRoleCommand : hostRoleCommands) {
-      if (hostRoleCommand.getStatus() == HostRoleStatus.QUEUED) {
-        // Dequeue all tasks that have been already scheduled for sending to agent
-        actionQueue.dequeue(hostRoleCommand.getHostName(),
-                hostRoleCommand.getExecutionCommandWrapper().
-                        getExecutionCommand().getCommandId());
-      }
-      if (hostRoleCommand.getStatus() == HostRoleStatus.QUEUED ||
-            hostRoleCommand.getStatus() == HostRoleStatus.IN_PROGRESS) {
-        CancelCommand cancelCommand = new CancelCommand();
-        cancelCommand.setTargetTaskId(hostRoleCommand.getTaskId());
-        cancelCommand.setReason(reason);
-        actionQueue.enqueue(hostRoleCommand.getHostName(), cancelCommand);
+      // There are no server actions in actionQueue
+      if (!Role.AMBARI_SERVER_ACTION.equals(hostRoleCommand.getRole())) {
+        if (hostRoleCommand.getStatus() == HostRoleStatus.QUEUED) {
+          // Dequeue all tasks that have been already scheduled for sending to agent
+          actionQueue.dequeue(hostRoleCommand.getHostName(),
+              hostRoleCommand.getExecutionCommandWrapper().
+              getExecutionCommand().getCommandId());
+        }
+        if (hostRoleCommand.getStatus() == HostRoleStatus.QUEUED ||
+              hostRoleCommand.getStatus() == HostRoleStatus.IN_PROGRESS) {
+          CancelCommand cancelCommand = new CancelCommand();
+          cancelCommand.setTargetTaskId(hostRoleCommand.getTaskId());
+          cancelCommand.setReason(reason);
+          actionQueue.enqueue(hostRoleCommand.getHostName(), cancelCommand);
+        }
       }
 
       if (hostRoleCommand.getStatus().isHoldingState()) {
@@ -953,6 +1193,21 @@ class ActionScheduler implements Runnable {
         processActionDeath(clusterName,
                 hostRoleCommand.getHostName(),
                 hostRoleCommand.getRole().name());
+      }
+    }
+  }
+
+  void cancelCommandOnTimeout(Collection<HostRoleCommand> hostRoleCommands) {
+    for (HostRoleCommand hostRoleCommand : hostRoleCommands) {
+      // There are no server actions in actionQueue
+      if (!Role.AMBARI_SERVER_ACTION.equals(hostRoleCommand.getRole())) {
+        if (hostRoleCommand.getStatus() == HostRoleStatus.QUEUED ||
+              hostRoleCommand.getStatus() == HostRoleStatus.IN_PROGRESS) {
+          CancelCommand cancelCommand = new CancelCommand();
+          cancelCommand.setTargetTaskId(hostRoleCommand.getTaskId());
+          cancelCommand.setReason("");
+          actionQueue.enqueue(hostRoleCommand.getHostName(), cancelCommand);
+        }
       }
     }
   }
@@ -1029,6 +1284,25 @@ class ActionScheduler implements Runnable {
 
   ServerActionExecutor getServerActionExecutor() {
     return serverActionExecutor;
+  }
+
+  /**
+   * Handles {@link EntityManagerCacheInvalidationEvent} instances and instructs
+   * the thread running this scheduler to evict instances from the
+   * {@link EntityManager}.
+   *
+   * @param event
+   *          the event to handle (not {@code null}).
+   */
+  @Subscribe
+  public void onEvent(EntityManagerCacheInvalidationEvent event) {
+    try {
+      if (null != threadEntityManager && threadEntityManager.isOpen()) {
+        threadEntityManager.clear();
+      }
+    } catch (Throwable throwable) {
+      LOG.error("Unable to clear the EntityManager for the scheduler thread", throwable);
+    }
   }
 
   static class RoleStats {

@@ -75,52 +75,6 @@ class TestHostInfo(TestCase):
     self.assertTrue(installedPackages[3][2], "HDP")
     self.assertTrue(installedPackages[6][1], "11-38.13.9")
 
-  def test_perform_package_analysis(self):
-    installedPackages = [
-      ["hadoop-a", "2.3", "HDP"], ["zk", "3.1", "HDP"], ["webhcat", "3.1", "HDP"],
-      ["hadoop-b", "2.3", "HDP-epel"], ["epel", "3.1", "HDP-epel"], ["epel-2", "3.1", "HDP-epel"],
-      ["hadoop-c", "2.3", "Ambari"], ["ambari-s", "3.1", "Ambari"],
-      ["ganglia", "2.3", "GANGLIA"], ["rrd", "3.1", "RRD"],
-      ["keeper-1", "2.3", "GANGLIA"], ["keeper-2", "3.1", "base"],["def-def.x86", "2.2", "DEF.3"],
-      ["def.1", "1.2", "NewDEF"]
-    ]
-    availablePackages = [
-      ["hadoop-d", "2.3", "HDP"], ["zk-2", "3.1", "HDP"], ["pig", "3.1", "HDP"],
-      ["epel-3", "2.3", "HDP-epel"], ["hadoop-e", "3.1", "HDP-epel"],
-      ["ambari-a", "3.1", "Ambari"],
-      ["keeper-3", "3.1", "base"]
-    ]
-
-    packagesToLook = ["webhcat", "hadoop", "*-def"]
-    reposToIgnore = ["ambari"]
-    additionalPackages = ["ganglia", "rrd"]
-
-    repos = []
-    packages_analyzer.getInstalledRepos(packagesToLook, installedPackages + availablePackages, reposToIgnore, repos)
-    self.assertEqual(3, len(repos))
-    expected = ["HDP", "HDP-epel", "DEF.3"]
-    for repo in expected:
-      self.assertTrue(repo in repos)
-
-    packagesInstalled = packages_analyzer.getInstalledPkgsByRepo(repos, ["epel"], installedPackages)
-    self.assertEqual(5, len(packagesInstalled))
-    expected = ["hadoop-a", "zk", "webhcat", "hadoop-b", "def-def.x86"]
-    for repo in expected:
-      self.assertTrue(repo in packagesInstalled)
-
-    additionalPkgsInstalled = packages_analyzer.getInstalledPkgsByNames(
-        additionalPackages, installedPackages)
-    self.assertEqual(2, len(additionalPkgsInstalled))
-    expected = ["ganglia", "rrd"]
-    for additionalPkg in expected:
-      self.assertTrue(additionalPkg in additionalPkgsInstalled)
-
-    allPackages = list(set(packagesInstalled + additionalPkgsInstalled))
-    self.assertEqual(7, len(allPackages))
-    expected = ["hadoop-a", "zk", "webhcat", "hadoop-b", "ganglia", "rrd", "def-def.x86"]
-    for package in expected:
-      self.assertTrue(package in allPackages)
-
   @patch.object(OSCheck, 'get_os_family')
   @patch('resource_management.libraries.functions.packages_analyzer.subprocessWithTimeout')
   def test_analyze_yum_output(self, subprocessWithTimeout_mock, get_os_family_mock):
@@ -198,9 +152,9 @@ class TestHostInfo(TestCase):
     hostInfo = HostInfo()
     results = []
     existingUsers = [{'name':'a1', 'homeDir':os.path.join('home', 'a1')}, {'name':'b1', 'homeDir':os.path.join('home', 'b1')}]
-    hostInfo.checkFolders([os.path.join("etc", "conf"), os.path.join("var", "lib"), "home"], ["a1", "b1"], existingUsers, results)
+    hostInfo.checkFolders([os.path.join("etc", "conf"), os.path.join("var", "lib"), "home"], ["a1", "b1"], ["c","d"], existingUsers, results)
     print results
-    self.assertEqual(4, len(results))
+    self.assertEqual(6, len(results))
     names = [i['name'] for i in results]
     for item in [os.path.join('etc','conf','a1'), os.path.join('var','lib','a1'), os.path.join('etc','conf','b1'), os.path.join('var','lib','b1')]:
 
@@ -515,12 +469,36 @@ class TestHostInfo(TestCase):
     run_os_command_mock.return_value = 3, "", ""
     self.assertFalse(Firewall().getFirewallObject().check_firewall())
 
-  @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = ('redhat','11','Final')))
+  @patch.object(OSCheck, "get_os_family")
   @patch("os.path.isfile")
   @patch('__builtin__.open')
-  def test_transparent_huge_page(self, open_mock, os_path_isfile_mock):
+  def test_transparent_huge_page(self, open_mock, os_path_isfile_mock, get_os_family_mock):
     context_manager_mock = MagicMock()
     open_mock.return_value = context_manager_mock
+    get_os_family_mock.return_value = OSConst.REDHAT_FAMILY
+    file_mock = MagicMock()
+    file_mock.read.return_value = "[never] always"
+    enter_mock = MagicMock()
+    enter_mock.return_value = file_mock
+    exit_mock  = MagicMock()
+    setattr( context_manager_mock, '__enter__', enter_mock )
+    setattr( context_manager_mock, '__exit__', exit_mock )
+
+    hostInfo = HostInfoLinux()
+
+    os_path_isfile_mock.return_value = True
+    self.assertEqual("never", hostInfo.getTransparentHugePage())
+
+    os_path_isfile_mock.return_value = False
+    self.assertEqual("", hostInfo.getTransparentHugePage())
+
+  @patch.object(OSCheck, "get_os_family")
+  @patch("os.path.isfile")
+  @patch('__builtin__.open')
+  def test_transparent_huge_page_debian(self, open_mock, os_path_isfile_mock, get_os_family_mock):
+    context_manager_mock = MagicMock()
+    open_mock.return_value = context_manager_mock
+    get_os_family_mock.return_value = OSConst.UBUNTU_FAMILY
     file_mock = MagicMock()
     file_mock.read.return_value = "[never] always"
     enter_mock = MagicMock()

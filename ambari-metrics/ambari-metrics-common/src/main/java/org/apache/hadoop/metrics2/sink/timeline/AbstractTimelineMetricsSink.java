@@ -17,74 +17,472 @@
  */
 package org.apache.hadoop.metrics2.sink.timeline;
 
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.methods.PostMethod;
-import org.apache.commons.httpclient.methods.StringRequestEntity;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
+import com.google.common.reflect.TypeToken;
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.metrics2.sink.timeline.availability.MetricCollectorHAHelper;
+import org.apache.hadoop.metrics2.sink.timeline.availability.MetricCollectorUnavailableException;
+import org.apache.hadoop.metrics2.sink.timeline.availability.MetricSinkWriteShardHostnameHashingStrategy;
+import org.apache.hadoop.metrics2.sink.timeline.availability.MetricSinkWriteShardStrategy;
 import org.codehaus.jackson.map.AnnotationIntrospector;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.codehaus.jackson.map.annotate.JsonSerialize;
 import org.codehaus.jackson.xc.JaxbAnnotationIntrospector;
 
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManagerFactory;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
-import java.net.ConnectException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.StringWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.security.KeyStore;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public abstract class AbstractTimelineMetricsSink {
   public static final String TAGS_FOR_PREFIX_PROPERTY_PREFIX = "tagsForPrefix.";
   public static final String MAX_METRIC_ROW_CACHE_SIZE = "maxRowCacheSize";
   public static final String METRICS_SEND_INTERVAL = "sendInterval";
   public static final String METRICS_POST_TIMEOUT_SECONDS = "timeout";
-  public static final String COLLECTOR_HOST_PROPERTY = "collector";
-  public static final String COLLECTOR_PORT_PROPERTY = "port";
+  public static final String COLLECTOR_PROPERTY = "collector";
+  public static final String COLLECTOR_PROTOCOL = "protocol";
+  public static final String COLLECTOR_PORT = "port";
+  public static final String ZOOKEEPER_QUORUM = "zookeeper.quorum";
+  public static final int DEFAULT_POST_TIMEOUT_SECONDS = 10;
+  public static final String SKIP_COUNTER_TRANSFROMATION = "skipCounterDerivative";
+  public static final String RPC_METRIC_PREFIX = "metric.rpc";
+  public static final String WS_V1_TIMELINE_METRICS = "/ws/v1/timeline/metrics";
+  public static final String SSL_KEYSTORE_PATH_PROPERTY = "truststore.path";
+  public static final String SSL_KEYSTORE_TYPE_PROPERTY = "truststore.type";
+  public static final String SSL_KEYSTORE_PASSWORD_PROPERTY = "truststore.password";
+  public static final String COLLECTOR_LIVE_NODES_PATH = "/ws/v1/timeline/metrics/livenodes";
 
-  protected static final int DEFAULT_POST_TIMEOUT_SECONDS = 10;
+  protected static final AtomicInteger failedCollectorConnectionsCounter = new AtomicInteger(0);
+  public static int NUMBER_OF_SKIPPED_COLLECTOR_EXCEPTIONS = 100;
+  public int ZK_CONNECT_TRY_TIME = 10000;
+  public int ZK_SLEEP_BETWEEN_RETRY_TIME = 2000;
+
+  private SSLSocketFactory sslSocketFactory;
+
   protected final Log LOG;
-  private HttpClient httpClient = new HttpClient();
 
   protected static ObjectMapper mapper;
+
+  protected MetricCollectorHAHelper collectorHAHelper;
+
+  protected MetricSinkWriteShardStrategy metricSinkWriteShardStrategy;
+
+  // Single element cache with fixed expiration - Helps adjacent Sinks as
+  // well as timed refresh
+  protected Supplier<String> targetCollectorHostSupplier;
+
+  protected final List<String> allKnownLiveCollectors = new ArrayList<>();
+
+  private volatile boolean isInitializedForHA = false;
+
+  @SuppressWarnings("all")
+  private final int RETRY_COUNT_BEFORE_COLLECTOR_FAILOVER = 5;
+
+  private final Gson gson = new Gson();
+
+  private final Random rand = new Random();
+
+  private static final int COLLECTOR_HOST_CACHE_MAX_EXPIRATION_MINUTES = 75;
+  private static final int COLLECTOR_HOST_CACHE_MIN_EXPIRATION_MINUTES = 60;
 
   static {
     mapper = new ObjectMapper();
     AnnotationIntrospector introspector = new JaxbAnnotationIntrospector();
     mapper.setAnnotationIntrospector(introspector);
     mapper.getSerializationConfig()
-        .setSerializationInclusion(JsonSerialize.Inclusion.NON_NULL);
+      .withSerializationInclusion(JsonSerialize.Inclusion.NON_NULL);
   }
 
   public AbstractTimelineMetricsSink() {
     LOG = LogFactory.getLog(this.getClass());
-    httpClient.getParams().setSoTimeout(getTimeoutSeconds() * 1000);
-    httpClient.getParams().setConnectionManagerTimeout(getTimeoutSeconds() * 1000);
   }
 
-  protected void emitMetrics(TimelineMetrics metrics) throws IOException {
-    String connectUrl = getCollectorUri();
+  /**
+   * Initialize Sink write strategy with respect to HA Collector
+   */
+  protected void init() {
+    metricSinkWriteShardStrategy = new MetricSinkWriteShardHostnameHashingStrategy(getHostname());
+    collectorHAHelper = new MetricCollectorHAHelper(getZookeeperQuorum(),
+      ZK_CONNECT_TRY_TIME, ZK_SLEEP_BETWEEN_RETRY_TIME);
+    isInitializedForHA = true;
+  }
+
+  protected boolean emitMetricsJson(String connectUrl, String jsonData) {
+    int timeout = getTimeoutSeconds() * 1000;
+    HttpURLConnection connection = null;
     try {
-      String jsonData = mapper.writeValueAsString(metrics);
+      if (connectUrl == null) {
+        throw new IOException("Unknown URL. Unable to connect to metrics collector.");
+      }
+      connection = connectUrl.startsWith("https") ?
+          getSSLConnection(connectUrl) : getConnection(connectUrl);
 
-      StringRequestEntity requestEntity = new StringRequestEntity(jsonData, "application/json", "UTF-8");
+      connection.setRequestMethod("POST");
+      connection.setRequestProperty("Content-Type", "application/json");
+      connection.setRequestProperty("Connection", "Keep-Alive");
+      connection.setConnectTimeout(timeout);
+      connection.setReadTimeout(timeout);
+      connection.setDoOutput(true);
 
-      PostMethod postMethod = new PostMethod(connectUrl);
-      postMethod.setRequestEntity(requestEntity);
-      int statusCode = httpClient.executeMethod(postMethod);
+      if (jsonData != null) {
+        try (OutputStream os = connection.getOutputStream()) {
+          os.write(jsonData.getBytes("UTF-8"));
+        }
+      }
+
+      int statusCode = connection.getResponseCode();
 
       if (statusCode != 200) {
         LOG.info("Unable to POST metrics to collector, " + connectUrl + ", " +
-          "statusCode = " + statusCode);
+            "statusCode = " + statusCode);
       } else {
-        LOG.debug("Metrics posted to Collector " + connectUrl);
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Metrics posted to Collector " + connectUrl);
+        }
       }
-    } catch (ConnectException e) {
-      throw new UnableToConnectException(e).setConnectUrl(connectUrl);
+      cleanupInputStream(connection.getInputStream());
+      // reset failedCollectorConnectionsCounter to "0"
+      failedCollectorConnectionsCounter.set(0);
+      return true;
+    } catch (IOException ioe) {
+      StringBuilder errorMessage =
+          new StringBuilder("Unable to connect to collector, " + connectUrl + "\n"
+                  + "This exceptions will be ignored for next " + NUMBER_OF_SKIPPED_COLLECTOR_EXCEPTIONS + " times\n");
+      try {
+        if ((connection != null)) {
+          errorMessage.append(cleanupInputStream(connection.getErrorStream()));
+        }
+      } catch (IOException e) {
+        //NOP
+      }
+
+      if (failedCollectorConnectionsCounter.getAndIncrement() == 0) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(errorMessage, ioe);
+        } else {
+          LOG.info(errorMessage);
+        }
+        throw new UnableToConnectException(ioe).setConnectUrl(connectUrl);
+      } else {
+        failedCollectorConnectionsCounter.compareAndSet(NUMBER_OF_SKIPPED_COLLECTOR_EXCEPTIONS, 0);
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(String.format("Ignoring %s AMS connection exceptions", NUMBER_OF_SKIPPED_COLLECTOR_EXCEPTIONS));
+        }
+        return false;
+      }
     }
   }
 
-  public void setHttpClient(HttpClient httpClient) {
-    this.httpClient = httpClient;
+  protected boolean emitMetrics(TimelineMetrics metrics) {
+    String collectorHost;
+    // Get cached target
+    if (targetCollectorHostSupplier != null) {
+      collectorHost = targetCollectorHostSupplier.get();
+      // Last X attempts have failed - force refresh
+      if (failedCollectorConnectionsCounter.get() > RETRY_COUNT_BEFORE_COLLECTOR_FAILOVER) {
+        targetCollectorHostSupplier = null;
+        collectorHost = findPreferredCollectHost();
+      }
+    } else {
+      collectorHost = findPreferredCollectHost();
+    }
+
+    String connectUrl = getCollectorUri(collectorHost);
+    String jsonData = null;
+    try {
+      jsonData = mapper.writeValueAsString(metrics);
+    } catch (IOException e) {
+      LOG.error("Unable to parse metrics", e);
+    }
+    if (jsonData != null) {
+      return emitMetricsJson(connectUrl, jsonData);
+    }
+    return false;
   }
 
-  abstract protected String getCollectorUri();
+  /**
+   * Cleans up and closes an input stream
+   * see http://docs.oracle.com/javase/6/docs/technotes/guides/net/http-keepalive.html
+   * @param is the InputStream to clean up
+   * @return string read from the InputStream
+   * @throws IOException
+   */
+  protected String cleanupInputStream(InputStream is) throws IOException {
+    StringBuilder sb = new StringBuilder();
+    if (is != null) {
+      try (
+        InputStreamReader isr = new InputStreamReader(is);
+        BufferedReader br = new BufferedReader(isr)
+      ) {
+        // read the response body
+        String line;
+        while ((line = br.readLine()) != null) {
+          if (LOG.isDebugEnabled()) {
+            sb.append(line);
+          }
+        }
+      } finally {
+        is.close();
+      }
+    }
+    return sb.toString();
+  }
 
+  // Get a connection
+  protected HttpURLConnection getConnection(String spec) throws IOException {
+    return (HttpURLConnection) new URL(spec).openConnection();
+  }
+
+  // Get an ssl connection
+  protected HttpsURLConnection getSSLConnection(String spec)
+    throws IOException, IllegalStateException {
+
+    HttpsURLConnection connection = (HttpsURLConnection) (new URL(spec).openConnection());
+
+    connection.setSSLSocketFactory(sslSocketFactory);
+
+    return connection;
+  }
+
+  protected void loadTruststore(String trustStorePath, String trustStoreType,
+                                String trustStorePassword) {
+    if (sslSocketFactory == null) {
+      if (trustStorePath == null || trustStorePassword == null) {
+        String msg = "Can't load TrustStore. Truststore path or password is not set.";
+        LOG.error(msg);
+        throw new IllegalStateException(msg);
+      }
+      FileInputStream in = null;
+      try {
+        in = new FileInputStream(new File(trustStorePath));
+        KeyStore store = KeyStore.getInstance(trustStoreType == null ?
+          KeyStore.getDefaultType() : trustStoreType);
+        store.load(in, trustStorePassword.toCharArray());
+        TrustManagerFactory tmf = TrustManagerFactory
+          .getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(store);
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(null, tmf.getTrustManagers(), null);
+        sslSocketFactory = context.getSocketFactory();
+      } catch (Exception e) {
+        LOG.error("Unable to load TrustStore", e);
+      } finally {
+        if (in != null) {
+          try {
+            in.close();
+          } catch (IOException e) {
+            LOG.error("Unable to load TrustStore", e);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Find appropriate write shard for this sink using the {@link org.apache.hadoop.metrics2.sink.timeline.availability.MetricSinkWriteShardStrategy}
+   *
+   * 1. Use configured collector(s) to discover available collectors
+   * 2. If configured collector(s) are unresponsive check Zookeeper to find live hosts
+   * 3. Refresh known collector list using ZK
+   * 4. Default: Return configured collector with no side effect due to discovery.
+   *
+   * throws {#link MetricsSinkInitializationException} if called before
+   * initialization, not other side effect
+   *
+   * @return String Collector hostname
+   */
+  protected synchronized String findPreferredCollectHost() {
+    if (!isInitializedForHA) {
+      init();
+    }
+
+    // Auto expire and re-calculate after 1 hour
+    if (targetCollectorHostSupplier != null) {
+      String targetCollector = targetCollectorHostSupplier.get();
+      if (targetCollector != null) {
+        return targetCollector;
+      }
+    }
+
+    String collectorHosts = getConfiguredCollectors();
+    // Reach out to all configured collectors before Zookeeper
+    if (collectorHosts != null && !collectorHosts.isEmpty()) {
+      String[] hosts = collectorHosts.split(",");
+      for (String hostPortStr : hosts) {
+        if (hostPortStr != null && !hostPortStr.isEmpty()) {
+          String[] hostPortPair = hostPortStr.split(":");
+          if (hostPortPair.length < 2) {
+            LOG.warn("Collector port is missing from the configuration.");
+            continue;
+          }
+          String hostStr = hostPortPair[0].trim();
+          String portStr = hostPortPair[1].trim();
+          // Check liveliness and get known instances
+          try {
+            Collection<String> liveHosts = findLiveCollectorHostsFromKnownCollector(hostStr, portStr);
+            // Update live Hosts - current host will already be a part of this
+            for (String host : liveHosts) {
+              allKnownLiveCollectors.add(host);
+            }
+            break; // Found at least 1 live collector
+          } catch (MetricCollectorUnavailableException e) {
+            LOG.info("Collector " + hostStr + " is not longer live. Removing " +
+              "it from list of know live collector hosts : " + allKnownLiveCollectors);
+            allKnownLiveCollectors.remove(hostStr);
+          }
+        }
+      }
+    }
+
+    // Lookup Zookeeper for live hosts - max 10 seconds wait time
+    if (allKnownLiveCollectors.size() == 0 && getZookeeperQuorum() != null) {
+      allKnownLiveCollectors.addAll(collectorHAHelper.findLiveCollectorHostsFromZNode());
+    }
+
+    if (allKnownLiveCollectors.size() != 0) {
+      targetCollectorHostSupplier = Suppliers.memoizeWithExpiration(
+        new Supplier<String>() {
+          @Override
+          public String get() {
+            return metricSinkWriteShardStrategy.findCollectorShard(new ArrayList<>(allKnownLiveCollectors));
+          }
+        },  // random.nextInt(max - min + 1) + min # (60 to 75 minutes)
+        rand.nextInt(COLLECTOR_HOST_CACHE_MAX_EXPIRATION_MINUTES
+          - COLLECTOR_HOST_CACHE_MIN_EXPIRATION_MINUTES + 1)
+          + COLLECTOR_HOST_CACHE_MIN_EXPIRATION_MINUTES,
+        TimeUnit.MINUTES
+      );
+
+      return targetCollectorHostSupplier.get();
+    }
+    return null;
+  }
+
+  Collection<String> findLiveCollectorHostsFromKnownCollector(String host, String port) throws MetricCollectorUnavailableException {
+    List<String> collectors = new ArrayList<>();
+    HttpURLConnection connection = null;
+    StringBuilder sb = new StringBuilder(getCollectorProtocol());
+    sb.append("://");
+    sb.append(host);
+    sb.append(":");
+    sb.append(port);
+    sb.append(COLLECTOR_LIVE_NODES_PATH);
+    String connectUrl = sb.toString();
+    LOG.debug("Requesting live collector nodes : " + connectUrl);
+    try {
+      connection = getCollectorProtocol().startsWith("https") ?
+        getSSLConnection(connectUrl) : getConnection(connectUrl);
+
+      connection.setRequestMethod("GET");
+      // 5 seconds for this op is plenty of wait time
+      connection.setConnectTimeout(3000);
+      connection.setReadTimeout(2000);
+
+      int responseCode = connection.getResponseCode();
+      if (responseCode == 200) {
+        try (InputStream in = connection.getInputStream()) {
+          StringWriter writer = new StringWriter();
+          IOUtils.copy(in, writer);
+          try {
+            collectors = gson.fromJson(writer.toString(), new TypeToken<List<String>>(){}.getType());
+          } catch (JsonSyntaxException jse) {
+            // Swallow this at the behest of still trying to POST
+            LOG.debug("Exception deserializing the json data on live " +
+              "collector nodes.", jse);
+          }
+        }
+      }
+
+    } catch (IOException ioe) {
+      StringBuilder errorMessage =
+        new StringBuilder("Unable to connect to collector, " + connectUrl);
+      try {
+        if ((connection != null)) {
+          errorMessage.append(cleanupInputStream(connection.getErrorStream()));
+        }
+      } catch (IOException e) {
+        //NOP
+      }
+      LOG.debug(errorMessage);
+      LOG.debug(ioe);
+      String warnMsg = "Unable to connect to collector to find live nodes.";
+      LOG.warn(warnMsg, ioe);
+      throw new MetricCollectorUnavailableException(warnMsg);
+    }
+    return collectors;
+  }
+
+  // Constructing without UriBuilder to avoid unfavorable httpclient
+  // dependencies
+  protected String constructTimelineMetricUri(String protocol, String host, String port) {
+    StringBuilder sb = new StringBuilder(protocol);
+    sb.append("://");
+    sb.append(host);
+    sb.append(":");
+    sb.append(port);
+    sb.append(WS_V1_TIMELINE_METRICS);
+    return sb.toString();
+  }
+
+  protected String constructContainerMetricUri(String protocol, String host, String port) {
+    StringBuilder sb = new StringBuilder(protocol);
+    sb.append("://");
+    sb.append(host);
+    sb.append(":");
+    sb.append(port);
+    sb.append(WS_V1_TIMELINE_METRICS);
+    return sb.toString();
+  }
+
+  /**
+   * Get a pre-formatted URI for the collector
+   */
+  abstract protected String getCollectorUri(String host);
+
+  abstract protected String getCollectorProtocol();
+
+  /**
+   * How soon to timeout on the emit calls in seconds.
+   */
   abstract protected int getTimeoutSeconds();
+
+  /**
+   * Get the zookeeper quorum for the cluster used to find collector
+   * @return String "host1:port1,host2:port2"
+   */
+  abstract protected String getZookeeperQuorum();
+
+  /**
+   * Get pre-configured list of collectors available
+   * @return String "host1:port,host2:port"
+   */
+  abstract protected String getConfiguredCollectors();
+
+  /**
+   * Get hostname used for calculating write shard.
+   * @return String "host1"
+   */
+  abstract protected String getHostname();
 }

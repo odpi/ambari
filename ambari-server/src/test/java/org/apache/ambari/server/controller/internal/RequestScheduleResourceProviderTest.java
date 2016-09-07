@@ -88,6 +88,7 @@ public class RequestScheduleResourceProviderTest {
     expect(managementController.getRequestExecutionFactory()).andReturn
       (executionFactory);
     expect(managementController.getAuthName()).andReturn("admin").anyTimes();
+    expect(managementController.getAuthId()).andReturn(1).anyTimes();
 
     Capture<Cluster> clusterCapture = new Capture<Cluster>();
     Capture<Batch> batchCapture = new Capture<Batch>();
@@ -196,6 +197,7 @@ public class RequestScheduleResourceProviderTest {
     expect(managementController.getClusters()).andReturn(clusters).anyTimes();
     expect(clusters.getCluster("Cluster100")).andReturn(cluster).anyTimes();
     expect(managementController.getAuthName()).andReturn("admin").anyTimes();
+    expect(managementController.getAuthId()).andReturn(1).anyTimes();
     expect(managementController.getExecutionScheduleManager()).andReturn
       (executionScheduleManager).anyTimes();
 
@@ -412,7 +414,7 @@ public class RequestScheduleResourceProviderTest {
       .equals("Cluster100").and().property(RequestScheduleResourceProvider
         .REQUEST_SCHEDULE_ID_PROPERTY_ID).equals(1L).toPredicate();
 
-    resourceProvider.deleteResources(predicate);
+    resourceProvider.deleteResources(new RequestImpl(null, null, null, null), predicate);
 
     ResourceProviderEvent lastEvent = observer.getLastEvent();
     Assert.assertNotNull(lastEvent);

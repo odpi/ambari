@@ -392,6 +392,7 @@ module.exports = {
             "component_name" : "DATANODE",
             "display_name" : "DataNode",
             "custom_commands" : [ ],
+            "decommission_allowed" : true,
             "is_client" : false,
             "is_master" : false,
             "service_name" : "HDFS",
@@ -556,6 +557,7 @@ module.exports = {
             "custom_commands" : [ ],
             "is_client" : false,
             "is_master" : true,
+            "reassign_allowed" : true,
             "service_name" : "HIVE",
             "stack_name" : "HDP",
             "stack_version" : "2.1"
@@ -576,6 +578,7 @@ module.exports = {
             "custom_commands" : [ ],
             "is_client" : false,
             "is_master" : true,
+            "reassign_allowed" : true,
             "service_name" : "HIVE",
             "stack_name" : "HDP",
             "stack_version" : "2.1"
@@ -1283,6 +1286,7 @@ module.exports = {
             "custom_commands" : [ ],
             "is_client" : false,
             "is_master" : true,
+            "reassign_allowed" : true,
             "service_name" : "YARN",
             "stack_name" : "HDP",
             "stack_version" : "2.1"
@@ -1297,6 +1301,7 @@ module.exports = {
             "component_name" : "NODEMANAGER",
             "display_name" : "NodeManager",
             "custom_commands" : [ ],
+            "decommission_allowed" : false,
             "is_client" : false,
             "is_master" : false,
             "service_name" : "YARN",
@@ -1404,6 +1409,171 @@ module.exports = {
             "service_name" : "ZOOKEEPER",
             "stack_name" : "HDP",
             "stack_version" : "2.1"
+          },
+          "dependencies" : [ ]
+        }
+      ],
+      artifacts: []
+    },
+    {
+      "href" : "http://c6401.ambari.apache.org:8080/api/v1/stacks/HDP/versions/2.2/services/RANGER",
+      "StackServices" : {
+        "comments" : "Comprehensive security for Hadoop",
+        "custom_commands" : [ ],
+        "display_name" : "Ranger",
+        "required_services" : [ ],
+        "service_check_supported" : true,
+        "service_name" : "RANGER",
+        "service_version" : "0.4.0",
+        "stack_name" : "HDP",
+        "stack_version" : "2.2",
+        "user_name" : null,
+        "config_types" : {
+          "admin-properties" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "ranger-env" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "true"
+            }
+          },
+          "ranger-site" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "usersync-properties" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          }
+        }
+      },
+      "components" : [
+        {
+          "href" : "http://c6401.ambari.apache.org:8080/api/v1/stacks/HDP/versions/2.2/services/RANGER/components/RANGER_ADMIN",
+          "StackServiceComponents" : {
+            "component_name" : "RANGER_ADMIN",
+            "service_name" : "RANGER",
+            "stack_name" : "HDP",
+            "stack_version" : "2.2"
+          },
+          "dependencies" : [ ]
+        },
+        {
+          "href" : "http://c6401.ambari.apache.org:8080/api/v1/stacks/HDP/versions/2.2/services/RANGER/components/RANGER_USERSYNC",
+          "StackServiceComponents" : {
+            "component_name" : "RANGER_USERSYNC",
+            "service_name" : "RANGER",
+            "stack_name" : "HDP",
+            "stack_version" : "2.2"
+          },
+          "dependencies" : [ ]
+        }
+      ],
+      artifacts: []
+    },
+    {
+      "href" : "http://c6401.ambari.apache.org:8080/api/v1/stacks/HDP/versions/2.3/services/RANGER_KMS",
+      "StackServices" : {
+        "comments" : "Key Management Server",
+        "custom_commands" : [ ],
+        "display_name" : "Ranger KMS",
+        "required_services" : [
+          "RANGER",
+          "HDFS"
+        ],
+        "service_check_supported" : true,
+        "service_name" : "RANGER_KMS",
+        "service_version" : "0.5.0.2.3",
+        "stack_name" : "HDP",
+        "stack_version" : "2.3",
+        "user_name" : null,
+        "config_types" : {
+          "dbks-site" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "kms-env" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "kms-log4j" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "kms-properties" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "kms-site" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "ranger-kms-audit" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "ranger-kms-policymgr-ssl" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "ranger-kms-security" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          },
+          "ranger-kms-site" : {
+            "supports" : {
+              "adding_forbidden" : "false",
+              "do_not_extend" : "false",
+              "final" : "false"
+            }
+          }
+        }
+      },
+      "themes" : [ ],
+      "components" : [
+        {
+          "href" : "http://c6401.ambari.apache.org:8080/api/v1/stacks/HDP/versions/2.3/services/RANGER_KMS/components/RANGER_KMS_SERVER",
+          "StackServiceComponents" : {
+            "component_name" : "RANGER_KMS_SERVER",
+            "service_name" : "RANGER_KMS",
+            "stack_name" : "HDP",
+            "stack_version" : "2.3"
           },
           "dependencies" : [ ]
         }

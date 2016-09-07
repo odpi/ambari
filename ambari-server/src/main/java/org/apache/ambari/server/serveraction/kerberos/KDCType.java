@@ -18,8 +18,6 @@
 
 package org.apache.ambari.server.serveraction.kerberos;
 
-import com.sun.istack.NotNull;
-
 /**
  * Enumerates the supported KDC types
  */
@@ -37,7 +35,12 @@ public enum KDCType {
   /**
    * Indicates a Microsoft Active Directory
    */
-  ACTIVE_DIRECTORY;
+  ACTIVE_DIRECTORY,
+
+  /**
+   * Indicates an IPA KDC
+   */
+  IPA;
 
   /**
    * Translates a String to a KDCType.

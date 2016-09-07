@@ -37,6 +37,8 @@ public abstract class StackDefinitionDirectory {
     }
   };
 
+  public static final String CONFIG_UPGRADE_XML_FILENAME_PREFIX = "config-upgrade.xml";
+
   /**
    * underlying directory
    */
@@ -59,11 +61,16 @@ public abstract class StackDefinitionDirectory {
    * @param directoryName  name of the configuration directory
    * @return ConfigurationDirectory instance for the specified configuration directory name
    */
-  public ConfigurationDirectory getConfigurationDirectory(String directoryName) {
+  public ConfigurationDirectory getConfigurationDirectory(String directoryName, String propertiesDirectoryName) {
     ConfigurationDirectory configDirectory = null;
     File configDirFile = new File(directory.getAbsolutePath() + File.separator + directoryName);
+    File propertiesDirFile = new File(directory.getAbsolutePath() + File.separator + propertiesDirectoryName);
     if (configDirFile.exists() && configDirFile.isDirectory())  {
-      configDirectory = new ConfigurationDirectory(configDirFile.getAbsolutePath());
+      if(propertiesDirFile.exists() && propertiesDirFile.isDirectory()) {
+        configDirectory = new ConfigurationDirectory(configDirFile.getAbsolutePath(), propertiesDirFile.getAbsolutePath());
+      } else {
+        configDirectory = new ConfigurationDirectory(configDirFile.getAbsolutePath(), null);
+      }
     }
     return configDirectory;
   }

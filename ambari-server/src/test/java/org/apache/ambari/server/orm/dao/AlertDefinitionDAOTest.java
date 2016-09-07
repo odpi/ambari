@@ -18,18 +18,11 @@
 
 package org.apache.ambari.server.orm.dao;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.List;
-import java.util.TimeZone;
-import java.util.UUID;
-
+import com.google.inject.Guice;
+import com.google.inject.Injector;
+import com.google.inject.persist.PersistService;
 import com.google.inject.persist.UnitOfWork;
+import junit.framework.Assert;
 import org.apache.ambari.server.controller.RootServiceResponseFactory;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
@@ -49,11 +42,22 @@ import org.apache.ambari.server.state.alert.Scope;
 import org.apache.ambari.server.state.alert.SourceType;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import com.google.inject.Guice;
-import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.TimeZone;
+import java.util.UUID;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Tests {@link AlertDefinitionDAO} for interacting with
@@ -75,6 +79,7 @@ public class AlertDefinitionDAOTest {
    */
   @Before
   public void setup() throws Exception {
+//    LoggerFactory.getLogger("eclipselink").
     injector = Guice.createInjector(new InMemoryDefaultTestModule());
     injector.getInstance(GuiceJpaInitializer.class);
     injector.getInstance(UnitOfWork.class).begin();
@@ -258,7 +263,7 @@ public class AlertDefinitionDAOTest {
   @Test
   public void testFindByServiceComponent() {
     List<AlertDefinitionEntity> definitions = dao.findByServiceComponent(
-        clusterId, "OOZIE", "OOZIE_SERVER");
+      clusterId, "OOZIE", "OOZIE_SERVER");
 
     assertNotNull(definitions);
     assertEquals(2, definitions.size());
@@ -315,6 +320,7 @@ public class AlertDefinitionDAOTest {
     history.setAlertState(AlertState.OK);
     history.setAlertText("Alert Text");
     history.setAlertTimestamp(calendar.getTimeInMillis());
+    alertsDao.create(history);
 
     AlertCurrentEntity current = new AlertCurrentEntity();
     current.setAlertHistory(history);
@@ -407,5 +413,74 @@ public class AlertDefinitionDAOTest {
     definition = dao.findById(definition.getDefinitionId());
     assertNotNull(definition.getCluster());
     assertEquals(clusterId, definition.getCluster().getClusterId());
+  }
+
+  @Test
+  public void testBatchDeleteOfNoticeEntities() throws Exception {
+    AlertDefinitionEntity definition = helper.createAlertDefinition(clusterId);
+
+    AlertGroupEntity group = helper.createAlertGroup(clusterId, null);
+    group.addAlertDefinition(definition);
+    dispatchDao.merge(group);
+
+    // Add 1000+ notice entities
+    for (int i = 0; i < 1500; i++) {
+      AlertHistoryEntity history = new AlertHistoryEntity();
+      history.setServiceName(definition.getServiceName());
+      history.setClusterId(clusterId);
+      history.setAlertDefinition(definition);
+      history.setAlertLabel("Label");
+      history.setAlertState(AlertState.OK);
+      history.setAlertText("Alert Text");
+      history.setAlertTimestamp(calendar.getTimeInMillis());
+      alertsDao.create(history);
+
+      AlertCurrentEntity current = new AlertCurrentEntity();
+      current.setAlertHistory(history);
+      current.setLatestTimestamp(new Date().getTime());
+      current.setOriginalTimestamp(new Date().getTime() - 10800000);
+      current.setMaintenanceState(MaintenanceState.OFF);
+      alertsDao.create(current);
+
+      AlertNoticeEntity notice = new AlertNoticeEntity();
+      notice.setAlertHistory(history);
+      notice.setAlertTarget(helper.createAlertTarget());
+      notice.setNotifyState(NotificationState.PENDING);
+      notice.setUuid(UUID.randomUUID().toString());
+      dispatchDao.create(notice);
+    }
+
+    group = dispatchDao.findGroupById(group.getGroupId());
+    assertNotNull(group);
+    assertNotNull(group.getAlertDefinitions());
+    assertEquals(1, group.getAlertDefinitions().size());
+
+    List<AlertHistoryEntity> historyEntities = alertsDao.findAll();
+    assertEquals(1500, historyEntities.size());
+
+    List<AlertCurrentEntity> currentEntities = alertsDao.findCurrentByDefinitionId(definition.getDefinitionId());
+    assertNotNull(currentEntities);
+    assertEquals(1500, currentEntities.size());
+
+    List<AlertNoticeEntity> noticeEntities = dispatchDao.findAllNotices();
+    Assert.assertEquals(1500, noticeEntities.size());
+
+    // delete the definition
+    definition = dao.findById(definition.getDefinitionId());
+    dao.refresh(definition);
+    dao.remove(definition);
+
+    List<AlertNoticeEntity> notices = dispatchDao.findAllNotices();
+    assertTrue(notices.isEmpty());
+
+    currentEntities = alertsDao.findCurrentByDefinitionId(definition.getDefinitionId());
+    assertTrue(currentEntities == null || currentEntities.isEmpty());
+    historyEntities = alertsDao.findAll();
+    assertTrue(historyEntities == null || historyEntities.isEmpty());
+
+    group = dispatchDao.findGroupById(group.getGroupId());
+    assertNotNull(group);
+    assertNotNull(group.getAlertDefinitions());
+    assertEquals(0, group.getAlertDefinitions().size());
   }
 }

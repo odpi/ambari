@@ -55,15 +55,12 @@ import org.apache.ambari.server.orm.entities.ArtifactEntity;
 import org.apache.ambari.server.orm.entities.HostComponentDesiredStateEntity;
 import org.apache.ambari.server.orm.entities.HostComponentStateEntity;
 import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntity;
-import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntityPK;
 import org.apache.ambari.server.orm.entities.StackEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Config;
-import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.StackId;
-import org.apache.ambari.server.state.kerberos.AbstractKerberosDescriptorContainer;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptor;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptorFactory;
 import org.apache.ambari.server.state.kerberos.KerberosIdentityDescriptor;
@@ -82,7 +79,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
-import com.google.inject.persist.Transactional;
 
 
 /**
@@ -125,6 +121,8 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
   private static final String TOPOLOGY_HOST_REQUEST_TABLE = "topology_host_request";
   private static final String TOPOLOGY_HOST_TASK_TABLE = "topology_host_task";
   private static final String TOPOLOGY_LOGICAL_TASK_TABLE = "topology_logical_task";
+  private static final String HDFS_SITE_CONFIG = "hdfs-site";
+  private static final String RANGER_SITE_CONFIG = "ranger-site";
 
   // constants for stack table changes
   private static final String STACK_ID_COLUMN_NAME = "stack_id";
@@ -488,6 +486,14 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
     dbAccessor.dropFKConstraint(HOST_COMPONENT_DESIRED_STATE_TABLE, "hstcmpnntdesiredstatecmpnntnme");
     dbAccessor.dropFKConstraint(SERVICE_CONFIG_HOSTS_TABLE, "FK_scvhosts_scv");
 
+    //These FK's hasn't been deleted previously due to MySQL case sensitivity
+    if (databaseType == Configuration.DatabaseType.MYSQL) {
+      dbAccessor.dropFKConstraint(CONFIG_GROUP_HOST_MAPPING_TABLE, "FK_configgrouphostmapping_config_group_id");
+      dbAccessor.dropFKConstraint(CLUSTER_HOST_MAPPING_TABLE, "FK_ClusterHostMapping_cluster_id");
+      dbAccessor.dropFKConstraint(KERBEROS_PRINCIPAL_HOST_TABLE, "FK_kerberos_principal_host_principal_name");
+      dbAccessor.dropFKConstraint(SERVICE_CONFIG_HOSTS_TABLE, "FK_serviceconfighosts_service_config_id");
+    }
+
     if (databaseType == Configuration.DatabaseType.DERBY) {
       for (String tableName : tablesWithHostNameInPK) {
         String constraintName = getDerbyTableConstraintName("p", tableName);
@@ -833,8 +839,7 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
    * @return Returns an integer with the id for the next host record to be inserted.
    * @throws SQLException
    */
-  @Transactional
-  private Long populateHostsId(ResultSet resultSet) throws SQLException {
+  Long populateHostsId(ResultSet resultSet) throws SQLException {
     Long hostId = 0L;
     if (resultSet != null) {
       try {
@@ -1002,36 +1007,10 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
     updateKerberosDescriptorArtifacts();
   }
 
-
   /**
-   * Update the stored Kerberos Descriptor artifacts to conform to the new structure.
-   * <p/>
-   * Finds the relevant artifact entities and iterates through them to process each independently.
+   * {@inheritDoc}
    */
-  protected void updateKerberosDescriptorArtifacts() throws AmbariException {
-    ArtifactDAO artifactDAO = injector.getInstance(ArtifactDAO.class);
-    List<ArtifactEntity> artifactEntities = artifactDAO.findByName("kerberos_descriptor");
-
-    if (artifactEntities != null) {
-      for (ArtifactEntity artifactEntity : artifactEntities) {
-        updateKerberosDescriptorArtifact(artifactDAO, artifactEntity);
-      }
-    }
-  }
-
-  /**
-   * Update the specified Kerberos Descriptor artifact to conform to the new structure.
-   * <p/>
-   * To conform to the new Kerberos Descriptor structure, the global "hdfs" identity (if exists)
-   * must be moved to the set of identities under the HDFS service.  If no HDFS service exists, one
-   * is created to hold only the "hdfs" identity descriptor. Then, any identity descriptor references
-   * to "/hdfs" must be changed to "/HDFS/hdfs" to point to the moved "hdfs" identity descriptor.
-   * <p/>
-   * The supplied ArtifactEntity is updated in place a merged back into the database.
-   *
-   * @param artifactDAO    the ArtifactDAO to use to store the updated ArtifactEntity
-   * @param artifactEntity the ArtifactEntity to update
-   */
+  @Override
   protected void updateKerberosDescriptorArtifact(ArtifactDAO artifactDAO, ArtifactEntity artifactEntity) throws AmbariException {
     if (artifactEntity != null) {
       Map<String, Object> data = artifactEntity.getArtifactData();
@@ -1083,50 +1062,6 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
   }
 
   /**
-   * Iterates through a collection of AbstractKerberosDescriptorContainers to find and update
-   * identity descriptor references.
-   *
-   * @param descriptorMap    a String to AbstractKerberosDescriptorContainer map to iterate trough
-   * @param referenceName    the reference name to change
-   * @param newReferenceName the new reference name
-   */
-  private void updateKerberosDescriptorIdentityReferences(Map<String, ? extends AbstractKerberosDescriptorContainer> descriptorMap,
-                                                          String referenceName,
-                                                          String newReferenceName) {
-    if (descriptorMap != null) {
-      for (AbstractKerberosDescriptorContainer kerberosServiceDescriptor : descriptorMap.values()) {
-        updateKerberosDescriptorIdentityReferences(kerberosServiceDescriptor, referenceName, newReferenceName);
-
-        if (kerberosServiceDescriptor instanceof KerberosServiceDescriptor) {
-          updateKerberosDescriptorIdentityReferences(((KerberosServiceDescriptor) kerberosServiceDescriptor).getComponents(),
-              referenceName, newReferenceName);
-        }
-      }
-    }
-  }
-
-  /**
-   * Given an AbstractKerberosDescriptorContainer, iterates through its contained identity descriptors
-   * to find ones matching the reference name to change.
-   * <p/>
-   * If found, the reference name is updated to the new name.
-   *
-   * @param descriptorContainer the AbstractKerberosDescriptorContainer to update
-   * @param referenceName       the reference name to change
-   * @param newReferenceName    the new reference name
-   */
-  private void updateKerberosDescriptorIdentityReferences(AbstractKerberosDescriptorContainer descriptorContainer,
-                                                          String referenceName,
-                                                          String newReferenceName) {
-    if (descriptorContainer != null) {
-      KerberosIdentityDescriptor identity = descriptorContainer.getIdentity(referenceName);
-      if (identity != null) {
-        identity.setName(newReferenceName);
-      }
-    }
-  }
-
-  /**
    * Delete STORM_REST_API component if HDP is upgraded past 2.2 and the
    * Component still exists.
    */
@@ -1144,43 +1079,41 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
           executeInTransaction(new Runnable() {
             @Override
             public void run() {
-              ServiceComponentDesiredStateDAO dao = injector.getInstance(ServiceComponentDesiredStateDAO.class);
-              ServiceComponentDesiredStateEntityPK entityPK = new ServiceComponentDesiredStateEntityPK();
-              entityPK.setClusterId(cluster.getClusterId());
-              entityPK.setServiceName("STORM");
-              entityPK.setComponentName("STORM_REST_API");
-              ServiceComponentDesiredStateEntity entity = dao.findByPK(entityPK);
-              if (entity != null) {
-                EntityManager em = getEntityManagerProvider().get();
-                CriteriaBuilder cb = em.getCriteriaBuilder();
+            ServiceComponentDesiredStateDAO dao = injector.getInstance(ServiceComponentDesiredStateDAO.class);
+              ServiceComponentDesiredStateEntity entity = dao.findByName(cluster.getClusterId(),
+                  "STORM", "STORM_REST_API");
 
-                try {
-                  LOG.info("Deleting STORM_REST_API service component.");
-                  CriteriaDelete<HostComponentStateEntity> hcsDelete = cb.createCriteriaDelete(HostComponentStateEntity.class);
-                  CriteriaDelete<HostComponentDesiredStateEntity> hcdDelete = cb.createCriteriaDelete(HostComponentDesiredStateEntity.class);
-                  CriteriaDelete<ServiceComponentDesiredStateEntity> scdDelete = cb.createCriteriaDelete(ServiceComponentDesiredStateEntity.class);
+            if (entity != null) {
+              EntityManager em = getEntityManagerProvider().get();
+              CriteriaBuilder cb = em.getCriteriaBuilder();
 
-                  Root<HostComponentStateEntity> hcsRoot = hcsDelete.from(HostComponentStateEntity.class);
-                  Root<HostComponentDesiredStateEntity> hcdRoot = hcdDelete.from(HostComponentDesiredStateEntity.class);
-                  Root<ServiceComponentDesiredStateEntity> scdRoot = scdDelete.from(ServiceComponentDesiredStateEntity.class);
+              try {
+                LOG.info("Deleting STORM_REST_API service component.");
+                CriteriaDelete<HostComponentStateEntity> hcsDelete = cb.createCriteriaDelete(HostComponentStateEntity.class);
+                CriteriaDelete<HostComponentDesiredStateEntity> hcdDelete = cb.createCriteriaDelete(HostComponentDesiredStateEntity.class);
+                CriteriaDelete<ServiceComponentDesiredStateEntity> scdDelete = cb.createCriteriaDelete(ServiceComponentDesiredStateEntity.class);
 
-                  hcsDelete.where(cb.equal(hcsRoot.get("componentName"), "STORM_REST_API"));
-                  hcdDelete.where(cb.equal(hcdRoot.get("componentName"), "STORM_REST_API"));
-                  scdDelete.where(cb.equal(scdRoot.get("componentName"), "STORM_REST_API"));
+                Root<HostComponentStateEntity> hcsRoot = hcsDelete.from(HostComponentStateEntity.class);
+                Root<HostComponentDesiredStateEntity> hcdRoot = hcdDelete.from(HostComponentDesiredStateEntity.class);
+                Root<ServiceComponentDesiredStateEntity> scdRoot = scdDelete.from(ServiceComponentDesiredStateEntity.class);
 
-                  em.createQuery(hcsDelete).executeUpdate();
-                  em.createQuery(hcdDelete).executeUpdate();
-                  em.createQuery(scdDelete).executeUpdate();
-                } catch (Exception e) {
-                  LOG.warn("Error deleting STORM_REST_API service component. " +
-                    "This could result in issue with ambari server start. " +
-                    "Please make sure the STORM_REST_API component is deleted " +
-                    "from the database by running following commands:\n" +
-                    "delete from hostcomponentdesiredstate where component_name='STORM_REST_API';\n" +
-                    "delete from hostcomponentstate where component_name='STORM_REST_API';\n" +
-                    "delete from servicecomponentdesiredstate where component_name='STORM_REST_API';\n", e);
-                }
+                hcsDelete.where(cb.equal(hcsRoot.get("componentName"), "STORM_REST_API"));
+                hcdDelete.where(cb.equal(hcdRoot.get("componentName"), "STORM_REST_API"));
+                scdDelete.where(cb.equal(scdRoot.get("componentName"), "STORM_REST_API"));
+
+                em.createQuery(hcsDelete).executeUpdate();
+                em.createQuery(hcdDelete).executeUpdate();
+                em.createQuery(scdDelete).executeUpdate();
+              } catch (Exception e) {
+                LOG.warn("Error deleting STORM_REST_API service component. " +
+                  "This could result in issue with ambari server start. " +
+                  "Please make sure the STORM_REST_API component is deleted " +
+                  "from the database by running following commands:\n" +
+                  "delete from hostcomponentdesiredstate where component_name='STORM_REST_API';\n" +
+                  "delete from hostcomponentstate where component_name='STORM_REST_API';\n" +
+                  "delete from servicecomponentdesiredstate where component_name='STORM_REST_API';\n", e);
               }
+            }
             }
           });
         }
@@ -1283,6 +1216,48 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
                 rootJson.toString(), UUID.randomUUID().toString());
           }
 
+          // update ranger admin alerts from type port(2.2) to web(2.3)
+          AlertDefinitionEntity rangerAdminDefinitionEntity = alertDefinitionDAO.findByName(
+            cluster.getClusterId(), "ranger_admin_process");
+
+          if (rangerAdminDefinitionEntity != null) {
+            String source = rangerAdminDefinitionEntity.getSource();
+            JsonObject rootJson = new JsonParser().parse(source).getAsJsonObject();
+            JsonObject uriJson = new JsonObject();
+            JsonObject reporting = rootJson.getAsJsonObject("reporting");
+            JsonObject ok = reporting.getAsJsonObject("ok");
+            JsonObject warning = reporting.getAsJsonObject("warning");
+            JsonObject critical = reporting.getAsJsonObject("critical");
+
+            rootJson.remove("type");
+            rootJson.remove("default_port");
+            rootJson.addProperty("type", "WEB");
+
+            uriJson.addProperty("http", "{{admin-properties/policymgr_external_url}}");
+            uriJson.addProperty("https", "{{admin-properties/policymgr_external_url}}");
+            uriJson.addProperty("https_property", "{{ranger-site/http.enabled}}");
+            uriJson.addProperty("https_property_value", "false");
+            uriJson.addProperty("connection_timeout", 5.0f);
+
+            rootJson.remove("uri");
+            rootJson.add("uri", uriJson);
+
+            ok.remove("text");
+            ok.addProperty("text", "HTTP {0} response in {2:.3f}s");
+
+            warning.remove("text");
+            warning.remove("value");
+            warning.addProperty("text", "HTTP {0} response from {1} in {2:.3f}s ({3})");
+
+            critical.remove("text");
+            critical.remove("value");
+            critical.addProperty("text", "Connection failed to {1} ({3})");
+
+            // save the changes
+            updateAlertDefinitionEntitySource("ranger_admin_process",
+              rootJson.toString(), UUID.randomUUID().toString());
+          }
+
           // update oozie web ui alert
           AlertDefinitionEntity oozieWebUIAlertDefinitionEntity = alertDefinitionDAO.findByName(
               cluster.getClusterId(), "oozie_server_webui");
@@ -1348,7 +1323,7 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
       public void run() {
         EntityManager em = getEntityManagerProvider().get();
         Query nativeQuery = em.createNativeQuery("UPDATE alert_definition SET alert_source=?1, hash=?2 WHERE " +
-                "definition_name=?3");
+          "definition_name=?3");
         nativeQuery.setParameter(1, source);
         nativeQuery.setParameter(2, newHash);
         nativeQuery.setParameter(3, alertName);
@@ -1363,7 +1338,52 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
     updateStormConfigs();
     updateRangerHiveConfigs();
     updateRangerHBaseConfigs();
+    updateRangerSiteConfigs();
     updateHBaseConfigs();
+  }
+
+  protected void updateRangerSiteConfigs() throws AmbariException{
+    AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
+    Clusters clusters = ambariManagementController.getClusters();
+
+    Map<String, String> rangerPropertyMap = new HashMap<String, String>() {{
+      put("HTTPS_CLIENT_AUTH", "https.attrib.clientAuth");
+      put("HTTPS_KEYSTORE_FILE", "https.attrib.keystoreFile");
+      put("HTTPS_KEYSTORE_PASS", "https.attrib.keystorePass");
+      put("HTTPS_KEY_ALIAS", "https.attrib.keyAlias");
+      put("HTTPS_SERVICE_PORT", "https.service.port");
+      put("HTTP_ENABLED", "http.enabled");
+      put("HTTP_SERVICE_PORT", "http.service.port");
+    }};
+
+    if (clusters != null) {
+      Map<String, Cluster> clusterMap = clusters.getClusters();
+      if (clusterMap != null && !clusterMap.isEmpty()) {
+
+        for (final Cluster cluster : clusterMap.values()) {
+         Config rangerSite = cluster.getDesiredConfigByType(RANGER_SITE_CONFIG);
+         Map<String, String> rangerSiteProperties;
+         Map<String, String> convertedRangerSiteProperties = new HashMap<>();
+         Set<String> oldPropertiesList = new HashSet<>();
+
+          if (rangerSite != null) {
+            rangerSiteProperties = rangerSite.getProperties();
+            for (Map.Entry<String, String> mapEntry: rangerPropertyMap.entrySet()) {
+              String oldKey = mapEntry.getKey();
+              String newKey = mapEntry.getValue();
+              if (rangerSiteProperties.containsKey(oldKey)) {
+                convertedRangerSiteProperties.put(newKey, rangerSiteProperties.get(oldKey));
+                oldPropertiesList.add(oldKey);
+              }
+            }
+          }
+
+          updateConfigurationPropertiesForCluster(cluster, RANGER_SITE_CONFIG, convertedRangerSiteProperties, true, false);
+          removeConfigurationPropertiesFromCluster(cluster, RANGER_SITE_CONFIG, oldPropertiesList);
+        }
+
+      }
+    }
   }
 
   protected void updateRangerHiveConfigs() throws AmbariException{
@@ -1388,14 +1408,11 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
                     && RangerHiveConfig.getProperties().get("ranger-hive-plugin-enabled").equalsIgnoreCase("yes")) {
               newHiveEnvProperties.put("hive_security_authorization", "Ranger");
               newHiveServerProperties.put("hive.security.authorization.enabled", "true");
-            } else {
-              newHiveEnvProperties.put("hive_security_authorization", "None");
             }
             boolean updateProperty = cluster.getDesiredConfigByType("hive-env").getProperties().containsKey("hive_security_authorization");
             updateConfigurationPropertiesForCluster(cluster, "hive-env", newHiveEnvProperties, updateProperty, true);
             updateConfigurationPropertiesForCluster(cluster, "hiveserver2-site", newHiveServerProperties, updateProperty, true);
-            updateConfigurationPropertiesForCluster(cluster, "ranger-hive-plugin-properties", new HashMap<String, String>(),
-                    removeRangerHiveProperties, false, true);
+            removeConfigurationPropertiesFromCluster(cluster, "ranger-hive-plugin-properties", removeRangerHiveProperties);
           }
         }
       }
@@ -1461,7 +1478,7 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
           /***
            * Update dfs.namenode.rpc-address set hostname instead of localhost
            */
-          if (cluster.getDesiredConfigByType("hdfs-site") != null && !cluster.getHosts("HDFS","NAMENODE").isEmpty()) {
+          if (cluster.getDesiredConfigByType(HDFS_SITE_CONFIG) != null && !cluster.getHosts("HDFS","NAMENODE").isEmpty()) {
 
             URI nameNodeRpc = null;
             String hostName = cluster.getHosts("HDFS","NAMENODE").iterator().next();
@@ -1470,33 +1487,19 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
                       cluster.getDesiredConfigByType("core-site").getProperties().get("fs.defaultFS") != null) {
               try {
                 if (isNNHAEnabled(cluster)) {
-                  String nn1RpcAddress = null;
-                  Config hdfsSiteConfig = cluster.getDesiredConfigByType("hdfs-site");
-                  Map<String, String> properties = hdfsSiteConfig.getProperties();
-                  String nameServices = properties.get("dfs.nameservices");
-                  if (!StringUtils.isEmpty(nameServices)) {
-                    String namenodes = properties.get(String.format("dfs.ha.namenodes.%s",nameServices));
-                    if (!StringUtils.isEmpty(namenodes) && namenodes.split(",").length > 1) {
-                      nn1RpcAddress = properties.get(String.format("dfs.namenode.rpc-address.%s.%s", nameServices,
-                              namenodes.split(",")[0]));
-                    }
-                  }
-                  if (!StringUtils.isEmpty(nn1RpcAddress)) {
-                    if (!nn1RpcAddress.startsWith("http")) {
-                      nn1RpcAddress = "http://" + nn1RpcAddress;
-                    }
-                    nameNodeRpc= new URI(nn1RpcAddress);
-                  } else {
-                    // set default value
-                    nameNodeRpc= new URI("http://localhost:8020");
-                  }
+                  // NN HA enabled
+                  // Remove dfs.namenode.rpc-address property
+                  Set<String> removePropertiesSet = new HashSet<>();
+                  removePropertiesSet.add("dfs.namenode.rpc-address");
+                  removeConfigurationPropertiesFromCluster(cluster, HDFS_SITE_CONFIG, removePropertiesSet);
                 } else {
+                  // NN HA disabled
                   nameNodeRpc = new URI(cluster.getDesiredConfigByType("core-site").getProperties().get("fs.defaultFS"));
+                  Map<String, String> hdfsProp = new HashMap<String, String>();
+                  hdfsProp.put("dfs.namenode.rpc-address", hostName + ":" + nameNodeRpc.getPort());
+                  updateConfigurationPropertiesForCluster(cluster, HDFS_SITE_CONFIG,
+                          hdfsProp, false, false);
                 }
-                Map<String, String> hdfsProp = new HashMap<String, String>();
-                hdfsProp.put("dfs.namenode.rpc-address", hostName + ":" + nameNodeRpc.getPort());
-                updateConfigurationPropertiesForCluster(cluster, "hdfs-site",
-                        hdfsProp, true, false);
               } catch (URISyntaxException e) {
                 e.printStackTrace();
               }
@@ -1505,43 +1508,6 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
         }
       }
     }
-  }
-
-  private int getHbaseRamRecomendations(int totalMem) {
-    if (totalMem <= 4) {
-      return 1;
-    }
-    if (4 < totalMem && totalMem <= 8) {
-      return 1;
-    }
-    if (8 < totalMem && totalMem <= 16) {
-      return 2;
-    }
-    if (16 < totalMem && totalMem <= 24) {
-      return 4;
-    }
-    if (24 < totalMem && totalMem <= 48) {
-      return 8;
-    }
-    if (48 < totalMem && totalMem <= 64) {
-      return 8;
-    }
-    if (64 < totalMem && totalMem <= 72) {
-      return 8;
-    }
-    if (72 < totalMem && totalMem <= 96) {
-      return 16;
-    }
-    if (96 < totalMem && totalMem <= 128) {
-      return 24;
-    }
-    if (128 < totalMem && totalMem <= 256) {
-      return 32;
-    }
-    if (256 < totalMem) {
-      return 64;
-    }
-    return -1;
   }
 
   protected void updateHiveConfigs() throws AmbariException {
@@ -1555,6 +1521,13 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
       if (clusterMap != null && !clusterMap.isEmpty()) {
         for (final Cluster cluster : clusterMap.values()) {
           String content = null;
+          String hive_server2_auth = "";
+          if (cluster.getDesiredConfigByType("hive-site") != null &&
+              cluster.getDesiredConfigByType("hive-site").getProperties().containsKey("hive.server2.authentication")) {
+
+            hive_server2_auth = cluster.getDesiredConfigByType("hive-site").getProperties().get("hive.server2.authentication");
+          }
+
           if(cluster.getDesiredConfigByType("hive-env") != null) {
             Map<String, String> hiveEnvProps = new HashMap<String, String>();
             Set<String> hiveServerSiteRemoveProps = new HashSet<String>();
@@ -1571,36 +1544,60 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
             if (!cluster.getDesiredConfigByType("hive-env").getProperties().containsKey("hive.metastore.heapsize")) {
               hiveEnvProps.put("hive.metastore.heapsize", "1024");
             }
-            if (cluster.getDesiredConfigByType("hive-env").getProperties().containsKey("hive_security_authorization") &&
-                    "none".equalsIgnoreCase(cluster.getDesiredConfigByType("hive-env").getProperties().get("hive_security_authorization"))) {
+
+            boolean isHiveSecurityAuthPresent = cluster.getDesiredConfigByType("hive-env").getProperties().containsKey("hive_security_authorization");
+            String hiveSecurityAuth="";
+
+            if ("kerberos".equalsIgnoreCase(hive_server2_auth) && cluster.getServices().containsKey("KERBEROS")){
+              hiveSecurityAuth = "SQLStdAuth";
+              isHiveSecurityAuthPresent = true;
+              hiveEnvProps.put("hive_security_authorization", hiveSecurityAuth);
+            } else {
+              if (isHiveSecurityAuthPresent) {
+                hiveSecurityAuth = cluster.getDesiredConfigByType("hive-env").getProperties().get("hive_security_authorization");
+              }
+            }
+
+            if (isHiveSecurityAuthPresent && "none".equalsIgnoreCase(hiveSecurityAuth) &&
+                !isConfigEnabled(cluster,
+                    AbstractUpgradeCatalog.CONFIGURATION_TYPE_RANGER_HIVE_PLUGIN_PROPERTIES,
+                    AbstractUpgradeCatalog.PROPERTY_RANGER_HIVE_PLUGIN_ENABLED)) {
               hiveServerSiteRemoveProps.add("hive.security.authorization.manager");
               hiveServerSiteRemoveProps.add("hive.security.authenticator.manager");
             }
             updateConfigurationPropertiesForCluster(cluster, "hive-env", hiveEnvProps, true, true);
-            updateConfigurationPropertiesForCluster(cluster, "hiveserver2-site", new HashMap<String, String>(), hiveServerSiteRemoveProps, false, true);
+            removeConfigurationPropertiesFromCluster(cluster, "hiveserver2-site", hiveServerSiteRemoveProps);
           }
 
           if(cluster.getDesiredConfigByType("hive-site") != null) {
             Set<String> hiveSiteRemoveProps = new HashSet<String>();
-            String hive_server2_auth = "";
-            if (cluster.getDesiredConfigByType("hive-site").getProperties().containsKey("hive.server2.authentication")) {
-              hive_server2_auth = cluster.getDesiredConfigByType("hive-site").getProperties().get("hive.server2.authentication");
-            }
+            Map<String, String> hiveSiteAddProps = new HashMap<String, String>();
+
             if (!"pam".equalsIgnoreCase(hive_server2_auth)) {
               hiveSiteRemoveProps.add("hive.server2.authentication.pam.services");
+            } else {
+              hiveSiteAddProps.put("hive.server2.authentication.pam.services", "");
             }
             if (!"custom".equalsIgnoreCase(hive_server2_auth)) {
               hiveSiteRemoveProps.add("hive.server2.custom.authentication.class");
+            } else {
+              hiveSiteAddProps.put("hive.server2.custom.authentication.class", "");
             }
             if (!"ldap".equalsIgnoreCase(hive_server2_auth)) {
               hiveSiteRemoveProps.add("hive.server2.authentication.ldap.url");
-              hiveSiteRemoveProps.add("hive.server2.authentication.ldap.baseDN");
+            } else {
+              hiveSiteAddProps.put("hive.server2.authentication.ldap.url", "");
             }
             if (!"kerberos".equalsIgnoreCase(hive_server2_auth) && !cluster.getServices().containsKey("KERBEROS")) {
               hiveSiteRemoveProps.add("hive.server2.authentication.kerberos.keytab");
               hiveSiteRemoveProps.add("hive.server2.authentication.kerberos.principal");
+            } else {
+              hiveSiteAddProps.put("hive.server2.authentication.kerberos.keytab", "");
+              hiveSiteAddProps.put("hive.server2.authentication.kerberos.principal", "");
             }
-            updateConfigurationPropertiesForCluster(cluster, "hive-site", new HashMap<String, String>(), hiveSiteRemoveProps, false, true);
+
+
+            updateConfigurationPropertiesForCluster(cluster, "hive-site", hiveSiteAddProps, hiveSiteRemoveProps, false, true);
           }
         }
       }
@@ -1652,43 +1649,6 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
             }
             else {
               hbaseSiteRemoveProps.add("hbase.coprocessor.regionserver.classes");
-            }
-
-            int threshold = 23;
-            int totalMem = 0;
-            String hostName = null;
-            if (cluster.getHosts("HBASE", "HBASE_MASTER").iterator().hasNext()) {
-              hostName = cluster.getHosts("HBASE", "HBASE_MASTER").iterator().next();
-            }
-            for (Host host : cluster.getHosts()) {
-              if(host.getHostName().equalsIgnoreCase(hostName)) {
-                totalMem = (int)(host.getTotalMemBytes() / (1024 * 1024));
-                break;
-              }
-            }
-
-            if (totalMem == 0) {
-              LOG.error("UpgradeCatalog210 could not retrieve total memory size from the hosts.");
-            }
-            else {
-              if (getHbaseRamRecomendations(totalMem) > threshold) {
-                final int mb = 1024;
-                final int block_cache_heap = 8192;
-                final int regionserver_heap_size = 20480;
-                final int reserved_offheap_memory = 2048;
-                final int regionserver_total_ram = getHbaseRamRecomendations(totalMem) * mb;
-                final int regionserver_max_direct_memory_size = regionserver_total_ram - regionserver_heap_size;
-                final int bucketcache_offheap_memory = regionserver_max_direct_memory_size - reserved_offheap_memory;
-
-                hbaseSiteProps.put("hbase.bucketcache.size", String.valueOf(block_cache_heap + bucketcache_offheap_memory));
-                hbaseSiteProps.put("hbase.bucketcache.ioengine", "offheap");
-                hbaseEnvProps.put("hbase_max_direct_memory_size", String.valueOf(regionserver_max_direct_memory_size));
-              } else {
-                hbaseSiteRemoveProps.add("hbase.bucketcache.ioengine");
-                hbaseSiteRemoveProps.add("hbase.bucketcache.size");
-                hbaseSiteRemoveProps.add("hbase.bucketcache.percentage.in.combinedcache");
-                hbaseEnvRemoveProps.add("hbase_max_direct_memory_size");
-              }
             }
 
             updateConfigurationPropertiesForCluster(cluster, "hbase-site", hbaseSiteProps, true, false);
@@ -1748,7 +1708,7 @@ public class UpgradeCatalog210 extends AbstractUpgradeCatalog {
               newStormProps.put("nimbus.supervisors.users", "['{{storm_user}}']");
             }
             if (!cluster.getDesiredConfigByType("storm-site").getProperties().containsKey("storm.zookeeper.superACL")) {
-              newStormProps.put("storm.zookeeper.superACL", "sasl:{{storm_base_jaas_principal}}");
+              newStormProps.put("storm.zookeeper.superACL", "sasl:{{storm_bare_jaas_principal}}");
             }
             if (!cluster.getDesiredConfigByType("storm-site").getProperties().containsKey("ui.filter.params")) {
               newStormProps.put("ui.filter.params", "{'type': 'kerberos', 'kerberos.principal': '{{storm_ui_jaas_principal}}', 'kerberos.keytab': '{{storm_ui_keytab_path}}', 'kerberos.name.rules': 'DEFAULT'}");

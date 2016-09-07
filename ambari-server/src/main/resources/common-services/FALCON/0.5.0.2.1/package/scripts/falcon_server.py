@@ -22,43 +22,46 @@ import falcon_server_upgrade
 from resource_management.core.logger import Logger
 from resource_management.libraries.script import Script
 from resource_management.libraries.functions import conf_select
-from resource_management.libraries.functions import hdp_select
+from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions import check_process_status
 from resource_management.libraries.functions.security_commons import build_expectations
 from resource_management.libraries.functions.security_commons import cached_kinit_executor
 from resource_management.libraries.functions.security_commons import get_params_from_filesystem
 from resource_management.libraries.functions.security_commons import validate_security_config_properties
 from resource_management.libraries.functions.security_commons import FILE_TYPE_PROPERTIES
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.constants import StackFeature, Direction
 
 from falcon import falcon
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 
+
 class FalconServer(Script):
-  def configure(self, env):
+  def configure(self, env, upgrade_type=None):
     import params
     env.set_params(params)
-    falcon('server', action='config')
+    falcon('server', action='config', upgrade_type=upgrade_type)
 
-  def start(self, env, rolling_restart=False):
+  def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
-    self.configure(env)
-    falcon('server', action='start')
+    self.configure(env, upgrade_type=upgrade_type)
+    falcon('server', action='start', upgrade_type=upgrade_type)
 
-  def stop(self, env, rolling_restart=False):
+  def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
-    falcon('server', action='stop')
+    falcon('server', action='stop', upgrade_type=upgrade_type)
 
-    # if performing an upgrade, backup some directories after stopping falcon
-    if rolling_restart:
+    # if performing an upgrade (ROLLING / NON_ROLLING), backup some directories after stopping falcon
+    if upgrade_type is not None:
       falcon_server_upgrade.post_stop_backup()
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class FalconServerLinux(FalconServer):
-  def get_stack_to_component(self):
-    return {"HDP": "falcon-server"}
+  def get_component_name(self):
+    return "falcon-server"
 
   def install(self, env):
     import params
@@ -70,18 +73,20 @@ class FalconServerLinux(FalconServer):
     env.set_params(status_params)
     check_process_status(status_params.server_pid_file)
 
-  def pre_rolling_restart(self, env):
+  def pre_upgrade_restart(self, env, upgrade_type=None):
+    Logger.info("Executing Stack Upgrade pre-restart")
     import params
     env.set_params(params)
 
     # this function should not execute if the version can't be determined or
-    # is not at least HDP 2.2.0.0
-    if Script.is_hdp_stack_less_than("2.2"):
+    # the stack does not support rolling upgrade
+    if not (params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version)):
       return
 
-    Logger.info("Executing Falcon Server Rolling Upgrade pre-restart")
+    Logger.info("Executing Falcon Server Stack Upgrade pre-restart")
     conf_select.select(params.stack_name, "falcon", params.version)
-    hdp_select.select("falcon-server", params.version)
+    stack_select.select("falcon-server", params.version)
+
     falcon_server_upgrade.pre_start_restore()
 
   def security_status(self, env):
@@ -143,6 +148,17 @@ class FalconServerLinux(FalconServer):
     else:
       self.put_structured_out({"securityState": "UNSECURED"})
 
+  def get_log_folder(self):
+    import params
+    return params.falcon_log_dir
+  
+  def get_user(self):
+    import params
+    return params.falcon_user
+
+  def get_pid_files(self):
+    import status_params
+    return [status_params.server_pid_file]
 
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
 class FalconServerWindows(FalconServer):

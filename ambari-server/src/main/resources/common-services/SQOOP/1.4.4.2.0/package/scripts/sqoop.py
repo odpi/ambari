@@ -16,13 +16,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
+# Python Imports
+import os
 
+# Local Imports
 from resource_management.core.source import InlineTemplate, DownloadSource
 from resource_management.libraries.functions import format
+from resource_management.libraries.resources.xml_config import XmlConfig
 from resource_management.core.resources.system import File, Link, Directory
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 from ambari_commons import OSConst
-import os
+from resource_management.libraries.functions.setup_atlas_hook import has_atlas_in_cluster, setup_atlas_hook, setup_atlas_jar_symlinks
+from ambari_commons.constants import SERVICE
 
 
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
@@ -44,8 +49,27 @@ def sqoop(type=None):
   Directory(params.sqoop_conf_dir,
             owner = params.sqoop_user,
             group = params.user_group,
-            recursive = True
+            create_parents = True
   )
+
+  configs = {}
+  configs.update(params.config['configurations']['sqoop-site'])
+
+  XmlConfig("sqoop-site.xml",
+            conf_dir = params.sqoop_conf_dir,
+            configurations = configs,
+            configuration_attributes=params.config['configuration_attributes']['sqoop-site'],
+            owner = params.sqoop_user,
+            group = params.user_group
+            )
+
+  # Generate atlas-application.properties.xml file and symlink the hook jars
+  if has_atlas_in_cluster():
+    atlas_hook_filepath = os.path.join(params.sqoop_conf_dir, params.atlas_hook_filename)
+    setup_atlas_hook(SERVICE.SQOOP, params.sqoop_atlas_application_properties, atlas_hook_filepath, params.sqoop_user, params.user_group)
+    setup_atlas_jar_symlinks("sqoop", params.sqoop_lib)
+
+
   File(format("{sqoop_conf_dir}/sqoop-env.sh"),
     owner=params.sqoop_user,
     group = params.user_group,
@@ -71,16 +95,19 @@ def jdbc_connector():
   from urllib2 import HTTPError
   from resource_management import Fail
   for jar_name in params.sqoop_jdbc_drivers_dict:
-    if 'mysql-connector-java.jar' in jar_name:
+    if not jar_name or 'mysql' in jar_name:
       continue
     downloaded_custom_connector = format("{sqoop_lib}/{jar_name}")
-    jdbc_symlink_remote = params.sqoop_jdbc_drivers_dict[jar_name]
+    custom_connector_to_remove = format("{sqoop_lib}/" + str(params.sqoop_jdbc_drivers_to_remove[jar_name]))
     jdbc_driver_label = params.sqoop_jdbc_drivers_name_dict[jar_name]
-    driver_curl_source = format("{jdk_location}/{jdbc_symlink_remote}")
+    driver_curl_source = format("{jdk_location}/{jar_name}")
     environment = {
       "no_proxy": format("{ambari_server_hostname}")
     }
     try:
+      if custom_connector_to_remove and os.path.isfile(custom_connector_to_remove):
+        File(custom_connector_to_remove, action='delete')
+
       File(downloaded_custom_connector,
            content = DownloadSource(driver_curl_source),
            mode = 0644,

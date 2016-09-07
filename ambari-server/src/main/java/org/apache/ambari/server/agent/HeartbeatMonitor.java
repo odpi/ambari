@@ -31,9 +31,9 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
-import com.google.inject.Inject;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.RoleCommand;
 import org.apache.ambari.server.actionmanager.ActionManager;
@@ -46,6 +46,7 @@ import org.apache.ambari.server.state.CommandScriptDefinition;
 import org.apache.ambari.server.state.ComponentInfo;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.ConfigHelper;
+import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.HostState;
 import org.apache.ambari.server.state.Service;
@@ -111,7 +112,7 @@ public class HeartbeatMonitor implements Runnable {
   }
 
   public AgentRequests getAgentRequests() {
-    return this.agentRequests;
+    return agentRequests;
   }
 
   @Override
@@ -140,6 +141,10 @@ public class HeartbeatMonitor implements Runnable {
     List<Host> allHosts = clusters.getHosts();
     long now = System.currentTimeMillis();
     for (Host hostObj : allHosts) {
+      if (hostObj.getState() == HostState.HEARTBEAT_LOST) {
+        //do not check if host already known be lost
+        continue;
+      }
       String host = hostObj.getHostName();
       HostState hostState = hostObj.getState();
       String hostname = hostObj.getHostName();
@@ -208,14 +213,17 @@ public class HeartbeatMonitor implements Runnable {
     List<StatusCommand> cmds = new ArrayList<StatusCommand>();
 
     for (Cluster cl : clusters.getClustersForHost(hostname)) {
+      Map<String, DesiredConfig> desiredConfigs = cl.getDesiredConfigs();
       for (ServiceComponentHost sch : cl.getServiceComponentHosts(hostname)) {
         switch (sch.getState()) {
           case INIT:
           case INSTALLING:
+          case STARTING:
+          case STOPPING:
             //don't send commands until component is installed at least
             continue;
           default:
-            StatusCommand statusCmd = createStatusCommand(hostname, cl, sch);
+            StatusCommand statusCmd = createStatusCommand(hostname, cl, sch, desiredConfigs);
             cmds.add(statusCmd);
         }
 
@@ -229,7 +237,7 @@ public class HeartbeatMonitor implements Runnable {
    * @throws AmbariException
    */
   private StatusCommand createStatusCommand(String hostname, Cluster cluster,
-                               ServiceComponentHost sch) throws AmbariException {
+      ServiceComponentHost sch, Map<String, DesiredConfig> desiredConfigs) throws AmbariException {
     String serviceName = sch.getServiceName();
     String componentName = sch.getServiceComponentName();
     StackId stackId = cluster.getDesiredStackVersion();
@@ -249,49 +257,50 @@ public class HeartbeatMonitor implements Runnable {
     //Config clusterConfig = cluster.getDesiredConfigByType(GLOBAL);
     Collection<Config> clusterConfigs = cluster.getAllConfigs();
 
+    // creating list with desired config types to validate if cluster config actual
+    Set<String> desiredConfigTypes = cluster.getDesiredConfigs().keySet();
+
     // Apply global properties for this host from all config groups
     Map<String, Map<String, String>> allConfigTags = configHelper
         .getEffectiveDesiredTags(cluster, hostname);
 
     for(Config clusterConfig: clusterConfigs) {
-      if(!clusterConfig.getType().endsWith("-env")) {
+      String configType = clusterConfig.getType();
+      if(!configType.endsWith("-env") || !desiredConfigTypes.contains(configType)) {
         continue;
       }
 
-      if (clusterConfig != null) {
-        // cluster config for 'global'
-        Map<String, String> props = new HashMap<String, String>(clusterConfig.getProperties());
+      // cluster config for 'global'
+      Map<String, String> props = new HashMap<>(clusterConfig.getProperties());
 
-        Map<String, Map<String, String>> configTags = new HashMap<String,
-                Map<String, String>>();
+      Map<String, Map<String, String>> configTags = new HashMap<>();
 
-        for (Map.Entry<String, Map<String, String>> entry : allConfigTags.entrySet()) {
-          if (entry.getKey().equals(clusterConfig.getType())) {
-            configTags.put(clusterConfig.getType(), entry.getValue());
-          }
+      for (Map.Entry<String, Map<String, String>> entry : allConfigTags.entrySet()) {
+        if (entry.getKey().equals(clusterConfig.getType())) {
+          configTags.put(clusterConfig.getType(), entry.getValue());
         }
-
-        Map<String, Map<String, String>> properties = configHelper
-                .getEffectiveConfigProperties(cluster, configTags);
-
-        if (!properties.isEmpty()) {
-          for (Map<String, String> propertyMap : properties.values()) {
-            props.putAll(propertyMap);
-          }
-        }
-
-        configurations.put(clusterConfig.getType(), props);
-
-        Map<String, Map<String, String>> attrs = new TreeMap<String, Map<String, String>>();
-        configHelper.cloneAttributesMap(clusterConfig.getPropertiesAttributes(), attrs);
-
-        Map<String, Map<String, Map<String, String>>> attributes = configHelper
-            .getEffectiveConfigAttributes(cluster, configTags);
-        for (Map<String, Map<String, String>> attributesMap : attributes.values()) {
-          configHelper.cloneAttributesMap(attributesMap, attrs);
-        }
-        configurationAttributes.put(clusterConfig.getType(), attrs);
       }
+
+      Map<String, Map<String, String>> properties = configHelper
+              .getEffectiveConfigProperties(cluster, configTags);
+
+      if (!properties.isEmpty()) {
+        for (Map<String, String> propertyMap : properties.values()) {
+          props.putAll(propertyMap);
+        }
+      }
+
+      configurations.put(clusterConfig.getType(), props);
+
+      Map<String, Map<String, String>> attrs = new TreeMap<>();
+      configHelper.cloneAttributesMap(clusterConfig.getPropertiesAttributes(), attrs);
+
+      Map<String, Map<String, Map<String, String>>> attributes = configHelper
+          .getEffectiveConfigAttributes(cluster, configTags);
+      for (Map<String, Map<String, String>> attributesMap : attributes.values()) {
+        configHelper.cloneAttributesMap(attributesMap, attrs);
+      }
+      configurationAttributes.put(clusterConfig.getType(), attrs);
     }
 
     StatusCommand statusCmd = new StatusCommand();
@@ -304,7 +313,7 @@ public class HeartbeatMonitor implements Runnable {
 
     // If Agent wants the command and the States differ
     statusCmd.setDesiredState(sch.getDesiredState());
-    statusCmd.setHasStaleConfigs(configHelper.isStaleConfigs(sch));
+    statusCmd.setHasStaleConfigs(configHelper.isStaleConfigs(sch, desiredConfigs));
     if (getAgentRequests().shouldSendExecutionDetails(hostname, componentName)) {
       LOG.info(componentName + " is at " + sch.getState() + " adding more payload per agent ask");
       statusCmd.setPayloadLevel(StatusCommand.StatusCommandPayload.EXECUTION_COMMAND);
@@ -337,7 +346,6 @@ public class HeartbeatMonitor implements Runnable {
     hostLevelParams.put(JDK_LOCATION, ambariManagementController.getJdkResourceUrl());
     hostLevelParams.put(STACK_NAME, stackId.getStackName());
     hostLevelParams.put(STACK_VERSION, stackId.getStackVersion());
-
 
     if (statusCmd.getPayloadLevel() == StatusCommand.StatusCommandPayload.EXECUTION_COMMAND) {
       ExecutionCommand ec = ambariManagementController.getExecutionCommand(cluster, sch, RoleCommand.START);

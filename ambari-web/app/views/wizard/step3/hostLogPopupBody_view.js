@@ -26,9 +26,7 @@ App.WizardStep3HostLogPopupBody = Em.View.extend({
    * Host's boot log
    * @type {string}
    */
-  bootLog: function() {
-    return this.get('parentView.host.bootLog');
-  }.property('parentView.host.bootLog'),
+  bootLog: Em.computed.alias('parentView.host.bootLog'),
 
   /**
    * Is textarea view active
@@ -61,9 +59,7 @@ App.WizardStep3HostLogPopupBody = Em.View.extend({
      * <code>parentView.bootLog</code>
      * @type {string}
      */
-    value: function () {
-      return this.get('content');
-    }.property('content')
+    value: Em.computed.alias('content')
 
   }),
 
@@ -78,12 +74,10 @@ App.WizardStep3HostLogPopupBody = Em.View.extend({
     $(this.get('element')).find('.content-area')
       .mouseenter(
       function () {
-        $(this).css('border', '1px solid #dcdcdc');
         button.css('visibility', 'visible');
       })
       .mouseleave(
       function () {
-        $(this).css('border', 'none');
         button.css('visibility', 'hidden');
       });
   }

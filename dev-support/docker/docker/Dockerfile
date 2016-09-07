@@ -25,8 +25,8 @@ RUN yum -y install glibc-common
 ENV HOME /root
 
 #Install JAVA
-RUN wget --no-check-certificate --no-cookies --header "Cookie:oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/7u55-b13/jdk-7u55-linux-x64.rpm -O jdk-7u55-linux-x64.rpm
-RUN rpm -ivh jdk-7u55-linux-x64.rpm
+RUN wget --no-check-certificate --no-cookies --header "Cookie:oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u60-b27/jdk-8u60-linux-x64.rpm -O jdk-8u60-linux-x64.rpm
+RUN rpm -ivh jdk-8u60-linux-x64.rpm
 ENV JAVA_HOME /usr/java/default/
 
 #Install Maven
@@ -53,7 +53,8 @@ RUN git config --global url."https://".insteadOf git://
 # Install python, nodejs and npm
 RUN yum -y install http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
 RUN yum -y install nodejs npm --enablerepo=epel
-RUN npm install -g brunch@1.7.13
+RUN npm install -g npm@2.1.11
+RUN npm install -g brunch@1.7.20
 
 # Once run some mvn commands to cache .m2/repository
 WORKDIR /tmp

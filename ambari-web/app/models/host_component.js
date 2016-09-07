@@ -22,13 +22,29 @@ App.HostComponent = DS.Model.extend({
   workStatus: DS.attr('string'),
   passiveState: DS.attr('string'),
   componentName: DS.attr('string'),
+  displayName: DS.attr('string'),
   haStatus: DS.attr('string'),
   displayNameAdvanced: DS.attr('string'),
   staleConfigs: DS.attr('boolean'),
   host: DS.belongsTo('App.Host'),
+  componentLogs: DS.belongsTo('App.HostComponentLog'),
   hostName: DS.attr('string'),
   service: DS.belongsTo('App.Service'),
   adminState: DS.attr('string'),
+
+  serviceDisplayName: Em.computed.truncate('service.displayName', 14, 11),
+
+  getDisplayName: Em.computed.truncate('displayName', 19, 16),
+
+  getDisplayNameAdvanced:Em.computed.truncate('displayNameAdvanced', 19, 16),
+
+  summaryLabelClassName:function(){
+    return 'label_for_'+this.get('componentName').toLowerCase();
+  }.property('componentName'),
+
+  summaryValueClassName:function(){
+    return 'value_for_'+this.get('componentName').toLowerCase();
+  }.property('componentName'),
   /**
    * Determine if component is client
    * @returns {bool}
@@ -41,17 +57,15 @@ App.HostComponent = DS.Model.extend({
    * Based on <code>workStatus</code>
    * @returns {bool}
    */
-  isRunning: function () {
-    return (this.get('workStatus') == 'STARTED' || this.get('workStatus') == 'STARTING');
-  }.property('workStatus'),
+  isRunning: Em.computed.existsIn('workStatus', ['STARTED', 'STARTING']),
 
   /**
-   * Formatted <code>componentName</code>
-   * @returns {String}
+   * Determines if component is not installed
+   * Based on <code>workStatus</code>
+   *
+   * @type {boolean}
    */
-  displayName: function () {
-    return App.format.role(this.get('componentName'));
-  }.property('componentName'),
+  isNotInstalled: Em.computed.existsIn('workStatus', ['INIT', 'INSTALL_FAILED']),
 
   /**
    * Determine if component is master
@@ -99,38 +113,48 @@ App.HostComponent = DS.Model.extend({
    * User friendly host component status
    * @returns {String}
    */
-  isActive: function () {
-    return (this.get('passiveState') == 'OFF');
-  }.property('passiveState'),
+  isActive: Em.computed.equal('passiveState', 'OFF'),
 
-  passiveTooltip: function () {
-    if (!this.get('isActive')) {
-      return Em.I18n.t('hosts.component.passive.mode');
-    }
-  }.property('isActive'),
+  /**
+   * Determine if passiveState is implied from host or/and service
+   * @returns {Boolean}
+   */
+  isImpliedState: Em.computed.existsIn('passiveState', ['IMPLIED_FROM_SERVICE_AND_HOST', 'IMPLIED_FROM_HOST', 'IMPLIED_FROM_SERVICE']),
+
+  passiveTooltip: Em.computed.ifThenElse('isActive', '', Em.I18n.t('hosts.component.passive.mode')),
+  /**
+   * Determine if component is a HDP component
+   * @returns {bool}
+   */
+  isHDPComponent: function () {
+    return !App.get('components.nonHDP').contains(this.get('componentName'));
+  }.property('componentName', 'App.components.nonHDP'),
+
+  /**
+   * Does component have Critical Alerts
+   * @type {boolean}
+   */
+  hasCriticalAlerts: false,
+
+  /**
+   * Number of the Critical and Warning alerts for current component
+   * @type {number}
+   */
+  alertsCount: 0,
 
   statusClass: function () {
     return this.get('isActive') ? this.get('workStatus') : 'icon-medkit';
   }.property('workStatus', 'isActive'),
 
-  statusIconClass: function () {
-    switch (this.get('statusClass')) {
-      case 'STARTED':
-      case 'STARTING':
-        return App.healthIconClassGreen;
-        break;
-      case 'INSTALLED':
-      case 'STOPPING':
-        return App.healthIconClassRed;
-        break;
-      case 'UNKNOWN':
-        return App.healthIconClassYellow;
-        break;
-      default:
-        return "";
-        break;
-    }
-  }.property('statusClass'),
+  statusIconClass: Em.computed.getByKey('statusIconClassMap', 'statusClass', ''),
+
+  statusIconClassMap: {
+    STARTED: App.healthIconClassGreen,
+    STARTING: App.healthIconClassGreen,
+    INSTALLED: App.healthIconClassRed,
+    STOPPING: App.healthIconClassRed,
+    UNKNOWN: App.healthIconClassYellow
+  },
 
   componentTextStatus: function () {
     return App.HostComponentStatus.getTextStatus(this.get("workStatus"));
@@ -247,6 +271,14 @@ App.HostComponentStatus = {
 
 App.HostComponentActionMap = {
   getMap: function(ctx) {
+    var NN = ctx.get('controller.content.hostComponents').findProperty('componentName', 'NAMENODE');
+    var RM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'RESOURCEMANAGER');
+    var RA = ctx.get('controller.content.hostComponents').findProperty('componentName', 'RANGER_ADMIN');
+    var HM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'HAWQMASTER');
+    var HS = ctx.get('controller.content.hostComponents').findProperty('componentName', 'HAWQSTANDBY');
+    var HMComponent = App.MasterComponent.find('HAWQMASTER');
+    var HSComponent = App.MasterComponent.find('HAWQSTANDBY');
+
     return {
       RESTART_ALL: {
         action: 'restartAllHostComponents',
@@ -259,7 +291,7 @@ App.HostComponentActionMap = {
         action: 'runSmokeTest',
         label: Em.I18n.t('services.service.actions.run.smoke'),
         cssClass: 'icon-thumbs-up-alt',
-        disabled: ctx.get('controller.isClientsOnlyService') ? false : ctx.get('controller.isStopDisabled')
+        disabled: ctx.get('controller.isSmokeTestDisabled')
       },
       REFRESH_CONFIGS: {
         action: 'refreshConfigs',
@@ -294,25 +326,26 @@ App.HostComponentActionMap = {
         label: App.get('isHaEnabled') ? Em.I18n.t('admin.highAvailability.button.disable') : Em.I18n.t('admin.highAvailability.button.enable'),
         cssClass: App.get('isHaEnabled') ? 'icon-arrow-down' : 'icon-arrow-up',
         isHidden: App.get('isHaEnabled'),
-        disabled: App.get('isSingleNode')
+        disabled: App.get('isSingleNode') || !NN || NN.get('isNotInstalled')
       },
       TOGGLE_RM_HA: {
         action: 'enableRMHighAvailability',
         label: Em.I18n.t('admin.rm_highAvailability.button.enable'),
         cssClass: 'icon-arrow-up',
         isHidden: App.get('isRMHaEnabled'),
-        disabled: App.get('isSingleNode')
+        disabled: App.get('isSingleNode') || !RM || RM.get('isNotInstalled')
       },
       TOGGLE_RA_HA: {
         action: 'enableRAHighAvailability',
         label: Em.I18n.t('admin.ra_highAvailability.button.enable'),
         cssClass: 'icon-arrow-up',
         isHidden: App.get('isRAHaEnabled'),
-        disabled: App.get('isSingleNode')
+        disabled: App.get('isSingleNode') || !RA || RA.get('isNotInstalled')
       },
       MOVE_COMPONENT: {
         action: 'reassignMaster',
         context: '',
+        isHidden: !App.isAuthorized('SERVICE.MOVE'),
         label: Em.I18n.t('services.service.actions.reassign.master'),
         cssClass: 'icon-share-alt'
       },
@@ -332,6 +365,13 @@ App.HostComponentActionMap = {
         cssClass: 'icon-stop',
         disabled: false
       },
+      RESTART_LLAP: {
+        action: 'restartLLAP',
+        customCommand: 'RESTART_LLAP',
+        context: Em.I18n.t('services.service.actions.run.restartLLAP'),
+        label: Em.I18n.t('services.service.actions.run.restartLLAP') + ' ∞',
+        cssClass: 'icon-refresh'
+      },
       REBALANCEHDFS: {
         action: 'rebalanceHdfsNodes',
         customCommand: 'REBALANCEHDFS',
@@ -349,12 +389,84 @@ App.HostComponentActionMap = {
         hasSubmenu: ctx.get('controller.isSeveralClients'),
         submenuOptions: ctx.get('controller.clientComponents')
       },
+      DELETE_SERVICE: {
+        action: 'deleteService',
+        context: ctx.get('serviceName'),
+        label: Em.I18n.t('services.service.actions.deleteService'),
+        cssClass: 'icon-remove'
+      },
+      IMMEDIATE_STOP_HAWQ_SERVICE: {
+        action: 'executeHawqCustomCommand',
+        customCommand: 'IMMEDIATE_STOP_HAWQ_SERVICE',
+        context: Em.I18n.t('services.service.actions.run.immediateStopHawqService.context'),
+        label: Em.I18n.t('services.service.actions.run.immediateStopHawqService.label'),
+        cssClass: 'icon-stop',
+        disabled: !HM || HM.get('workStatus') != App.HostComponentStatus.started
+      },
+      IMMEDIATE_STOP_HAWQ_SEGMENT: {
+        customCommand: 'IMMEDIATE_STOP_HAWQ_SEGMENT',
+        context: Em.I18n.t('services.service.actions.run.immediateStopHawqSegment.context'),
+        label: Em.I18n.t('services.service.actions.run.immediateStopHawqSegment.label'),
+        cssClass: 'icon-stop'
+      },
+      RESYNC_HAWQ_STANDBY: {
+        action: 'executeHawqCustomCommand',
+        customCommand: 'RESYNC_HAWQ_STANDBY',
+        context: Em.I18n.t('services.service.actions.run.resyncHawqStandby.context'),
+        label: Em.I18n.t('services.service.actions.run.resyncHawqStandby.label'),
+        cssClass: 'icon-refresh',
+        isHidden : App.get('isSingleNode') || !HS ,
+        disabled: !((!!HMComponent && HMComponent.get('startedCount') === 1) && (!!HSComponent && HSComponent.get('startedCount') === 1))
+      },
+      TOGGLE_ADD_HAWQ_STANDBY: {
+        action: 'addHawqStandby',
+        label: Em.I18n.t('admin.addHawqStandby.button.enable'),
+        cssClass: 'icon-plus',
+        isHidden: App.get('isSingleNode') || HS,
+        disabled: false
+      },
+      REMOVE_HAWQ_STANDBY: {
+        action: 'removeHawqStandby',
+        context: Em.I18n.t('admin.removeHawqStandby.button.enable'),
+        label: Em.I18n.t('admin.removeHawqStandby.button.enable'),
+        cssClass: 'icon-minus',
+        isHidden: App.get('isSingleNode') || !HS,
+        disabled: !HM || HM.get('workStatus') != App.HostComponentStatus.started,
+        hideFromComponentView: true
+      },
+      ACTIVATE_HAWQ_STANDBY: {
+        action: 'activateHawqStandby',
+        label: Em.I18n.t('admin.activateHawqStandby.button.enable'),
+        context: Em.I18n.t('admin.activateHawqStandby.button.enable'),
+        cssClass: 'icon-arrow-up',
+        isHidden: App.get('isSingleNode') || !HS,
+        disabled: false,
+        hideFromComponentView: true
+      },
+      HAWQ_CLEAR_CACHE: {
+        action: 'executeHawqCustomCommand',
+        customCommand: 'HAWQ_CLEAR_CACHE',
+        context: Em.I18n.t('services.service.actions.run.clearHawqCache.label'),
+        label: Em.I18n.t('services.service.actions.run.clearHawqCache.label'),
+        cssClass: 'icon-refresh',
+        isHidden : false,
+        disabled: !HM || HM.get('workStatus') != App.HostComponentStatus.started
+      },
+      RUN_HAWQ_CHECK: {
+        action: 'executeHawqCustomCommand',
+        customCommand: 'RUN_HAWQ_CHECK',
+        context: Em.I18n.t('services.service.actions.run.runHawqCheck.label'),
+        label: Em.I18n.t('services.service.actions.run.runHawqCheck.label'),
+        cssClass: 'icon-thumbs-up-alt',
+        isHidden : false,
+        disabled: false
+      },
       MASTER_CUSTOM_COMMAND: {
         action: 'executeCustomCommand',
         cssClass: 'icon-play-circle',
         isHidden: false,
         disabled: false
       }
-    }
+    };
   }
 };

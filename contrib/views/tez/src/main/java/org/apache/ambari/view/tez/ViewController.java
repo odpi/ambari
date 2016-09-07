@@ -26,11 +26,39 @@ import com.google.inject.ImplementedBy;
 @ImplementedBy(ViewControllerImpl.class)
 public interface ViewController {
 
-  public static final String PARAM_YARN_ATS_URL = "yarn.timeline-server.url";
-  public static final String PARAM_YARN_RESOURCEMANAGER_URL = "yarn.resourcemanager.url";
+  String PARAM_YARN_ATS_URL = "yarn.ats.url";
+  String PARAM_YARN_RESOURCEMANAGER_URL = "yarn.resourcemanager.url";
+  String PARAM_YARN_PROTOCOL = "yarn.protocol";
 
   /**
    * @return Get the properties that any user is allowed to see, even non-admin users.
    */
   public ViewStatus getViewStatus();
+
+  /**
+   *
+   * @return The Active Application timeline server URL. Though, there is currently no
+   * HA in ATS, the ATS Url that is returned is considered as the Active one.
+   */
+  String getActiveATSUrl();
+
+  /**
+   * @return The active resource manager URL.
+   */
+  String getActiveRMUrl();
+
+  /**
+   * @return The protocol used by YARN daemons.
+   */
+  String getYARNProtocol();
+
+  /**
+   * @return The authentication type for RM. Check: https://hadoop.apache.org/docs/r1.2.1/HttpAuthentication.html
+   */
+  String getRMAuthenticationType();
+
+  /**
+   * @return The authentication used for timeline server HTTP endpoint. Check: https://hadoop.apache.org/docs/r2.7.1/hadoop-yarn/hadoop-yarn-site/TimelineServer.html
+   */
+  String getATSAuthenticationType();
 }

@@ -18,7 +18,17 @@
 
 var App = require('app');
 
-App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageController.extend({
+/**
+ * Additional data that is used in the `Move Component Initializers`
+ *
+ * @typedef {object} reassignComponentDependencies
+ * @property {string} sourceHostName host where component was before moving
+ * @property {string} targetHostName host where component will be after moving
+ */
+
+App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageController.extend(App.WizardEnableDone, {
+
+  name: "reassignMasterWizardStep4Controller",
 
   commands: [
     'stopRequiredServices',
@@ -29,6 +39,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     'installHostComponents',
     'startZooKeeperServers',
     'startNameNode',
+    'stopHostComponentsInMaintenanceMode',
     'deleteHostComponents',
     'configureMySqlServer',
     'startMySqlServer',
@@ -47,6 +58,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     'cleanMySqlServer',
     'putHostComponentsInMaintenanceMode',
     'reconfigure',
+    'stopHostComponentsInMaintenanceMode',
     'deleteHostComponents',
     'configureMySqlServer',
     'startRequiredServices'
@@ -59,24 +71,24 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
   hostComponents: [],
 
   /**
-   * List of components, that do not need reconfiguration for moving to another host
-   * Reconfigure command will be skipped
-   */
-  componentsWithoutReconfiguration: ['METRICS_COLLECTOR'],
-
-  /**
-   * Map with lists of unrelated services.
+   * Map with lists of related services.
    * Used to define list of services to stop/start.
    */
-  unrelatedServicesMap: {
-    'JOBTRACKER': ['HDFS', 'ZOOKEEPER', 'HBASE', 'FLUME', 'SQOOP', 'STORM'],
-    'RESOURCEMANAGER': ['HDFS', 'ZOOKEEPER', 'HBASE', 'FLUME', 'SQOOP', 'STORM'],
-    'APP_TIMELINE_SERVER': ['HDFS', 'ZOOKEEPER', 'HBASE', 'FLUME', 'SQOOP', 'STORM'],
-    'OOZIE_SERVER': ['ZOOKEEPER', 'HBASE', 'FLUME', 'SQOOP', 'STORM', 'HIVE'],
-    'WEBHCAT_SERVER': ['HDFS', 'ZOOKEEPER', 'HBASE', 'FLUME', 'SQOOP', 'STORM'],
-    'HIVE_SERVER': ['HDFS', 'ZOOKEEPER', 'HBASE', 'FLUME', 'SQOOP', 'STORM'],
-    'HIVE_METASTORE': ['HDFS', 'ZOOKEEPER', 'HBASE', 'FLUME', 'SQOOP', 'STORM'],
-    'MYSQL_SERVER': ['HDFS', 'ZOOKEEPER', 'HBASE', 'FLUME', 'SQOOP', 'STORM']
+  relatedServicesMap: {
+    'JOBTRACKER': ['PIG', 'OOZIE'],
+    'RESOURCEMANAGER': ['YARN', 'MAPREDUCE2', 'TEZ', 'PIG', 'OOZIE', 'SLIDER', 'SPARK'],
+    'APP_TIMELINE_SERVER': ['YARN', 'MAPREDUCE2', 'TEZ', 'OOZIE', 'SLIDER', 'SPARK'],
+    'HIVE_SERVER': ['HIVE', 'FALCON', 'ATLAS', 'OOZIE'],
+    'HIVE_METASTORE': ['HIVE', 'PIG', 'FALCON', 'ATLAS', 'OOZIE'],
+    'WEBHCAT_SERVER': ['HIVE'],
+    'OOZIE_SERVER': ['OOZIE', 'FALCON', 'KNOX'],
+    'MYSQL_SERVER': ['HIVE', 'OOZIE', 'RANGER', 'RANGER_KMS']
+  },
+
+  dbPropertyMap: {
+    'HIVE_SERVER': 'javax.jdo.option.ConnectionDriverName',
+    'HIVE_METASTORE': 'javax.jdo.option.ConnectionDriverName',
+    'OOZIE_SERVER': 'oozie.service.JPAService.jdbc.url'
   },
 
   /**
@@ -173,6 +185,23 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
       configs: {
         'hive-site': {
           'javax.jdo.option.ConnectionURL': 'jdbc:mysql://<replace-value>/hive?createDatabaseIfNotExist=true'
+        }
+      }
+    },
+    {
+      componentName: 'METRICS_COLLECTOR',
+      configs: {
+        'ams-site': {
+          'timeline.metrics.service.webapp.address': '<replace-value>:6188'
+        }
+      }
+    },
+    {
+      componentName: 'HISTORYSERVER',
+      configs: {
+        'mapred-site': {
+          'mapreduce.jobhistory.webapp.address': '<replace-value>:19888',
+          'mapreduce.jobhistory.address': '<replace-value>:10020'
         }
       }
     }
@@ -295,7 +324,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
       if (additionalConfigs.hasOwnProperty(site)) {
         for (var property in additionalConfigs[site]) {
           if (additionalConfigs[site].hasOwnProperty(property)) {
-            if (App.get('isHaEnabled') && componentName === 'NAMENODE' && property === 'fs.defaultFS') continue;
+            if (App.get('isHaEnabled') && componentName === 'NAMENODE' && (property === 'fs.defaultFS' || property === 'dfs.namenode.rpc-address')) continue;
 
             configs[site][property] = additionalConfigs[site][property].replace('<replace-value>', replaceValue);
           }
@@ -326,7 +355,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     var hostComponentsNames = '';
     this.get('hostComponents').forEach(function (comp, index) {
       hostComponentsNames += index ? '+' : '';
-      hostComponentsNames += comp === 'ZKFC' ? comp : App.format.role(comp);
+      hostComponentsNames += comp === 'ZKFC' ? comp : App.format.role(comp, false);
     }, this);
     return hostComponentsNames;
   },
@@ -361,16 +390,16 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     if (this.get('content.hasManualSteps')) {
       if (componentName === 'NAMENODE' && App.get('isHaEnabled')) {
         // Only for reassign NameNode with HA enabled
-        this.removeTasks(['deleteHostComponents', 'startRequiredServices']);
+        this.removeTasks(['stopHostComponentsInMaintenanceMode', 'deleteHostComponents', 'startRequiredServices']);
       } else {
-        this.removeTasks(['startZooKeeperServers', 'startNameNode', 'deleteHostComponents', 'startRequiredServices']);
+        this.removeTasks(['startZooKeeperServers', 'startNameNode', 'stopHostComponentsInMaintenanceMode', 'deleteHostComponents', 'startRequiredServices']);
       }
     } else {
       this.removeTasks(['startZooKeeperServers', 'startNameNode']);
     }
 
-    if (this.get('componentsWithoutReconfiguration').contains(componentName)) {
-      this.removeTasks(['reconfigure']);
+    if (!this.get('content.reassignComponentsInMM.length')) {
+      this.removeTasks(['stopHostComponentsInMaintenanceMode']);
     }
   },
 
@@ -435,8 +464,8 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
   }.observes('tasks.@each.showRollback'),
 
   onComponentsTasksSuccess: function () {
-    this.incrementProperty('multiTaskCounter');
-    if (this.get('multiTaskCounter') >= this.get('hostComponents').length) {
+    this.decrementProperty('multiTaskCounter');
+    if (this.get('multiTaskCounter') <= 0) {
       this.onTaskCompleted();
     }
   },
@@ -445,13 +474,13 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
    * make server call to stop services
    */
   stopRequiredServices: function () {
-    this.stopServices(this.get('unrelatedServicesMap')[this.get('content.reassign.component_name')]);
+    this.stopServices(this.get('relatedServicesMap')[this.get('content.reassign.component_name')], true);
   },
 
   createHostComponents: function () {
-    this.set('multiTaskCounter', 0);
     var hostComponents = this.get('hostComponents');
     var hostName = this.get('content.reassignHosts.target');
+    this.set('multiTaskCounter', hostComponents.length);
     for (var i = 0; i < hostComponents.length; i++) {
       this.createComponent(hostComponents[i], hostName, this.get('content.reassign.service_id'));
     }
@@ -462,9 +491,9 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
   },
 
   putHostComponentsInMaintenanceMode: function () {
-    this.set('multiTaskCounter', 0);
     var hostComponents = this.get('hostComponents');
     var hostName = this.get('content.reassignHosts.source');
+    this.set('multiTaskCounter', hostComponents.length);
     for (var i = 0; i < hostComponents.length; i++) {
       App.ajax.send({
         name: 'common.host.host_component.passive',
@@ -481,9 +510,9 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
   },
 
   installHostComponents: function () {
-    this.set('multiTaskCounter', 0);
     var hostComponents = this.get('hostComponents');
     var hostName = this.get('content.reassignHosts.target');
+    this.set('multiTaskCounter', hostComponents.length);
     for (var i = 0; i < hostComponents.length; i++) {
       this.updateComponent(hostComponents[i], hostName, this.get('content.reassign.service_id'), "Install", hostComponents.length);
     }
@@ -502,6 +531,21 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     });
   },
 
+  serviceToConfigSiteMap: {
+    'NAMENODE': ['hdfs-site', 'core-site'],
+    'SECONDARY_NAMENODE': ['hdfs-site', 'core-site'],
+    'JOBTRACKER': ['mapred-site'],
+    'RESOURCEMANAGER': ['yarn-site'],
+    'WEBHCAT_SERVER': ['hive-env', 'webhcat-site', 'core-site'],
+    'APP_TIMELINE_SERVER': ['yarn-site', 'yarn-env'],
+    'OOZIE_SERVER': ['oozie-site', 'core-site', 'oozie-env'],
+    'HIVE_SERVER': ['hive-site', 'webhcat-site', 'hive-env', 'core-site'],
+    'HIVE_METASTORE': ['hive-site', 'webhcat-site', 'hive-env', 'core-site'],
+    'MYSQL_SERVER': ['hive-site'],
+    'METRICS_COLLECTOR': ['ams-site'],
+    'HISTORYSERVER': ['mapred-site']
+  },
+
   /**
    * construct URL parameters for config call
    * @param componentName
@@ -510,49 +554,32 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
    */
   getConfigUrlParams: function (componentName, data) {
     var urlParams = [];
-    switch (componentName) {
-      case 'NAMENODE':
-        urlParams.push('(type=hdfs-site&tag=' + data.Clusters.desired_configs['hdfs-site'].tag + ')');
-        urlParams.push('(type=core-site&tag=' + data.Clusters.desired_configs['core-site'].tag + ')');
+
+    this.get('serviceToConfigSiteMap')[componentName].forEach(function(site){
+      urlParams.push('(type=' + site + '&tag=' + data.Clusters.desired_configs[site].tag + ')');
+    });
+
+    // specific cases for NameNode component
+    if (componentName === 'NAMENODE') {
         if (App.Service.find().someProperty('serviceName', 'HBASE')) {
           urlParams.push('(type=hbase-site&tag=' + data.Clusters.desired_configs['hbase-site'].tag + ')');
         }
         if (App.Service.find().someProperty('serviceName', 'ACCUMULO')) {
           urlParams.push('(type=accumulo-site&tag=' + data.Clusters.desired_configs['accumulo-site'].tag + ')');
         }
-        break;
-      case 'SECONDARY_NAMENODE':
-        urlParams.push('(type=hdfs-site&tag=' + data.Clusters.desired_configs['hdfs-site'].tag + ')');
-        urlParams.push('(type=core-site&tag=' + data.Clusters.desired_configs['core-site'].tag + ')');
-        break;
-      case 'JOBTRACKER':
-        urlParams.push('(type=mapred-site&tag=' + data.Clusters.desired_configs['mapred-site'].tag + ')');
-        break;
-      case 'RESOURCEMANAGER':
-        urlParams.push('(type=yarn-site&tag=' + data.Clusters.desired_configs['yarn-site'].tag + ')');
-        break;
-      case 'WEBHCAT_SERVER':
-        urlParams.push('(type=webhcat-site&tag=' + data.Clusters.desired_configs['webhcat-site'].tag + ')');
-        break;
-      case 'APP_TIMELINE_SERVER':
-        urlParams.push('(type=yarn-site&tag=' + data.Clusters.desired_configs['yarn-site'].tag + ')');
-        urlParams.push('(type=yarn-env&tag=' + data.Clusters.desired_configs['yarn-env'].tag + ')');
-        break;
-      case 'OOZIE_SERVER':
-        urlParams.push('(type=oozie-site&tag=' + data.Clusters.desired_configs['oozie-site'].tag + ')');
-        urlParams.push('(type=core-site&tag=' + data.Clusters.desired_configs['core-site'].tag + ')');
-        break;
-      case 'HIVE_SERVER':
-      case 'HIVE_METASTORE':
-        urlParams.push('(type=hive-site&tag=' + data.Clusters.desired_configs['hive-site'].tag + ')');
-        urlParams.push('(type=webhcat-site&tag=' + data.Clusters.desired_configs['webhcat-site'].tag + ')');
-        urlParams.push('(type=hive-env&tag=' + data.Clusters.desired_configs['hive-env'].tag + ')');
-        urlParams.push('(type=core-site&tag=' + data.Clusters.desired_configs['core-site'].tag + ')');
-        break;
-      case 'MYSQL_SERVER':
-        urlParams.push('(type=hive-site&tag=' + data.Clusters.desired_configs['hive-site'].tag + ')');
-        break;
+        if (App.Service.find().someProperty('serviceName', 'HAWQ')) {
+          urlParams.push('(type=hawq-site&tag=' + data.Clusters.desired_configs['hawq-site'].tag + ')');
+          urlParams.push('(type=hdfs-client&tag=' + data.Clusters.desired_configs['hdfs-client'].tag + ')');
+        }
     }
+
+    if (componentName === 'RESOURCEMANAGER') {
+        if (App.Service.find().someProperty('serviceName', 'HAWQ')) {
+          urlParams.push('(type=hawq-site&tag=' + data.Clusters.desired_configs['hawq-site'].tag + ')');
+          urlParams.push('(type=yarn-client&tag=' + data.Clusters.desired_configs['yarn-client'].tag + ')');
+        }
+    }
+
     return urlParams;
   },
 
@@ -570,7 +597,157 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     });
   },
 
+  /**
+   *
+   * @returns {extendedTopologyLocalDB}
+   * @private
+   * @method _prepareTopologyDB
+   */
+  _prepareTopologyDB: function () {
+    var ret = this.get('content').getProperties(['masterComponentHosts', 'slaveComponentHosts', 'hosts']);
+    ret.installedServices = App.Service.find().mapProperty('serviceName');
+    return ret;
+  },
+
+  /**
+   * Create dependencies for Config Initializers
+   *
+   * @param {object} additionalDependencies  some additional information that should be added
+   * @returns {reassignComponentDependencies}
+   * @private
+   * @method _prepareDependencies
+   */
+  _prepareDependencies: function (additionalDependencies) {
+    additionalDependencies = additionalDependencies || {};
+    var ret = {};
+    ret.sourceHostName = this.get('content.reassignHosts.source');
+    ret.targetHostName = this.get('content.reassignHosts.target');
+    return Em.merge(ret, additionalDependencies);
+  },
+
+  /**
+   * Get additional dependencies-data for App.MoveRmConfigInitializer
+   *
+   * @param {object} configs
+   * @returns {object}
+   * @private
+   * @method _getRmAdditionalDependencies
+   */
+  _getRmAdditionalDependencies: function (configs) {
+    var ret = {};
+    var rm1 = configs['yarn-site']['yarn.resourcemanager.hostname.rm1'];
+    if (rm1) {
+      ret.rm1 = rm1;
+    }
+    var rm2 = configs['yarn-site']['yarn.resourcemanager.hostname.rm2'];
+    if (rm2) {
+      ret.rm2 = rm2;
+    }
+    return ret;
+  },
+
+  /**
+   * Settings used to the App.MoveOSConfigInitializer setup
+   *
+   * @param {object} configs
+   * @returns {object}
+   * @private
+   * @method _getOsInitializerSettings
+   */
+  _getOsInitializerSettings: function (configs) {
+    var ret = {};
+    var cfg = configs['oozie-env']['oozie_user'];
+    if (cfg) {
+      ret.oozieUser = cfg;
+    }
+    return ret;
+  },
+
+  /**
+   * Get additional dependencies-data for App.MoveNameNodeConfigInitializer
+   *
+   * @param {object} configs
+   * @returns {object}
+   * @private
+   * @method _getNnInitializerSettings
+   */
+  _getNnInitializerSettings: function (configs) {
+    var ret = {};
+    if (App.get('isHaEnabled')) {
+      ret.namespaceId = configs['hdfs-site']['dfs.nameservices'];
+      ret.suffix = (configs['hdfs-site']['dfs.namenode.http-address.' + ret.namespaceId + '.nn1'] === this.get('content.reassignHosts.source') + ':50070') ? 'nn1' : 'nn2';
+    }
+    return ret;
+  },
+
+  /**
+   * Settings used to the App.MoveHsConfigInitializer and App.MoveHmConfigInitializer setup
+   *
+   * @param {object} configs
+   * @returns {{hiveUser: string}}
+   * @private
+   * @method _getHiveInitializerSettings
+   */
+  _getHiveInitializerSettings: function (configs) {
+    return {
+      hiveUser: configs['hive-env']['hive_user']
+    };
+  },
+
+  /**
+   * Settings used to the App.MoveWsConfigInitializer setup
+   *
+   * @param {object} configs
+   * @returns {{webhcatUser: string}}
+   * @private
+   * @method _getWsInitializerSettings
+   */
+  _getWsInitializerSettings: function (configs) {
+    return {
+      webhcatUser: configs['hive-env']['webhcat_user']
+    };
+  },
+
+  /**
+   * Settings used to the App.MoveRmConfigInitializer setup
+   *
+   * @param {object} configs
+   * @returns {{suffix: string}}
+   * @private
+   * @method _getRmInitializerSettings
+   */
+  _getRmInitializerSettings: function (configs) {
+    return {
+      suffix: configs['yarn-site']['yarn.resourcemanager.hostname.rm1'] === this.get('content.reassignHosts.source') ? 'rm1': 'rm2'
+    };
+  },
+
   onLoadConfigs: function (data) {
+    // Find hawq-site.xml location
+    var hawqSiteIndex = -1;
+    for(var i = 0; i < data.items.length; i++){
+      if(data.items[i].type == 'hawq-site'){
+        hawqSiteIndex = i;
+        break;
+      }
+    }
+
+    // if certain services are deployed, include related site files to additionalConfigsMap and relatedServicesMap.
+    if(hawqSiteIndex >= 0){ // if HAWQ is deployed
+      var hawqSiteProperties = {
+        'hawq_rm_yarn_address': '<replace-value>:8050',
+        'hawq_rm_yarn_scheduler_address': '<replace-value>:8030'
+      }
+
+      var rmComponent = this.get('additionalConfigsMap').findProperty('componentName', "RESOURCEMANAGER");
+      rmComponent.configs["hawq-site"] = hawqSiteProperties;
+
+      if(data.items[hawqSiteIndex].properties["hawq_global_rm_type"].toLowerCase() === "yarn"){
+        this.get('relatedServicesMap')['RESOURCEMANAGER'].append('HAWQ');
+      }
+
+    }
+
     var componentName = this.get('content.reassign.component_name');
     var targetHostName = this.get('content.reassignHosts.target');
     var configs = {};
@@ -583,21 +760,69 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     this.setAdditionalConfigs(configs, componentName, targetHostName);
     this.setSecureConfigs(secureConfigs, configs, componentName);
 
-    if (componentName === 'NAMENODE') {
-      this.setSpecificNamenodeConfigs(configs, targetHostName);
-    }
-
-    if (componentName === 'RESOURCEMANAGER') {
-      this.setSpecificResourceMangerConfigs(configs, targetHostName);
-    }
-
-    if (componentName === 'HIVE_METASTORE' || componentName === 'HIVE_SERVER') {
-      this.setSpecificHiveConfigs(configs, targetHostName);
+    switch (componentName) {
+      case 'NAMENODE':
+        App.MoveNameNodeConfigInitializer.setup(this._getNnInitializerSettings(configs));
+        configs = this.setDynamicConfigs(configs, App.MoveNameNodeConfigInitializer);
+        App.MoveNameNodeConfigInitializer.cleanup();
+        break;
+      case 'RESOURCEMANAGER':
+        App.MoveRmConfigInitializer.setup(this._getRmInitializerSettings(configs));
+        var additionalDependencies = this._getRmAdditionalDependencies(configs);
+        configs = this.setDynamicConfigs(configs, App.MoveRmConfigInitializer, additionalDependencies);
+        App.MoveRmConfigInitializer.cleanup();
+        break;
+      case 'HIVE_METASTORE':
+        App.MoveHmConfigInitializer.setup(this._getHiveInitializerSettings(configs));
+        configs = this.setDynamicConfigs(configs, App.MoveHmConfigInitializer);
+        App.MoveHmConfigInitializer.cleanup();
+        break;
+      case 'HIVE_SERVER':
+        App.MoveHsConfigInitializer.setup(this._getHiveInitializerSettings(configs));
+        configs = this.setDynamicConfigs(configs, App.MoveHsConfigInitializer);
+        App.MoveHsConfigInitializer.cleanup();
+        break;
+      case 'WEBHCAT_SERVER':
+        App.MoveWsConfigInitializer.setup(this._getWsInitializerSettings(configs));
+        configs = this.setDynamicConfigs(configs, App.MoveWsConfigInitializer);
+        App.MoveWsConfigInitializer.cleanup();
+        break;
+      case 'OOZIE_SERVER':
+        App.MoveOSConfigInitializer.setup(this._getOsInitializerSettings(configs));
+        configs = this.setDynamicConfigs(configs, App.MoveOSConfigInitializer);
+        App.MoveOSConfigInitializer.cleanup();
     }
 
     this.saveClusterStatus(secureConfigs, this.getComponentDir(configs, componentName));
     this.saveConfigsToServer(configs);
     this.saveServiceProperties(configs);
+  },
+
+  /**
+   * Set config values according to the new cluster topology
+   *
+   * @param {object} configs
+   * @param {MoveComponentConfigInitializerClass} initializer
+   * @param {object} [additionalDependencies={}]
+   * @returns {object}
+   * @method setDynamicConfigs
+   */
+  setDynamicConfigs: function (configs, initializer, additionalDependencies) {
+    additionalDependencies = additionalDependencies || {};
+    var topologyDB = this._prepareTopologyDB();
+    var dependencies = this._prepareDependencies(additionalDependencies);
+    Em.keys(configs).forEach(function (site) {
+      Em.keys(configs[site]).forEach(function (config) {
+        // temporary object for initializer
+        var cfg = {
+          name: config,
+          filename: site,
+          value: configs[site][config]
+        };
+        configs[site][config] = initializer.initialValue(cfg, topologyDB, dependencies).value;
+      });
+    });
+    return configs;
   },
 
   /**
@@ -629,7 +854,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
         type: _siteName,
         tag: tagName,
         properties: configs[_siteName],
-        service_config_version_note: Em.I18n.t('services.reassign.step4.save.configuration.note').format(App.format.role(componentName))
+        service_config_version_note: Em.I18n.t('services.reassign.step4.save.configuration.note').format(App.format.role(componentName, false))
       }
     });
     var allConfigData = [];
@@ -655,69 +880,6 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
   },
 
   /**
-   * set specific configs which applies only to NameNode component
-   * @param configs
-   * @param targetHostName
-   */
-  setSpecificNamenodeConfigs: function (configs, targetHostName) {
-    var sourceHostName = this.get('content.reassignHosts.source');
-
-    if (App.get('isHaEnabled')) {
-      var nameServices = configs['hdfs-site']['dfs.nameservices'];
-      var suffix = (configs['hdfs-site']['dfs.namenode.http-address.' + nameServices + '.nn1'] === sourceHostName + ':50070') ? '.nn1' : '.nn2';
-      configs['hdfs-site']['dfs.namenode.http-address.' + nameServices + suffix] = targetHostName + ':50070';
-      configs['hdfs-site']['dfs.namenode.https-address.' + nameServices + suffix] = targetHostName + ':50470';
-      configs['hdfs-site']['dfs.namenode.rpc-address.' + nameServices + suffix] = targetHostName + ':8020';
-    }
-    if (!App.get('isHaEnabled') && App.Service.find('HBASE').get('isLoaded')) {
-      configs['hbase-site']['hbase.rootdir'] = configs['hbase-site']['hbase.rootdir'].replace(/\/\/[^\/]*/, '//' + targetHostName + ':8020');
-    }
-    if (!App.get('isHaEnabled') && App.Service.find('ACCUMULO').get('isLoaded')) {
-      configs['accumulo-site']['instance.volumes'] = configs['accumulo-site']['instance.volumes'].replace(/\/\/[^\/]*/, '//' + targetHostName + ':8020');
-    }
-    if (App.Service.find('ACCUMULO').get('isLoaded')) {
-      var target = 'hdfs://' + this.get('content.reassignHosts.target') + ':8020' + '/apps/accumulo/data';
-      var source = 'hdfs://' + this.get('content.reassignHosts.source') + ':8020' + '/apps/accumulo/data';
-      if (configs['accumulo-site']) {
-        configs['accumulo-site']['instance.volumes.replacements'] = source + ' ' + target;
-      }
-    }
-  },
-
-  /**
-   * set specific configs which applies only to ResourceManager component
-   * @param configs
-   * @param targetHostName
-   */
-  setSpecificResourceMangerConfigs: function (configs, targetHostName) {
-    var sourceHostName = this.get('content.reassignHosts.source');
-
-    if (App.get('isRMHaEnabled')) {
-      if (configs['yarn-site']['yarn.resourcemanager.hostname.rm1'] === sourceHostName) {
-        configs['yarn-site']['yarn.resourcemanager.hostname.rm1'] = targetHostName;
-
-        var webAddressPort = this.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.address.rm1');
-        if(webAddressPort != null)
-          configs['yarn-site']['yarn.resourcemanager.webapp.address.rm1'] = targetHostName +":"+ webAddressPort;
-
-        var httpsWebAddressPort = this.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.https.address.rm1');
-        if(httpsWebAddressPort != null)
-          configs['yarn-site']['yarn.resourcemanager.webapp.https.address.rm1'] = targetHostName +":"+ httpsWebAddressPort;
-      } else {
-        configs['yarn-site']['yarn.resourcemanager.hostname.rm2'] = targetHostName;
-
-        var webAddressPort = this.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.address.rm2');
-        if(webAddressPort != null)
-          configs['yarn-site']['yarn.resourcemanager.webapp.address.rm2'] = targetHostName +":"+ webAddressPort;
-
-        var httpsWebAddressPort = this.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.https.address.rm2');
-        if(httpsWebAddressPort != null)
-          configs['yarn-site']['yarn.resourcemanager.webapp.https.address.rm2'] = targetHostName +":"+ httpsWebAddressPort;
-      }
-    }
-  },
-
-  /**
    * Get the web address port when RM HA is enabled.
    * @param configs
    * @param webAddressKey (http vs https)
@@ -737,34 +899,6 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
       return result;
     else
       return null;
-  },
-
-  /**
-   * set specific configs which applies only to Hive related configs
-   * @param configs
-   * @param targetHostName
-   */
-  setSpecificHiveConfigs: function (configs, targetHostName) {
-    var sourceHostName = this.get('content.reassignHosts.source');
-    var hiveMSHosts = App.HostComponent.find().filterProperty('componentName', 'HIVE_METASTORE').mapProperty('hostName');
-    if (this.get('content.reassign.component_name') === 'HIVE_METASTORE') hiveMSHosts = hiveMSHosts.removeObject(sourceHostName).addObject(targetHostName);
-    var hiveServerHosts = App.HostComponent.find().filterProperty('componentName', 'HIVE_SERVER').mapProperty('hostName');
-    if (this.get('content.reassign.component_name') === 'HIVE_SERVER') hiveServerHosts = hiveServerHosts.removeObject(sourceHostName).addObject(targetHostName);
-    var hiveMasterHosts = hiveMSHosts.concat(hiveServerHosts).uniq().join(',');
-    var hiveUser = configs['hive-env']['hive_user'];
-    var webhcatUser = configs['hive-env']['webhcat_user'];
-
-    var port = configs['hive-site']['hive.metastore.uris'].match(/:[0-9]{2,4}/);
-    port = port ? port[0].slice(1) : "9083";
-
-    for (var i = 0; i < hiveMSHosts.length; i++) {
-      hiveMSHosts[i] = "thrift://" + hiveMSHosts[i] + ":" + port;
-    }
-
-    configs['hive-site']['hive.metastore.uris'] = hiveMSHosts.join(',');
-    configs['webhcat-site']['templeton.hive.properties'] = configs['webhcat-site']['templeton.hive.properties'].replace(/thrift.+[0-9]{2,},/i, hiveMSHosts.join('\\,') + ",");
-    configs['core-site']['hadoop.proxyuser.' + hiveUser + '.hosts'] = hiveMasterHosts;
-    configs['core-site']['hadoop.proxyuser.' + webhcatUser + '.hosts'] = hiveMasterHosts;
   },
 
   /**
@@ -834,18 +968,25 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     this.updateComponent('ZOOKEEPER_SERVER', components.mapProperty('hostName'), "ZOOKEEPER", "Start");
   },
 
+  /**
+   * Start the namenode that is not being moved (applicable only in NameNode HA environment)
+   * @private {startNameNode}
+   */
   startNameNode: function () {
     var components = this.get('content.masterComponentHosts').filterProperty('component', 'NAMENODE');
-    this.updateComponent('NAMENODE', components.mapProperty('hostName').without(this.get('content.reassignHosts.source')), "HDFS", "Start");
+    var sourceHost =  this.get('content.reassignHosts.source');
+    var targetHost =  this.get('content.reassignHosts.target');
+    var hostname = components.mapProperty('hostName').without(sourceHost).without(targetHost);
+    this.updateComponent('NAMENODE', hostname, "HDFS", "Start");
   },
 
   /**
    * make server call to start services
    */
   startRequiredServices: function () {
-    var unrelatedServices = this.get('unrelatedServicesMap')[this.get('content.reassign.component_name')];
-    if (unrelatedServices) {
-      this.startServices(false, unrelatedServices);
+    var relatedServices = this.get('relatedServicesMap')[this.get('content.reassign.component_name')];
+    if (relatedServices) {
+      this.startServices(false, relatedServices, true);
     } else {
       this.startServices(true);
     }
@@ -855,9 +996,9 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
    * make DELETE call for each host component on host
    */
   deleteHostComponents: function () {
-    this.set('multiTaskCounter', 0);
     var hostComponents = this.get('hostComponents');
     var hostName = this.get('content.reassignHosts.source');
+    this.set('multiTaskCounter', hostComponents.length);
     for (var i = 0; i < hostComponents.length; i++) {
       App.ajax.send({
         name: 'common.delete.host_component',
@@ -895,7 +1036,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
    * make server call to clean MYSQL
    */
   cleanMySqlServer: function () {
-    var hostname = App.HostComponent.find().filterProperty('componentName', 'MYSQL_SERVER').get('firstObject.hostName');
+    var hostname = App.HostComponent.find().findProperty('componentName', 'MYSQL_SERVER').get('hostName');
 
     if (this.get('content.reassign.component_name') === 'MYSQL_SERVER') {
       hostname = this.get('content.reassignHosts.target');
@@ -916,7 +1057,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
    * make server call to configure MYSQL
    */
   configureMySqlServer : function () {
-    var hostname = App.HostComponent.find().filterProperty('componentName', 'MYSQL_SERVER').get('firstObject.hostName');
+    var hostname = App.HostComponent.find().findProperty('componentName', 'MYSQL_SERVER').get('hostName');
 
     if (this.get('content.reassign.component_name') === 'MYSQL_SERVER') {
       hostname = this.get('content.reassignHosts.target');
@@ -939,7 +1080,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
       sender: this,
       data: {
         context: "Start MySQL Server",
-        hostName: App.HostComponent.find().filterProperty('componentName', 'MYSQL_SERVER').get('firstObject.hostName'),
+        hostName: App.HostComponent.find().findProperty('componentName', 'MYSQL_SERVER').get('hostName'),
         serviceName: "HIVE",
         componentName: "MYSQL_SERVER",
         HostRoles: {
@@ -1000,29 +1141,11 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
 
   testDBConnection: function() {
     this.prepareDBCheckAction();
-    // this.onTaskCompleted();
   },
 
   isComponentWithDB: function() {
     return ['HIVE_SERVER', 'HIVE_METASTORE', 'OOZIE_SERVER'].contains(this.get('content.reassign.component_name'));
   },
-
-  dbProperty: function() {
-    var componentName = this.get('content.reassign.component_name');
-
-    var property = null;
-    switch(componentName) {
-      case 'HIVE_SERVER':
-      case 'HIVE_METASTORE':
-        property = 'javax.jdo.option.ConnectionDriverName';
-        break;
-      case 'OOZIE_SERVER':
-        property = 'oozie.service.JPAService.jdbc.url';
-        break;
-    }
-
-    return property;
-  }.property(),
 
   /** @property {Object} propertiesPattern - check pattern according to type of connection properties **/
   propertiesPattern: function() {
@@ -1077,18 +1200,16 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
   }.property(),
 
   dbType: function() {
-    var databaseTypes = /MySQL|PostgreS|Oracle|Derby|MSSQL/gi;
-    var databaseProp = this.get('content.serviceProperties')[this.get('dbProperty')];
+    var databaseTypes = /MySQL|PostgreS|Oracle|Derby|MSSQL|Anywhere/gi;
+    var databaseProp = this.get('content.serviceProperties')[Em.getWithDefault(this.get('dbPropertyMap'), this.get('content.reassign.component_name'), null)];
 
     return databaseProp.match(databaseTypes)[0];
-  }.property('dbProperty'),
+  }.property(),
 
   prepareDBCheckAction: function() {
-    var ambariProperties = null;
-    var properties = this.get('content.serviceProperties');
     var params = this.get('preparedDBProperties');
 
-    ambariProperties = App.router.get('clusterController.ambariProperties');
+    var ambariProperties = App.router.get('clusterController.ambariProperties');
 
     params['db_name'] = this.get('dbType');
     params['jdk_location'] = ambariProperties['jdk_location'];
@@ -1100,7 +1221,7 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
     params['check_execute_list'] = "db_connection_check";
 
     App.ajax.send({
-      name: 'custom_action.create',
+      name: 'cluster.custom_action.create',
       sender: this,
       data: {
         requestInfo: {
@@ -1193,6 +1314,21 @@ App.ReassignMasterWizardStep4Controller = App.HighAvailabilityProgressPageContro
 
   saveServiceProperties: function(configs) {
     App.router.get(this.get('content.controllerName')).saveServiceProperties(configs);
+  },
+
+  stopHostComponentsInMaintenanceMode: function () {
+    var hostComponentsInMM = this.get('content.reassignComponentsInMM');
+    var hostName = this.get('content.reassignHosts.source');
+    var serviceName = this.get('content.reassign.service_id');
+    hostComponentsInMM = hostComponentsInMM.map(function(componentName){
+      return {
+        hostName: hostName,
+        serviceName: serviceName,
+        componentName: componentName
+      };
+    });
+    this.set('multiTaskCounter', hostComponentsInMM.length);
+    this.updateComponentsState(hostComponentsInMM, 'INSTALLED');
   }
 
 });

@@ -172,7 +172,7 @@ public interface Host extends Comparable {
    * redhat6: for centos6, rhel6, oraclelinux6 ..
    * ubuntu12 : for ubuntu12
    * suse11: for sles11, suse11 ..
-   *
+   * suse12: for suse12, sles12 ..
    * @return the osFamily
    */
   String getOsFamily();
@@ -366,11 +366,20 @@ public interface Host extends Comparable {
 
   /**
    * Get the desired configurations for the host including overrides
+   *
    * @param cluster
+   * @param clusterDesiredConfigs
+   *          the desired configurations for the cluster. Obtaining these can be
+   *          expensive and since this method operates on hosts, it could be
+   *          called 1,000's of times when generating host responses. Therefore,
+   *          the caller should build these once and pass them in. If
+   *          {@code null}, then this method will retrieve them at runtime,
+   *          incurring a performance penality.
    * @return
    * @throws AmbariException
    */
-  Map<String, HostConfig> getDesiredHostConfigs(Cluster cluster) throws AmbariException;
+  Map<String, HostConfig> getDesiredHostConfigs(Cluster cluster,
+      Map<String, DesiredConfig> clusterDesiredConfigs) throws AmbariException;
 
   /**
    * Sets the maintenance state for the host.

@@ -22,22 +22,34 @@ var stringUtils = require('utils/string_utils');
 App.ClientComponent = DS.Model.extend({
   service: DS.belongsTo('App.Service'),
   componentName: DS.attr('string'),
+  displayName: DS.attr('string'),
   installedCount: DS.attr('number'),
+  installFailedCount: DS.attr('number'),
+  initCount: DS.attr('number'),
+  unknownCount: DS.attr('number'),
   startedCount: DS.attr('number'),
   totalCount: DS.attr('number'),
   stackInfo: DS.belongsTo('App.StackServiceComponent'),
   hostNames: DS.attr('array'),
 
+  /**
+   * Determines if component may be deleted
+   *
+   * @type {boolean}
+   */
+  allowToDelete: function () {
+    return this.get('totalCount') === (this.get('installedCount') + this.get('installFailedCount') + this.get('initCount') + this.get('unknownCount'));
+  }.property('totalCount', 'installedCount', 'installFailedCount', 'initCount', 'unknownCount'),
 
-  displayName: function() {
-    var displayName = App.format.role(this.get('componentName'));
-    if (this.get('service.serviceName') === this.get('componentName')) {
-      displayName += ' ' + Em.I18n.t('common.client');
-    }
-    return displayName;
+  summaryLabelClassName: function () {
+    return 'label_for_'+this.get('componentName').toLowerCase();
   }.property('componentName'),
 
-  displayNamePluralized: function() {
+  summaryValueClassName: function () {
+    return 'value_for_'+this.get('componentName').toLowerCase();
+  }.property('componentName'),
+
+  displayNamePluralized: function () {
     return stringUtils.pluralize(this.get('installedCount'), this.get('displayName'));
   }.property('installedCount')
 });

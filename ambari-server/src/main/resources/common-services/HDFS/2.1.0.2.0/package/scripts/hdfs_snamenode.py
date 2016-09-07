@@ -17,8 +17,10 @@ limitations under the License.
 
 """
 
-from resource_management import *
 from utils import service
+from resource_management.core.resources.system import Directory, File
+from resource_management.core.source import Template
+from resource_management.libraries.functions.check_process_status import check_process_status
 from ambari_commons.os_family_impl import OsFamilyImpl, OsFamilyFuncImpl
 from ambari_commons import OSConst
 
@@ -28,7 +30,7 @@ def snamenode(action=None, format=False):
     import params
     for fs_checkpoint_dir in params.fs_checkpoint_dirs:
       Directory(fs_checkpoint_dir,
-                recursive=True,
+                create_parents = True,
                 cd_access="a",
                 mode=0755,
                 owner=params.hdfs_user,

@@ -25,25 +25,11 @@ var flumeAgent,
   flumeAgentData = {
     id: 'agent',
     name: 'agent'
-  },
-  cases = [
-    {
-      status: 'RUNNING',
-      healthClass: App.healthIconClassGreen
-    },
-    {
-      status: 'NOT_RUNNING',
-      healthClass: App.healthIconClassRed
-    },
-    {
-      status: 'UNKNOWN',
-      healthClass: App.healthIconClassYellow
-    },
-    {
-      status: 'ANOTHER_STATUS',
-      healthClass: App.healthIconClassYellow
-    }
-  ];
+  };
+
+function getModel() {
+  return App.FlumeAgent.createRecord();
+}
 
 describe('App.FlumeAgent', function () {
 
@@ -55,14 +41,16 @@ describe('App.FlumeAgent', function () {
     modelSetup.deleteRecord(flumeAgent);
   });
 
-  describe('#healthClass', function () {
-    cases.forEach(function (item) {
-      var healthClass = item.healthClass;
-      it('should be ' + healthClass, function () {
-        flumeAgent.set('status', item.status);
-        expect(flumeAgent.get('healthClass')).to.equal(healthClass);
-      });
-    });
-  });
+  App.TestAliases.testAsComputedGetByKey(getModel(), 'healthClass', 'healthClassMap', 'status', {defaultValue: App.healthIconClassYellow, map: {
+    RUNNING: App.healthIconClassGreen,
+    NOT_RUNNING: App.healthIconClassRed,
+    UNKNOWN: App.healthIconClassYellow
+  }});
+
+  App.TestAliases.testAsComputedGetByKey(getModel(), 'displayStatus', 'displayStatusMap', 'status', {defaultValue: Em.I18n.t('common.unknown'), map: {
+    RUNNING: Em.I18n.t('common.running'),
+    NOT_RUNNING: Em.I18n.t('common.stopped'),
+    UNKNOWN: Em.I18n.t('common.unknown')
+  }});
 
 });

@@ -28,35 +28,22 @@ describe('App.ReloadPopupMixin', function () {
     obj = Em.Object.create(App.ReloadPopupMixin);
   });
 
-  describe('#showReloadPopup', function () {
-
-    var spanRegExp = new RegExp('<span>([\\s\\S]+)<\/span>'),
-      cases = [
-        {
-          result: Em.I18n.t('app.reloadPopup.text'),
-          title: 'should show modal popup with default message'
-        },
-        {
-          text: 'text',
-          result: 'text',
-          title: 'should show modal popup with custom message'
-        }
-      ];
-
-    beforeEach(function () {
-      sinon.stub(App.ModalPopup, 'show', function (popup) {
-        return popup.body;
-      });
-    });
-
-    afterEach(function () {
-      App.ModalPopup.show.restore();
-    });
+  describe('#popupText', function () {
+    var cases = [
+      {
+        result: Em.I18n.t('app.reloadPopup.text'),
+        title: 'should show modal popup with default message'
+      },
+      {
+        text: 'text',
+        result: 'text',
+        title: 'should show modal popup with custom message'
+      }
+    ];
 
     cases.forEach(function (item) {
       it(item.title, function () {
-        obj.showReloadPopup(item.text);
-        expect(obj.get('reloadPopup').match(spanRegExp)[1]).to.equal(item.result);
+        expect(obj.popupText(item.text)).to.equal(item.result);
       });
     });
 
@@ -65,11 +52,9 @@ describe('App.ReloadPopupMixin', function () {
   describe('#closeReloadPopup', function () {
 
     it('should hide modal popup', function () {
-      obj.set('retryCount', 1);
       obj.showReloadPopup();
       obj.closeReloadPopup();
       expect(obj.get('reloadPopup')).to.be.null;
-      expect(obj.get('retryCount')).to.equal(0);
     });
 
   });
@@ -77,103 +62,130 @@ describe('App.ReloadPopupMixin', function () {
   describe('#reloadSuccessCallback', function () {
 
     it('should hide modal popup', function () {
-      obj.set('retryCount', 1);
       obj.showReloadPopup();
       obj.reloadSuccessCallback();
       expect(obj.get('reloadPopup')).to.be.null;
-      expect(obj.get('retryCount')).to.equal(0);
     });
 
   });
 
   describe('#reloadErrorCallback', function () {
 
-    var cases = [
-      {
-        args: [{status: 404}, null, null, {}, {shouldUseDefaultHandler: true}],
-        closeReloadPopupCallCount: 1,
-        consoleLogCallCount: 0,
-        defaultErrorHandlerCallCount: 1,
-        showReloadPopupCallCount: 0,
-        setTimeoutCount: 0,
-        title: 'status received, no console message, default error handler'
-      },
-      {
-        args: [{status: 404}, null, null, {}, {errorLogMessage: 'error'}],
-        closeReloadPopupCallCount: 1,
-        consoleLogCallCount: 1,
-        defaultErrorHandlerCallCount: 0,
-        showReloadPopupCallCount: 0,
-        setTimeoutCount: 0,
-        title: 'status received, console message displayed, no default error handler'
-      },
-      {
-        args: [{status: 0}, null, null, {}, {times: 5}],
-        retryCount: 5,
-        retryCountResult: 5,
-        closeReloadPopupCallCount: 0,
-        consoleLogCallCount: 0,
-        defaultErrorHandlerCallCount: 0,
-        showReloadPopupCallCount: 1,
-        setTimeoutCount: 0,
-        title: 'no status received, custom retries count, max retries reached'
-      },
-      {
-        args: [{status: 0}, null, null, {}, {}],
-        retryCount: 2,
-        retryCountResult: 3,
-        closeReloadPopupCallCount: 0,
-        consoleLogCallCount: 0,
-        defaultErrorHandlerCallCount: 0,
-        showReloadPopupCallCount: 1,
-        setTimeoutCount: 0,
-        title: 'no status received, default retries count, max retries not reached, no callback'
-      },
-      {
-        args: [{status: 0}, null, null, {}, {callback: Em.K}],
-        retryCount: 2,
-        retryCountResult: 3,
-        closeReloadPopupCallCount: 0,
-        consoleLogCallCount: 0,
-        defaultErrorHandlerCallCount: 0,
-        showReloadPopupCallCount: 1,
-        setTimeoutCount: 1,
-        title: 'no status received, default retries count, max retries not reached, callback specified'
-      }
-    ];
-
-    beforeEach(function () {
-      sinon.stub(obj, 'closeReloadPopup', Em.K);
-      sinon.stub(console, 'log', Em.K);
-      sinon.stub(App.ajax, 'defaultErrorHandler', Em.K);
-      sinon.stub(obj, 'showReloadPopup', Em.K);
-      sinon.stub(App, 'get').withArgs('maxRetries').returns(3);
-      sinon.stub(window, 'setTimeout', Em.K);
-    });
-
-    afterEach(function () {
-      obj.closeReloadPopup.restore();
-      console.log.restore();
-      App.ajax.defaultErrorHandler.restore();
-      obj.showReloadPopup.restore();
-      App.get.restore();
-      window.setTimeout.restore();
-    });
+    var clock,
+      cases = [
+        {
+          args: [{status: 404}, null, null, {}, {shouldUseDefaultHandler: true}],
+          closeReloadPopupCallCount: 1,
+          defaultErrorHandlerCallCount: 1,
+          showReloadPopupCallCount: 0,
+          isCallbackCalled: false,
+          title: 'status received, default error handler'
+        },
+        {
+          args: [{status: 404}, null, null, {}, {}],
+          closeReloadPopupCallCount: 1,
+          defaultErrorHandlerCallCount: 0,
+          showReloadPopupCallCount: 0,
+          isCallbackCalled: false,
+          title: 'status received, no default error handler'
+        },
+        {
+          args: [{status: 0}, null, null, {}, {}],
+          closeReloadPopupCallCount: 0,
+          defaultErrorHandlerCallCount: 0,
+          showReloadPopupCallCount: 1,
+          isCallbackCalled: false,
+          title: 'no status received, no callback'
+        },
+        {
+          args: [{status: 0}, null, null, {}, {callback: Em.K, timeout: 2000}],
+          timeout: 1999,
+          closeReloadPopupCallCount: 0,
+          defaultErrorHandlerCallCount: 0,
+          showReloadPopupCallCount: 1,
+          isCallbackCalled: false,
+          title: 'no status received, callback specified, custom timeout, not enough time passed'
+        },
+        {
+          args: [{status: 0}, null, null, {}, {callback: Em.K}],
+          timeout: 999,
+          closeReloadPopupCallCount: 0,
+          defaultErrorHandlerCallCount: 0,
+          showReloadPopupCallCount: 1,
+          isCallbackCalled: false,
+          title: 'no status received, callback specified, default timeout, not enough time passed'
+        },
+        {
+          args: [{status: 0}, null, null, {}, {callback: Em.K, args: [{}], timeout: 2000}],
+          timeout: 2000,
+          closeReloadPopupCallCount: 0,
+          defaultErrorHandlerCallCount: 0,
+          showReloadPopupCallCount: 1,
+          isCallbackCalled: true,
+          callbackArgs: [{}],
+          title: 'no status received, callback with arguments specified, custom timeout, enough time passed'
+        },
+        {
+          args: [{status: 0}, null, null, {}, {callback: Em.K}],
+          timeout: 1000,
+          closeReloadPopupCallCount: 0,
+          defaultErrorHandlerCallCount: 0,
+          showReloadPopupCallCount: 1,
+          isCallbackCalled: true,
+          callbackArgs: [],
+          title: 'no status received, callback with no arguments specified, default timeout, enough time passed'
+        }
+      ];
 
     cases.forEach(function (item) {
-      it(item.title, function () {
-        if (!Em.isNone(item.retryCount)) {
-          obj.set('retryCount', item.retryCount);
+      describe(item.title, function () {
+
+        beforeEach(function () {
+          sinon.stub(obj, 'closeReloadPopup', Em.K);
+          sinon.stub(App.ajax, 'defaultErrorHandler', Em.K);
+          sinon.stub(obj, 'showReloadPopup', Em.K);
+          sinon.stub(App, 'get').withArgs('timeout').returns(1000);
+          if (item.args[4].callback) {
+            sinon.spy(item.args[4], 'callback');
+          }
+          clock = sinon.useFakeTimers();
+          obj.reloadErrorCallback.apply(obj, item.args);
+          clock.tick(item.timeout);
+        });
+
+        afterEach(function () {
+          obj.closeReloadPopup.restore();
+          App.ajax.defaultErrorHandler.restore();
+          obj.showReloadPopup.restore();
+          App.get.restore();
+          if (item.args[4].callback) {
+            item.args[4].callback.restore();
+          }
+          clock.restore();
+        });
+
+        it('closeReloadPopup call', function () {
+          expect(obj.closeReloadPopup.callCount).to.equal(item.closeReloadPopupCallCount);
+        });
+        it('defaultErrorHandler call', function () {
+          expect(App.ajax.defaultErrorHandler.callCount).to.equal(item.defaultErrorHandlerCallCount);
+        });
+        it('showReloadPopup call', function () {
+          expect(obj.showReloadPopup.callCount).to.equal(item.showReloadPopupCallCount);
+        });
+
+        if (item.isCallbackCalled) {
+          it('callback call', function () {
+            expect(item.args[4].callback.calledOnce).to.be.true;
+          });
+          it('callback context', function () {
+            expect(item.args[4].callback.calledOn(obj)).to.be.true;
+          });
+          it('callback arguments', function () {
+            expect(item.args[4].callback.firstCall.args).to.eql(item.callbackArgs);
+          });
         }
-        obj.reloadErrorCallback.apply(obj, item.args);
-        expect(obj.closeReloadPopup.callCount).to.equal(item.closeReloadPopupCallCount);
-        expect(console.log.callCount).to.equal(item.consoleLogCallCount);
-        expect(App.ajax.defaultErrorHandler.callCount).to.equal(item.defaultErrorHandlerCallCount);
-        expect(obj.showReloadPopup.callCount).to.equal(item.showReloadPopupCallCount);
-        expect(window.setTimeout.callCount).to.equal(item.setTimeoutCount);
-        if (!Em.isNone(item.retryCountResult)) {
-          obj.set('retryCount', item.retryCountResult);
-        }
+
       });
     });
 

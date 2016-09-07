@@ -19,24 +19,30 @@ package org.apache.ambari.server.state.stack.upgrade;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import javax.xml.bind.annotation.XmlAttribute;
 import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.XmlSeeAlso;
 
+import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.stack.HostsType;
 import org.apache.ambari.server.state.UpgradeContext;
 import org.apache.ambari.server.state.stack.UpgradePack;
+import org.apache.ambari.server.state.stack.UpgradePack.OrderService;
 import org.apache.ambari.server.state.stack.UpgradePack.ProcessingComponent;
+import org.apache.ambari.server.utils.SetUtils;
 import org.apache.commons.lang.StringUtils;
 
 /**
  *
  */
-@XmlSeeAlso(value = { ColocatedGrouping.class, ClusterGrouping.class, ServiceCheckGrouping.class })
+@XmlSeeAlso(value = { ColocatedGrouping.class, ClusterGrouping.class, UpdateStackGrouping.class, ServiceCheckGrouping.class, RestartGrouping.class, StartGrouping.class, StopGrouping.class })
 public class Grouping {
 
   @XmlAttribute(name="name")
@@ -45,8 +51,17 @@ public class Grouping {
   @XmlAttribute(name="title")
   public String title;
 
+  @XmlElement(name="add-after-group")
+  public String addAfterGroup;
+
+  @XmlElement(name="add-after-group-entry")
+  public String addAfterGroupEntry;
+
   @XmlElement(name="skippable", defaultValue="false")
   public boolean skippable = false;
+
+  @XmlElement(name = "supports-auto-skip-failure", defaultValue = "true")
+  public boolean supportsAutoSkipOnFailure = true;
 
   @XmlElement(name="allow-retry", defaultValue="true")
   public boolean allowRetry = true;
@@ -60,6 +75,11 @@ public class Grouping {
   @XmlElement(name="direction")
   public Direction intendedDirection = null;
 
+  @XmlElement(name="parallel-scheduler")
+  public ParallelScheduler parallelScheduler;
+
+  @XmlElement(name="scope")
+  public UpgradeScope scope = UpgradeScope.ANY;
 
   /**
    * Gets the default builder.
@@ -67,7 +87,6 @@ public class Grouping {
   public StageWrapperBuilder getBuilder() {
     return new DefaultBuilder(this, performServiceCheck);
   }
-
 
   private static class DefaultBuilder extends StageWrapperBuilder {
 
@@ -83,65 +102,130 @@ public class Grouping {
     /**
      * Add stages where the restart stages are ordered
      * E.g., preupgrade, restart hosts(0), ..., restart hosts(n-1), postupgrade
+     * @param context the context
      * @param hostsType the order collection of hosts, which may have a master and secondary
      * @param service the service name
      * @param pc the ProcessingComponent derived from the upgrade pack.
+     * @param params additional parameters
      */
     @Override
-    public void add(UpgradeContext ctx, HostsType hostsType, String service,
-       boolean clientOnly, ProcessingComponent pc) {
+    public void add(UpgradeContext context, HostsType hostsType, String service,
+       boolean clientOnly, ProcessingComponent pc, Map<String, String> params) {
 
-      boolean forUpgrade = ctx.getDirection().isUpgrade();
-
-      List<TaskBucket> buckets = buckets(resolveTasks(forUpgrade, true, pc));
+      // Construct the pre tasks during Upgrade/Downgrade direction.
+      // Buckets are grouped by the type, e.g., bucket of all Execute tasks, or all Configure tasks.
+      List<TaskBucket> buckets = buckets(resolveTasks(context, true, pc));
       for (TaskBucket bucket : buckets) {
-        List<TaskWrapper> preTasks = TaskWrapperBuilder.getTaskList(service, pc.name, hostsType, bucket.tasks);
-        Set<String> preTasksEffectiveHosts = TaskWrapperBuilder.getEffectiveHosts(preTasks);
-        if (!preTasksEffectiveHosts.isEmpty()) {
-          StageWrapper stage = new StageWrapper(
-              bucket.type,
-              getStageText("Preparing", ctx.getComponentDisplay(service, pc.name), preTasksEffectiveHosts),
-              preTasks
-              );
-          m_stages.add(stage);
+        // The TaskWrappers take into account if a task is meant to run on all, any, or master.
+        // A TaskWrapper may contain multiple tasks, but typically only one, and they all run on the same set of hosts.
+        List<TaskWrapper> preTasks = TaskWrapperBuilder.getTaskList(service, pc.name, hostsType, bucket.tasks, params);
+        List<List<TaskWrapper>> organizedTasks = organizeTaskWrappersBySyncRules(preTasks);
+        for (List<TaskWrapper> tasks : organizedTasks) {
+          addTasksToStageInBatches(tasks, "Preparing", context, service, pc, params);
         }
       }
 
-      // !!! FIXME upgrade definition have only one step, and it better be a restart
-      if (null != pc.tasks && 1 == pc.tasks.size()) {
-        Task t = pc.tasks.get(0);
-        if (RestartTask.class.isInstance(t)) {
-          for (String hostName : hostsType.hosts) {
-            StageWrapper stage = new StageWrapper(
-                StageWrapper.Type.RESTART,
-                getStageText("Restarting", ctx.getComponentDisplay(service, pc.name), Collections.singleton(hostName)),
-                new TaskWrapper(service, pc.name, Collections.singleton(hostName), t));
-            m_stages.add(stage);
-          }
-        }
+      // Add the processing component
+      Task t = resolveTask(context, pc);
+      if (null != t) {
+        TaskWrapper tw = new TaskWrapper(service, pc.name, hostsType.hosts, params, Collections.singletonList(t));
+        addTasksToStageInBatches(Collections.singletonList(tw), t.getActionVerb(), context, service, pc, params);
       }
 
-      buckets = buckets(resolveTasks(forUpgrade, false, pc));
+      // Construct the post tasks during Upgrade/Downgrade direction.
+      buckets = buckets(resolveTasks(context, false, pc));
       for (TaskBucket bucket : buckets) {
-        List<TaskWrapper> postTasks = TaskWrapperBuilder.getTaskList(service, pc.name, hostsType, bucket.tasks);
-        Set<String> postTasksEffectiveHosts = TaskWrapperBuilder.getEffectiveHosts(postTasks);
-        if (!postTasksEffectiveHosts.isEmpty()) {
-          StageWrapper stage = new StageWrapper(
-              bucket.type,
-              getStageText("Completing", ctx.getComponentDisplay(service, pc.name), postTasksEffectiveHosts),
-              postTasks
-              );
-          m_stages.add(stage);
+        List<TaskWrapper> postTasks = TaskWrapperBuilder.getTaskList(service, pc.name, hostsType, bucket.tasks, params);
+        List<List<TaskWrapper>> organizedTasks = organizeTaskWrappersBySyncRules(postTasks);
+        for (List<TaskWrapper> tasks : organizedTasks) {
+          addTasksToStageInBatches(tasks, "Completing", context, service, pc, params);
         }
       }
 
-      if (!clientOnly) {
+      // Potentially add a service check
+      if (m_serviceCheck && !clientOnly) {
         m_servicesToCheck.add(service);
       }
     }
 
     /**
-     * {@inheritDoc}
+     * Split a list of TaskWrappers into a list of lists where a TaskWrapper that has any task with isSequential == true
+     * must be a singleton in its own list.
+     * @param tasks List of TaskWrappers to analyze
+     * @return List of list of TaskWrappers, where each outer list is a separate stage.
+     */
+    private List<List<TaskWrapper>> organizeTaskWrappersBySyncRules(List<TaskWrapper> tasks) {
+      List<List<TaskWrapper>> groupedTasks = new ArrayList<List<TaskWrapper>>();
+
+      List<TaskWrapper> subTasks = new ArrayList<>();
+      for (TaskWrapper tw : tasks) {
+        // If an of this TaskWrapper's tasks must be on its own stage, write out the previous subtasks if possible into one complete stage.
+        if (tw.isAnyTaskSequential()) {
+          if (!subTasks.isEmpty()) {
+            groupedTasks.add(subTasks);
+            subTasks = new ArrayList<>();
+          }
+          groupedTasks.add(Collections.singletonList(tw));
+        } else {
+          subTasks.add(tw);
+        }
+      }
+
+      if (!subTasks.isEmpty()) {
+        groupedTasks.add(subTasks);
+      }
+
+      return groupedTasks;
+    }
+
+    /**
+     * Helper function to analyze a ProcessingComponent and add its task to stages, depending on the batch size.
+     * @param tasks Collection of tasks for this stage
+     * @param verb Verb string to use in the title of the task
+     * @param ctx Upgrade Context
+     * @param service Service
+     * @param pc Processing Component
+     * @param params Params to add to the stage.
+     */
+    private void addTasksToStageInBatches(List<TaskWrapper> tasks, String verb, UpgradeContext ctx, String service, ProcessingComponent pc, Map<String, String> params) {
+      if (tasks == null || tasks.isEmpty() || tasks.get(0).getTasks() == null || tasks.get(0).getTasks().isEmpty()) {
+        return;
+      }
+
+      // Our assumption is that all of the tasks in the StageWrapper are of the same type.
+      StageWrapper.Type type = tasks.get(0).getTasks().get(0).getStageWrapperType();
+
+      // Expand some of the TaskWrappers into multiple based on the batch size.
+      for (TaskWrapper tw : tasks) {
+        List<Set<String>> hostSets = null;
+        if (m_grouping.parallelScheduler != null && m_grouping.parallelScheduler.maxDegreeOfParallelism > 0) {
+          hostSets = SetUtils.split(tw.getHosts(), m_grouping.parallelScheduler.maxDegreeOfParallelism);
+        } else {
+          hostSets = SetUtils.split(tw.getHosts(), 1);
+        }
+
+        int numBatchesNeeded = hostSets.size();
+        int batchNum = 0;
+        for (Set<String> hostSubset : hostSets) {
+          batchNum++;
+          TaskWrapper expandedTW = new TaskWrapper(tw.getService(), tw.getComponent(), hostSubset, tw.getParams(), tw.getTasks());
+
+          String stageText = getStageText(verb, ctx.getComponentDisplay(service, pc.name), hostSubset, batchNum, numBatchesNeeded);
+
+          StageWrapper stage = new StageWrapper(
+              type,
+              stageText,
+              params,
+              new TaskWrapper(service, pc.name, hostSubset, params, tw.getTasks()));
+          m_stages.add(stage);
+        }
+      }
+    }
+
+    /**
+     * Determine if service checks need to be ran after the stages.
+     * @param upgradeContext the upgrade context
+     * @return Return the stages, which may potentially be followed by service checks.
      */
     @Override
     public List<StageWrapper> build(UpgradeContext upgradeContext,
@@ -202,7 +286,6 @@ public class Grouping {
     }
 
     return holders;
-
   }
 
   private static class TaskBucket {
@@ -218,14 +301,82 @@ public class Grouping {
         case EXECUTE:
           type = StageWrapper.Type.RU_TASKS;
           break;
+        case CONFIGURE_FUNCTION:
+          type = StageWrapper.Type.CONFIGURE;
+          break;
         case RESTART:
           type = StageWrapper.Type.RESTART;
+          break;
+        case START:
+          type = StageWrapper.Type.START;
+          break;
+        case STOP:
+          type = StageWrapper.Type.STOP;
           break;
         case SERVICE_CHECK:
           type = StageWrapper.Type.SERVICE_CHECK;
           break;
       }
       tasks.add(initial);
+    }
+  }
+
+  /**
+   * Merge the services of all the child groups, with the current services.
+   * Keeping the order specified by the group.
+   */
+  public void merge(Iterator<Grouping> iterator) throws AmbariException {
+    Map<String, List<OrderService>> skippedServices = new HashMap<>();
+    while (iterator.hasNext()) {
+      Grouping group = iterator.next();
+
+      boolean added = addGroupingServices(group.services, group.addAfterGroupEntry);
+      if (added) {
+        addSkippedServices(skippedServices, group.services);
+      } else {
+        // store these services until later
+        if (skippedServices.containsKey(group.addAfterGroupEntry)) {
+          List<OrderService> tmp = skippedServices.get(group.addAfterGroupEntry);
+          tmp.addAll(group.services);
+        } else {
+          skippedServices.put(group.addAfterGroupEntry, group.services);
+        }
+      }
+    }
+  }
+
+  /**
+   * Merge the services to add after a particular service name
+   */
+  private boolean addGroupingServices(List<OrderService> servicesToAdd, String after) {
+    if (after == null) {
+      services.addAll(servicesToAdd);
+      return true;
+    }
+    else {
+      // Check the current services, if the "after" service is there then add these
+      for (int index = services.size() - 1; index >= 0; index--) {
+        OrderService service = services.get(index);
+        if (service.serviceName.equals(after)) {
+          services.addAll(index + 1, servicesToAdd);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Adds services which were previously skipped, if the service they are supposed
+   * to come after has been added.
+   */
+  private void addSkippedServices(Map<String, List<OrderService>> skippedServices, List<OrderService> servicesJustAdded) {
+    for (OrderService service : servicesJustAdded) {
+      if (skippedServices.containsKey(service.serviceName)) {
+        List<OrderService> servicesToAdd = skippedServices.remove(service.serviceName);
+        addGroupingServices(servicesToAdd, service.serviceName);
+        addSkippedServices(skippedServices, servicesToAdd);
+      }
     }
   }
 }

@@ -18,18 +18,24 @@
 
 package org.apache.ambari.server.topology;
 
+import org.apache.ambari.server.controller.internal.ProvisionAction;
 import org.apache.ambari.server.controller.internal.Stack;
 import org.apache.ambari.server.orm.entities.HostGroupEntity;
 import org.apache.ambari.server.state.DependencyInfo;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Host Group representation.
  */
 public interface HostGroup {
 
+  /**
+   * Compiled regex for hostgroup token.
+   */
+  Pattern HOSTGROUP_REGEX = Pattern.compile("%HOSTGROUP::(\\S+?)%");
   /**
    * Get the name of the host group.
    *
@@ -55,9 +61,28 @@ public interface HostGroup {
   /**
    * Get all of the host group components.
    *
-   * @return collection of component names
+   * @return collection of component instances
    */
-  public Collection<String> getComponents();
+  public Collection<Component> getComponents();
+
+  /**
+   * Get all of the host group component names
+   *
+   * @return collection of component names as String
+   */
+  public Collection<String> getComponentNames();
+
+  /**
+   * Get all host group component names for instances
+   *   that have the specified provision action association.
+   *
+   * @param provisionAction the provision action that must be associated
+   *                          with the component names returned
+   *
+   * @return collection of component names as String that are associated with
+   *           the specified provision action
+   */
+  public Collection<String> getComponentNames(ProvisionAction provisionAction);
 
   /**
    * Get the host group components which belong to the specified service.
@@ -76,6 +101,16 @@ public interface HostGroup {
    * @return true if the component didn't already exist
    */
   public boolean addComponent(String component);
+
+  /**
+   * Add a component to the host group, with the specified name
+   *   and provision action.
+   *
+   * @param component  component name
+   * @param provisionAction provision action for this component
+   * @return
+   */
+  public boolean addComponent(String component, ProvisionAction provisionAction);
 
   /**
    * Determine if the host group contains a master component.

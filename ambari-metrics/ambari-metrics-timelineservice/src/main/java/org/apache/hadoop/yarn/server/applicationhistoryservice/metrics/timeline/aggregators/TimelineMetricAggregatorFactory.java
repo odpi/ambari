@@ -20,6 +20,8 @@ package org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline
 import org.apache.commons.io.FilenameUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.PhoenixHBaseAccessor;
+import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.availability.MetricCollectorHAController;
+import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.discovery.TimelineMetricMetadataManager;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.CLUSTER_AGGREGATOR_DAILY_CHECKPOINT_CUTOFF_MULTIPLIER;
@@ -31,6 +33,9 @@ import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.ti
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.CLUSTER_AGGREGATOR_MINUTE_CHECKPOINT_CUTOFF_MULTIPLIER;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.CLUSTER_AGGREGATOR_MINUTE_DISABLED;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.CLUSTER_AGGREGATOR_MINUTE_SLEEP_INTERVAL;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.CLUSTER_AGGREGATOR_SECOND_CHECKPOINT_CUTOFF_MULTIPLIER;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.CLUSTER_AGGREGATOR_SECOND_DISABLED;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.CLUSTER_AGGREGATOR_SECOND_SLEEP_INTERVAL;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.CLUSTER_AGGREGATOR_TIMESLICE_INTERVAL;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.DEFAULT_CHECKPOINT_LOCATION;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.HOST_AGGREGATOR_DAILY_CHECKPOINT_CUTOFF_MULTIPLIER;
@@ -44,11 +49,19 @@ import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.ti
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.HOST_AGGREGATOR_MINUTE_SLEEP_INTERVAL;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.TIMELINE_METRICS_AGGREGATOR_CHECKPOINT_DIR;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricConfiguration.USE_GROUPBY_AGGREGATOR_QUERIES;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.availability.AggregationTaskRunner.AGGREGATOR_NAME.METRIC_AGGREGATE_DAILY;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.availability.AggregationTaskRunner.AGGREGATOR_NAME.METRIC_AGGREGATE_HOURLY;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.availability.AggregationTaskRunner.AGGREGATOR_NAME.METRIC_AGGREGATE_MINUTE;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.availability.AggregationTaskRunner.AGGREGATOR_NAME.METRIC_AGGREGATE_SECOND;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.availability.AggregationTaskRunner.AGGREGATOR_NAME.METRIC_RECORD_DAILY;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.availability.AggregationTaskRunner.AGGREGATOR_NAME.METRIC_RECORD_HOURLY;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.availability.AggregationTaskRunner.AGGREGATOR_NAME.METRIC_RECORD_MINUTE;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL.METRICS_AGGREGATE_DAILY_TABLE_NAME;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL.METRICS_AGGREGATE_HOURLY_TABLE_NAME;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL.METRICS_AGGREGATE_MINUTE_TABLE_NAME;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL.METRICS_CLUSTER_AGGREGATE_DAILY_TABLE_NAME;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL.METRICS_CLUSTER_AGGREGATE_HOURLY_TABLE_NAME;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL.METRICS_CLUSTER_AGGREGATE_MINUTE_TABLE_NAME;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL.METRICS_CLUSTER_AGGREGATE_TABLE_NAME;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL.METRICS_RECORD_TABLE_NAME;
 
@@ -65,6 +78,8 @@ public class TimelineMetricAggregatorFactory {
     "timeline-metrics-host-aggregator-daily-checkpoint";
   private static final String CLUSTER_AGGREGATOR_CHECKPOINT_FILE =
     "timeline-metrics-cluster-aggregator-checkpoint";
+  private static final String CLUSTER_AGGREGATOR_MINUTE_CHECKPOINT_FILE =
+    "timeline-metrics-cluster-aggregator-minute-checkpoint";
   private static final String CLUSTER_AGGREGATOR_HOURLY_CHECKPOINT_FILE =
     "timeline-metrics-cluster-aggregator-hourly-checkpoint";
   private static final String CLUSTER_AGGREGATOR_DAILY_CHECKPOINT_FILE =
@@ -76,9 +91,11 @@ public class TimelineMetricAggregatorFactory {
 
   /**
    * Minute based aggregation for hosts.
+   * Interval : 5 mins
    */
   public static TimelineMetricAggregator createTimelineMetricAggregatorMinute
-    (PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf) {
+    (PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf,
+     MetricCollectorHAController haController) {
 
     String checkpointDir = metricsConf.get(
       TIMELINE_METRICS_AGGREGATOR_CHECKPOINT_DIR, DEFAULT_CHECKPOINT_LOCATION);
@@ -96,6 +113,7 @@ public class TimelineMetricAggregatorFactory {
 
     if (useGroupByAggregator(metricsConf)) {
       return new org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.v2.TimelineMetricHostAggregator(
+        METRIC_RECORD_MINUTE,
         hBaseAccessor, metricsConf,
         checkpointLocation,
         sleepIntervalMillis,
@@ -103,25 +121,31 @@ public class TimelineMetricAggregatorFactory {
         hostAggregatorDisabledParam,
         inputTableName,
         outputTableName,
-        120000l
+        120000l,
+        haController
       );
     }
 
-    return new TimelineMetricHostAggregator(hBaseAccessor, metricsConf,
+    return new TimelineMetricHostAggregator(
+      METRIC_RECORD_MINUTE,
+      hBaseAccessor, metricsConf,
       checkpointLocation,
       sleepIntervalMillis,
       checkpointCutOffMultiplier,
       hostAggregatorDisabledParam,
       inputTableName,
       outputTableName,
-      120000l);
+      120000l,
+      haController);
   }
 
   /**
    * Hourly aggregation for hosts.
+   * Interval : 1 hour
    */
   public static TimelineMetricAggregator createTimelineMetricAggregatorHourly
-    (PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf) {
+    (PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf,
+     MetricCollectorHAController haController) {
 
     String checkpointDir = metricsConf.get(
       TIMELINE_METRICS_AGGREGATOR_CHECKPOINT_DIR, DEFAULT_CHECKPOINT_LOCATION);
@@ -139,6 +163,7 @@ public class TimelineMetricAggregatorFactory {
 
     if (useGroupByAggregator(metricsConf)) {
       return new org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.v2.TimelineMetricHostAggregator(
+        METRIC_RECORD_HOURLY,
         hBaseAccessor, metricsConf,
         checkpointLocation,
         sleepIntervalMillis,
@@ -146,25 +171,31 @@ public class TimelineMetricAggregatorFactory {
         hostAggregatorDisabledParam,
         inputTableName,
         outputTableName,
-        3600000l
+        3600000l,
+        haController
       );
     }
 
-    return new TimelineMetricHostAggregator(hBaseAccessor, metricsConf,
+    return new TimelineMetricHostAggregator(
+      METRIC_RECORD_HOURLY,
+      hBaseAccessor, metricsConf,
       checkpointLocation,
       sleepIntervalMillis,
       checkpointCutOffMultiplier,
       hostAggregatorDisabledParam,
       inputTableName,
       outputTableName,
-      3600000l);
+      3600000l,
+      haController);
   }
 
   /**
    * Daily aggregation for hosts.
+   * Interval : 1 day
    */
   public static TimelineMetricAggregator createTimelineMetricAggregatorDaily
-    (PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf) {
+    (PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf,
+     MetricCollectorHAController haController) {
 
     String checkpointDir = metricsConf.get(
       TIMELINE_METRICS_AGGREGATOR_CHECKPOINT_DIR, DEFAULT_CHECKPOINT_LOCATION);
@@ -182,6 +213,7 @@ public class TimelineMetricAggregatorFactory {
 
     if (useGroupByAggregator(metricsConf)) {
       return new org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.v2.TimelineMetricHostAggregator(
+        METRIC_RECORD_DAILY,
         hBaseAccessor, metricsConf,
         checkpointLocation,
         sleepIntervalMillis,
@@ -189,25 +221,33 @@ public class TimelineMetricAggregatorFactory {
         hostAggregatorDisabledParam,
         inputTableName,
         outputTableName,
-        3600000l
+        3600000l,
+        haController
       );
     }
 
-    return new TimelineMetricHostAggregator(hBaseAccessor, metricsConf,
+    return new TimelineMetricHostAggregator(
+      METRIC_RECORD_DAILY,
+      hBaseAccessor, metricsConf,
       checkpointLocation,
       sleepIntervalMillis,
       checkpointCutOffMultiplier,
       hostAggregatorDisabledParam,
       inputTableName,
       outputTableName,
-      3600000l);
+      3600000l,
+      haController);
   }
 
   /**
-   * Minute based aggregation for cluster.
+   * Second aggregation for cluster.
+   * Interval : 2 mins
+   * Timeslice : 30 sec
    */
-  public static TimelineMetricAggregator createTimelineClusterAggregatorMinute(
-      PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf) {
+  public static TimelineMetricAggregator createTimelineClusterAggregatorSecond(
+    PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf,
+    TimelineMetricMetadataManager metadataManager,
+    MetricCollectorHAController haController) {
 
     String checkpointDir = metricsConf.get(
       TIMELINE_METRICS_AGGREGATOR_CHECKPOINT_DIR, DEFAULT_CHECKPOINT_LOCATION);
@@ -216,20 +256,22 @@ public class TimelineMetricAggregatorFactory {
       CLUSTER_AGGREGATOR_CHECKPOINT_FILE);
 
     long sleepIntervalMillis = SECONDS.toMillis(metricsConf.getLong
-      (CLUSTER_AGGREGATOR_MINUTE_SLEEP_INTERVAL, 120l));
+      (CLUSTER_AGGREGATOR_SECOND_SLEEP_INTERVAL, 120l));
 
     long timeSliceIntervalMillis = SECONDS.toMillis(metricsConf.getInt
-      (CLUSTER_AGGREGATOR_TIMESLICE_INTERVAL, 15));
+      (CLUSTER_AGGREGATOR_TIMESLICE_INTERVAL, 30));
 
     int checkpointCutOffMultiplier =
-      metricsConf.getInt(CLUSTER_AGGREGATOR_MINUTE_CHECKPOINT_CUTOFF_MULTIPLIER, 2);
+      metricsConf.getInt(CLUSTER_AGGREGATOR_SECOND_CHECKPOINT_CUTOFF_MULTIPLIER, 2);
 
     String inputTableName = METRICS_RECORD_TABLE_NAME;
     String outputTableName = METRICS_CLUSTER_AGGREGATE_TABLE_NAME;
-    String aggregatorDisabledParam = CLUSTER_AGGREGATOR_MINUTE_DISABLED;
+    String aggregatorDisabledParam = CLUSTER_AGGREGATOR_SECOND_DISABLED;
 
-    // Minute based aggregation have added responsibility of time slicing
-    return new TimelineMetricClusterAggregatorMinute(
+    // Second based aggregation have added responsibility of time slicing
+    return new TimelineMetricClusterAggregatorSecond(
+      METRIC_AGGREGATE_SECOND,
+      metadataManager,
       hBaseAccessor, metricsConf,
       checkpointLocation,
       sleepIntervalMillis,
@@ -238,15 +280,71 @@ public class TimelineMetricAggregatorFactory {
       inputTableName,
       outputTableName,
       120000l,
-      timeSliceIntervalMillis
+      timeSliceIntervalMillis,
+      haController
+    );
+  }
+
+  /**
+   * Minute aggregation for cluster.
+   * Interval : 5 mins
+   */
+  public static TimelineMetricAggregator createTimelineClusterAggregatorMinute(
+    PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf,
+    MetricCollectorHAController haController) {
+
+    String checkpointDir = metricsConf.get(
+      TIMELINE_METRICS_AGGREGATOR_CHECKPOINT_DIR, DEFAULT_CHECKPOINT_LOCATION);
+
+    String checkpointLocation = FilenameUtils.concat(checkpointDir,
+      CLUSTER_AGGREGATOR_MINUTE_CHECKPOINT_FILE);
+
+    long sleepIntervalMillis = SECONDS.toMillis(metricsConf.getLong
+      (CLUSTER_AGGREGATOR_MINUTE_SLEEP_INTERVAL, 300l));
+
+    int checkpointCutOffMultiplier = metricsConf.getInt
+      (CLUSTER_AGGREGATOR_MINUTE_CHECKPOINT_CUTOFF_MULTIPLIER, 2);
+
+    String inputTableName = METRICS_CLUSTER_AGGREGATE_TABLE_NAME;
+    String outputTableName = METRICS_CLUSTER_AGGREGATE_MINUTE_TABLE_NAME;
+    String aggregatorDisabledParam = CLUSTER_AGGREGATOR_MINUTE_DISABLED;
+
+    if (useGroupByAggregator(metricsConf)) {
+      return new org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.v2.TimelineMetricClusterAggregator(
+        METRIC_AGGREGATE_MINUTE,
+        hBaseAccessor, metricsConf,
+        checkpointLocation,
+        sleepIntervalMillis,
+        checkpointCutOffMultiplier,
+        aggregatorDisabledParam,
+        inputTableName,
+        outputTableName,
+        120000l,
+        haController
+      );
+    }
+
+    return new TimelineMetricClusterAggregator(
+      METRIC_AGGREGATE_MINUTE,
+      hBaseAccessor, metricsConf,
+      checkpointLocation,
+      sleepIntervalMillis,
+      checkpointCutOffMultiplier,
+      aggregatorDisabledParam,
+      inputTableName,
+      outputTableName,
+      120000l,
+      haController
     );
   }
 
   /**
    * Hourly aggregation for cluster.
+   * Interval : 1 hour
    */
   public static TimelineMetricAggregator createTimelineClusterAggregatorHourly(
-    PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf) {
+    PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf,
+    MetricCollectorHAController haController) {
 
     String checkpointDir = metricsConf.get(
       TIMELINE_METRICS_AGGREGATOR_CHECKPOINT_DIR, DEFAULT_CHECKPOINT_LOCATION);
@@ -266,6 +364,7 @@ public class TimelineMetricAggregatorFactory {
 
     if (useGroupByAggregator(metricsConf)) {
       return new org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.v2.TimelineMetricClusterAggregator(
+        METRIC_AGGREGATE_HOURLY,
         hBaseAccessor, metricsConf,
         checkpointLocation,
         sleepIntervalMillis,
@@ -273,11 +372,13 @@ public class TimelineMetricAggregatorFactory {
         aggregatorDisabledParam,
         inputTableName,
         outputTableName,
-        120000l
+        120000l,
+        haController
       );
     }
 
     return new TimelineMetricClusterAggregator(
+      METRIC_AGGREGATE_HOURLY,
       hBaseAccessor, metricsConf,
       checkpointLocation,
       sleepIntervalMillis,
@@ -285,15 +386,18 @@ public class TimelineMetricAggregatorFactory {
       aggregatorDisabledParam,
       inputTableName,
       outputTableName,
-      120000l
+      120000l,
+      haController
     );
   }
 
   /**
    * Daily aggregation for cluster.
+   * Interval : 1 day
    */
   public static TimelineMetricAggregator createTimelineClusterAggregatorDaily(
-    PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf) {
+    PhoenixHBaseAccessor hBaseAccessor, Configuration metricsConf,
+    MetricCollectorHAController haController) {
 
     String checkpointDir = metricsConf.get(
       TIMELINE_METRICS_AGGREGATOR_CHECKPOINT_DIR, DEFAULT_CHECKPOINT_LOCATION);
@@ -313,6 +417,7 @@ public class TimelineMetricAggregatorFactory {
 
     if (useGroupByAggregator(metricsConf)) {
       return new org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.v2.TimelineMetricClusterAggregator(
+        METRIC_AGGREGATE_DAILY,
         hBaseAccessor, metricsConf,
         checkpointLocation,
         sleepIntervalMillis,
@@ -320,11 +425,13 @@ public class TimelineMetricAggregatorFactory {
         aggregatorDisabledParam,
         inputTableName,
         outputTableName,
-        120000l
+        120000l,
+        haController
       );
     }
 
     return new TimelineMetricClusterAggregator(
+      METRIC_AGGREGATE_DAILY,
       hBaseAccessor, metricsConf,
       checkpointLocation,
       sleepIntervalMillis,
@@ -332,7 +439,8 @@ public class TimelineMetricAggregatorFactory {
       aggregatorDisabledParam,
       inputTableName,
       outputTableName,
-      120000l
+      120000l,
+      haController
     );
   }
 }

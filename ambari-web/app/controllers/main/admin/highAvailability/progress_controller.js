@@ -17,7 +17,6 @@
  */
 
 var App = require('app');
-var installedComponents = [];
 
 App.HighAvailabilityProgressPageController = App.HighAvailabilityWizardController.extend(App.wizardProgressPageControllerMixin, {
 
@@ -36,21 +35,8 @@ App.HighAvailabilityProgressPageController = App.HighAvailabilityWizardControlle
         var controller = App.router.get('highAvailabilityWizardController');
         controller.clearTasksData();
         controller.clearStorageData();
-        controller.finish();
-        App.router.get('updateController').set('isWorking', true);
-        App.clusterStatus.setClusterStatus({
-          clusterName: App.router.get('content.cluster.name'),
-          clusterState: 'DEFAULT',
-          localdb: App.db.data
-        }, {
-          alwaysCallback: function () {
-            self.hide();
-            App.router.transitionTo('main.index');
-            Em.run.next(function () {
-              location.reload();
-            });
-          }
-        });
+        controller.resetOnClose(controller, 'main.services.index');
+        this.hide();
       },
       secondary: Em.I18n.t('no'),
       onSecondary: function () {

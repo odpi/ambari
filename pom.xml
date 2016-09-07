@@ -21,7 +21,7 @@
   <artifactId>ambari</artifactId>
   <packaging>pom</packaging>
   <name>Ambari Main</name>
-  <version>2.0.0-SNAPSHOT</version>
+  <version>2.0.0.0-SNAPSHOT</version>
   <description>Ambari</description>
   <url>http://ambari.apache.org/</url>
   <scm>
@@ -60,6 +60,7 @@
     <distMgmtStagingId>apache.staging.https</distMgmtStagingId>
     <distMgmtStagingName>Apache Release Distribution Repository</distMgmtStagingName>
     <distMgmtStagingUrl>https://repository.apache.org/service/local/staging/deploy/maven2</distMgmtStagingUrl>
+    <assemblyPhase>package</assemblyPhase> <!-- use -DassemblyPhase=none to skip building tarball, useful when you want purely compile jar -->
   </properties>
   <pluginRepositories>
     <pluginRepository>
@@ -141,7 +142,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
-          <version>2.13</version>
+          <version>2.19</version>
         </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
@@ -173,8 +174,8 @@
             <configuration>
               <name>package-version</name>
               <value>${project.version}</value>
-              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)((\.|-).*)?</regex>
-              <replacement>$1.$2.$3</replacement>
+              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)((\.|-).*)?</regex>
+              <replacement>$1.$2.$3.$4</replacement>
               <failIfNoMatch>true</failIfNoMatch>
             </configuration>
           </execution>
@@ -186,8 +187,8 @@
             <configuration>
               <name>package-release</name>
               <value>${project.version}</value>
-              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)((\.|-)(([0-9]+)|(SNAPSHOT)|(techwin)).*)?</regex>
-              <replacement>$6</replacement>
+              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)((\.|-)(([0-9]+)|(SNAPSHOT)|(techwin)).*)?</regex>
+              <replacement>$7</replacement>
               <failIfNoMatch>true</failIfNoMatch>
             </configuration>
           </execution>
@@ -285,6 +286,9 @@
             <exclude>.hg</exclude>
             <exclude>.hgignore</exclude>
             <exclude>.hgtags</exclude>
+            <exclude>**/.bowerrc</exclude>
+            <exclude>**/robots.txt</exclude>
+            <exclude>**/rat.txt</exclude>
 
             <!--Python Mock library (BSD license)-->
             <exclude>ambari-common/src/test/python/mock/**</exclude>
@@ -303,11 +307,20 @@
             <exclude>contrib/ambari-scom/ambari-scom-server/pass.txt</exclude>
             <exclude>contrib/ambari-scom/*/rat.txt</exclude>
             <exclude>contrib/ambari-scom/metrics-sink/target/**</exclude>
-            <exclude>contrib/ru_magician/lgpl_license.txt</exclude>
-            <exclude>contrib/ru_magician/README.md</exclude>
             <exclude>contrib/views/*/target/**</exclude>
+            <exclude>contrib/views/commons/src/main/resources/ui/*/.bowerrc</exclude>
+            <exclude>contrib/views/commons/src/main/resources/ui/*/bower_components/**</exclude>
+            <exclude>contrib/views/commons/src/main/resources/ui/*/node/**</exclude>
+            <exclude>contrib/views/commons/src/main/resources/ui/*/node_modules/**</exclude>
+            <exclude>contrib/views/commons/src/main/resources/ui/*/public/**</exclude>
+            <exclude>contrib/views/commons/src/main/resources/ui/*/vendor/**</exclude>
+            <exclude>contrib/views/commons/src/main/resources/ui/*/tests/**/public/**</exclude>
+            <exclude>contrib/views/commons/src/main/resources/ui/*/tests/**/vendor/**</exclude>
             <exclude>contrib/views/hive/src/main/resources/ui/hive-web/vendor/codemirror/**</exclude>
             <exclude>contrib/views/hive/src/main/resources/ui/hive-web/.bowerrc</exclude>
+            <exclude>contrib/views/hive-next/src/main/resources/ui/hive-web/vendor/codemirror/**</exclude>
+            <exclude>contrib/views/hive-next/src/main/resources/ui/hive-web/.bowerrc</exclude>
+            <exclude>contrib/views/files/src/main/resources/ui/.bowerrc</exclude>
             <exclude>contrib/views/files/src/main/resources/ui/bower_components/**</exclude>
             <exclude>contrib/views/files/src/main/resources/ui/node/**</exclude>
             <exclude>contrib/views/files/src/main/resources/ui/node_modules/**</exclude>
@@ -337,7 +350,7 @@
             <exclude>contrib/views/slider/src/main/resources/ui/app/assets/javascripts/**</exclude>
             <exclude>contrib/views/slider/src/main/resources/ui/bower_components/**</exclude>
             <exclude>contrib/views/slider/src/main/resources/ui/runner.js</exclude>
-	    <exclude>contrib/views/storm/src/main/resources/libs/**</exclude>
+	          <exclude>contrib/views/storm/src/main/resources/libs/**</exclude>
             <exclude>contrib/views/storm/src/main/resources/styles/default.css</exclude>
             <exclude>contrib/views/storm/src/main/resources/templates/**</exclude>
             <exclude>contrib/addons/package/deb/nagios_addon_deb_control</exclude>
@@ -347,6 +360,15 @@
             <exclude>contrib/views/*/.settings/**</exclude>
             <exclude>contrib/views/capacity-scheduler/src/main/resources/ui/app/**</exclude>
             <exclude>contrib/views/capacity-scheduler/src/main/resources/ui/runner.js</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/.bowerrc</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/bower_components/**</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/node/**</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/node_modules/**</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/public/**</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/vendor/**</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/runner.js</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/app/assets/stylesheets/**</exclude>
+            <exclude>contrib/views/hueambarimigration/src/main/resources/ui/hueambarimigration-view/app/assets/javascripts/**</exclude>
 
             <exclude>contrib/ambari-scom/ambari-scom-server/pass.txt</exclude>
             <exclude>contrib/ambari-scom/ambari-scom-server/target/**</exclude>
@@ -357,6 +379,8 @@
             <exclude>**/velocity.log*</exclude>
 
             <!-- Metrics module -->
+            <!-- grafana -->
+            <exclude>ambari-metrics/ambari-metrics-grafana/conf/unix/ams-grafana.ini</exclude>
             <!-- psutil : external lib, Apache 2.0 license included as a source file -->
             <exclude>ambari-metrics/target/**</exclude>
             <exclude>ambari-metrics/ambari-metrics-host-monitoring/src/main/python/psutil/**</exclude>
@@ -429,6 +453,29 @@
         <module>contrib/views</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-funtest</module>
+        <module>ambari-agent</module>
+        <module>ambari-client</module>
+        <module>ambari-shell</module>
+        <module>ambari-logsearch</module>
+      </modules>
+    </profile>
+    <profile>
+      <id>example-views</id>
+      <activation>
+        <property>
+          <name>exampleViews</name>
+        </property>
+      </activation>
+      <modules>
+        <module>ambari-web</module>
+        <module>ambari-project</module>
+        <module>ambari-views</module>
+        <module>ambari-admin</module>
+        <module>ambari-views/examples</module>
+        <module>ambari-metrics</module>
+        <module>ambari-server</module>
+        <module>ambari-funtest</module>
         <module>ambari-agent</module>
         <module>ambari-client</module>
         <module>ambari-shell</module>
@@ -442,9 +489,11 @@
         <module>ambari-admin</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-funtest</module>
         <module>ambari-agent</module>
         <module>ambari-client</module>
         <module>ambari-shell</module>
+        <module>ambari-logsearch</module>
       </modules>
     </profile>
     <profile>
@@ -461,9 +510,11 @@
         <module>ambari-admin</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-funtest</module>
         <module>ambari-agent</module>
         <module>ambari-client</module>
         <module>ambari-shell</module>
+        <module>ambari-logsearch</module>
       </modules>
     </profile>
     <profile>
@@ -486,6 +537,7 @@
         <module>ambari-admin</module>
         <module>ambari-metrics</module>
         <module>ambari-server</module>
+        <module>ambari-funtest</module>
         <module>ambari-agent</module>
         <module>ambari-client</module>
         <module>ambari-shell</module>

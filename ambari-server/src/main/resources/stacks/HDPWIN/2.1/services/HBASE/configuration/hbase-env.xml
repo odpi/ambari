@@ -19,8 +19,7 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <property>
     <name>hbase_log_dir</name>
     <value>c:\hadoop\logs\hbase</value>
@@ -30,6 +29,7 @@
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hbase_pid_dir</name>
@@ -40,13 +40,13 @@
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>hbase_user</name>
     <deleted>true</deleted>
+    <on-ambari-upgrade add="false"/>
   </property>
-
   <!-- hbase-env.cmd -->
   <property>
     <name>content</name>
@@ -115,5 +115,9 @@ set HBASE_USE_GC_LOGFILE=true
 @rem Tell HBase whether it should manage it's own instance of Zookeeper or not.
 @rem set HBASE_MANAGES_ZK=true
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

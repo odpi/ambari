@@ -17,9 +17,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
-
-from resource_management import *
+from resource_management.core.resources.system import Directory, Execute
+from resource_management.core.shell import as_user
+from resource_management.libraries.functions.show_logs import show_logs
+from resource_management.libraries.functions.format import format
 import time
+import os
 
 def accumulo_service( name,
                       action = 'start'): # 'start' or 'stop' or 'status'
@@ -31,34 +34,41 @@ def accumulo_service( name,
     pid_exists = format("ls {pid_file} >/dev/null 2>&1 && ps `cat {pid_file}` >/dev/null 2>&1")
 
     if action == 'start':
-      Execute(as_sudo(['chown','-R',params.accumulo_user+":"+params.user_group,
-                       format("$(getent passwd {accumulo_user} | cut -d: -f6)")],
-                      auto_escape=False),
-              ignore_failures=True)
+      Directory(os.path.expanduser("~"), 
+                owner = params.accumulo_user,
+                group = params.user_group,
+                recursive_ownership = True,
+                ignore_failures=True
+      )
+      
       if name != 'tserver':
         Execute(format("{daemon_script} org.apache.accumulo.master.state.SetGoalState NORMAL"),
-                not_if=pid_exists,
+                not_if=as_user(pid_exists, params.accumulo_user),
                 user=params.accumulo_user
         )
       address = params.hostname
       if name == 'monitor' and params.accumulo_monitor_bind_all:
         address = '0.0.0.0'
       daemon_cmd = format("{daemon_script} {role} --address {address} > {log_dir}/accumulo-{role}.out 2>{log_dir}/accumulo-{role}.err & echo $! > {pid_file}")
-      Execute ( daemon_cmd,
-        not_if=pid_exists,
-        user=params.accumulo_user
-      )
+      try:
+        Execute ( daemon_cmd,
+          not_if=as_user(pid_exists, params.accumulo_user),
+          user=params.accumulo_user
+        )
+      except:
+        show_logs(params.log_dir, params.accumulo_user)
+        raise
 
     elif action == 'stop':
       no_pid_exists = format("! ({pid_exists})")
 
       pid = format("`cat {pid_file}` >/dev/null 2>&1")
       Execute(format("kill {pid}"),
-        not_if=no_pid_exists,
+        not_if=as_user(no_pid_exists, params.accumulo_user),
         user=params.accumulo_user
       )
       Execute(format("kill -9 {pid}"),
-        not_if=format("sleep 2; {no_pid_exists} || sleep 20; {no_pid_exists}"),
+        not_if=as_user(format("sleep 2; {no_pid_exists} || sleep 20; {no_pid_exists}"), params.accumulo_user),
         ignore_failures=True,
         user=params.accumulo_user
       )

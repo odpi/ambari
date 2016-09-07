@@ -34,8 +34,6 @@ App.MainHostServiceMenuView = Em.CollectionView.extend({
               services.push(service);
             }
           }
-        } else {
-          console.warn("service not found for " + hc.get('componentName'));
         }
       });
     }
@@ -43,9 +41,7 @@ App.MainHostServiceMenuView = Em.CollectionView.extend({
     return misc.sortByOrder(stackServices, services);
   }.property('host'),
 
-  host: function () {
-    return App.router.get('mainHostDetailsController.content');
-  }.property('App.router.mainHostDetailsController.content'),
+  host: Em.computed.alias('App.router.mainHostDetailsController.content'),
 
   selectedService: null,
 

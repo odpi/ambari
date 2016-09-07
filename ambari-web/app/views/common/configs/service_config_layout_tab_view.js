@@ -39,9 +39,7 @@ App.ServiceConfigLayoutTabView = Em.View.extend(App.ConfigOverridable, {
   /**
    * @type {App.Service}
    */
-  service: function () {
-    return this.get('controller.selectedService');
-  }.property('controller.selectedService'),
+  service: Em.computed.alias('controller.selectedService'),
 
   templateName: require('templates/common/configs/service_config_layout_tab'),
 
@@ -55,7 +53,7 @@ App.ServiceConfigLayoutTabView = Em.View.extend(App.ConfigOverridable, {
   widgetTypeMap: {
     checkbox: App.CheckboxConfigWidgetView,
     combo: App.ComboConfigWidgetView,
-    directory: App.DirectoryConfigWidgetView,
+    directory: App.TextFieldConfigWidgetView,
     directories: App.DirectoryConfigWidgetView,
     list: App.ListConfigWidgetView,
     password: App.PasswordConfigWidgetView,
@@ -64,50 +62,26 @@ App.ServiceConfigLayoutTabView = Em.View.extend(App.ConfigOverridable, {
     'text-field': App.TextFieldConfigWidgetView,
     'time-interval-spinner': App.TimeIntervalSpinnerView,
     toggle: App.ToggleConfigWidgetView,
-    'text-area': App.StringConfigWidgetView
+    'text-area': App.StringConfigWidgetView,
+    'label': App.LabelView,
+    'test-db-connection': App.TestDbConnectionWidgetView
   },
 
   /**
    * Prepare configs for render
    * <code>subsection.configs</code> is an array of App.StackConfigProperty, but not App.ConfigProperty,
    * so proper config-properties should be linked to the subsections.
-   * Also correct widget should be used for each config (it's selected according to <code>widget.type</code> and
-   * <code>widgetTypeMap</code>). It may throw an error if needed widget can't be found in the <code>widgetTypeMap</code>
    * @method prepareConfigProperties
    */
   prepareConfigProperties: function () {
-    var widgetTypeMap = this.get('widgetTypeMap');
     var self = this;
-    var serviceName = self.get('controller.selectedService.serviceName');
     this.get('content.sectionRows').forEach(function (row) {
       row.forEach(function (section) {
         section.get('subsectionRows').forEach(function (subRow) {
           subRow.forEach(function (subsection) {
-            subsection.set('configs', []);
-            subsection.get('configProperties').forEach(function (config) {
-
-              var service = self.get('controller.stepConfigs').findProperty('serviceName', serviceName);
-              if (!service) return;
-              var configProperty = service.get('configs').findProperty('name', config.get('name'));
-              if (!configProperty) return;
-
-              subsection.get('configs').pushObject(configProperty);
-              var configWidgetType = config.get('widget.type');
-              var widget = widgetTypeMap[configWidgetType];
-              Em.assert('Unknown config widget view for config ' + configProperty.get('id') + ' with type ' + configWidgetType, widget);
-              configProperty.setProperties({
-                widget: widget,
-                stackConfigProperty: config
-              });
-              if (configProperty.get('overrides')) {
-                configProperty.get('overrides').setEach('stackConfigProperty', config);
-              }
-              if (configProperty.get('compareConfigs')) {
-                configProperty.get('compareConfigs').invoke('setProperties', {
-                  isComparison: false,
-                  stackConfigProperty: config
-                });
-              }
+            self.setConfigsToContainer(subsection);
+            subsection.get('subSectionTabs').forEach(function (subSectionTab) {
+              self.setConfigsToContainer(subSectionTab);
             });
           });
         });
@@ -115,13 +89,100 @@ App.ServiceConfigLayoutTabView = Em.View.extend(App.ConfigOverridable, {
     });
   },
 
+  /**
+   * set {code} configs {code} array of subsection or subsection tab.
+   * Also correct widget should be used for each config (it's selected according to <code>widget.type</code> and
+   * <code>widgetTypeMap</code>). It may throw an error if needed widget can't be found in the <code>widgetTypeMap</code>
+   * @param containerObject
+   */
+  setConfigsToContainer: function(containerObject) {
+    var self = this;
+    var service = this.get('controller.stepConfigs').findProperty('serviceName', this.get('controller.selectedService.serviceName'));
+    if (!service) return;
+    containerObject.set('configs', []);
+
+    containerObject.get('configProperties').forEach(function (configId) {
+
+      var config = App.configsCollection.getConfig(configId);
+      var configProperty = service.get('configs').findProperty('id', Em.get(config, 'id'));
+      if (!configProperty) return;
+
+      containerObject.get('configs').pushObject(configProperty);
+      var configWidgetType = Em.get(config, 'widgetType');
+      var widget = self.get('widgetTypeMap')[configWidgetType];
+      Em.assert('Unknown config widget view for config ' + configProperty.get('id') + ' with type ' + configWidgetType, widget);
+
+      var additionalProperties = {
+        widget: widget,
+        stackConfigProperty: config
+      };
+
+      var configConditions = App.ThemeCondition.find().filter(function (_configCondition) {
+        // Filter config condition depending on the value of another config
+        var conditionalConfigs = _configCondition.getWithDefault('configs', []).filterProperty('fileName', Em.get(config,'filename')).filterProperty('configName', Em.get(config,'name'));
+        // Filter config condition depending on the service existence or service state
+        var serviceConfigConditionFlag = ((_configCondition.get('configName') === Em.get(config,'name')) &&  (_configCondition.get('fileName') === Em.get(config,'filename')) &&  (_configCondition.get('resource') === 'service'));
+        var conditions;
+
+        if (serviceConfigConditionFlag) {
+          var configCondition = {
+            configName: _configCondition.get('configName'),
+            fileName: _configCondition.get('fileName')
+          };
+          conditions = conditionalConfigs.concat(configCondition)
+        } else {
+          conditions = conditionalConfigs;
+        }
+        return (conditions && conditions.length);
+      }, this);
+
+      if (configConditions && configConditions.length) {
+        additionalProperties.configConditions = configConditions;
+      }
+
+      var configAction = App.ConfigAction.find().filterProperty('fileName', Em.get(config,'filename')).findProperty('configName', Em.get(config,'name'));
+
+      if (configAction) {
+        additionalProperties.configAction = configAction;
+      }
+
+      configProperty.setProperties(additionalProperties);
+
+      if (configProperty.get('overrides')) {
+        configProperty.get('overrides').setEach('stackConfigProperty', config);
+      }
+      if (configProperty.get('compareConfigs')) {
+        configProperty.get('compareConfigs').invoke('setProperties', {
+          isComparison: false,
+          stackConfigProperty: config
+        });
+      }
+    });
+  },
+
+  /**
+   * changes active subsection tab
+   * @param event
+   */
+  setActiveSubTab: function(event) {
+    if (!event.context) return;
+    try {
+      event.context.get('subSection.subSectionTabs').setEach('isActive', false);
+      event.context.set('isActive', true);
+    } catch (e) {
+      console.error('Can\'t update active subsection tab');
+    }
+  },
+
   didInsertElement: function () {
     this.set('dataIsReady', false);
+    this.set('content.isConfigsPrepared', false);
     this._super();
     this.prepareConfigProperties();
     if (this.get('controller.isCompareMode')) {
       this.get('parentView').filterEnhancedConfigs();
     }
+    this.set('content.isConfigsPrepared', true);
     this.set('dataIsReady', true);
   }
 

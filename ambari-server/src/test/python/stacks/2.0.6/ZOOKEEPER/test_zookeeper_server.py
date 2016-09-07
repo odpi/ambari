@@ -25,7 +25,7 @@ import resource_management.libraries.functions.get_unique_id_and_date
 @patch("os.path.exists", new = MagicMock(return_value=True))
 @patch("platform.linux_distribution", new = MagicMock(return_value="Linux"))
 class TestZookeeperServer(RMFTestCase):
-  COMMON_SERVICES_PACKAGE_DIR = "ZOOKEEPER/3.4.5.2.0/package"
+  COMMON_SERVICES_PACKAGE_DIR = "ZOOKEEPER/3.4.5/package"
   STACK_VERSION = "2.0.6"
 
   def test_configure_default(self):
@@ -33,7 +33,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "configure",
                        config_file = "default.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assert_configure_default()
@@ -44,7 +44,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "start",
                        config_file = "default.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
@@ -60,14 +60,16 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "stop",
                        config_file = "default.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
     self.assertResourceCalled('Execute', 'source /etc/zookeeper/conf/zookeeper-env.sh ; env ZOOCFGDIR=/etc/zookeeper/conf ZOOCFG=zoo.cfg /usr/lib/zookeeper/bin/zkServer.sh stop',
       user = 'zookeeper',
     )
-    self.assertResourceCalled('Execute', 'rm -f /var/run/zookeeper/zookeeper_server.pid')
+    self.assertResourceCalled('File', '/var/run/zookeeper/zookeeper_server.pid',
+        action = ['delete'],
+    )
     self.assertNoMoreResources()
 
   def test_configure_secured(self):
@@ -75,7 +77,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "configure",
                        config_file = "secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assert_configure_secured()
@@ -86,7 +88,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "start",
                        config_file = "secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
@@ -104,7 +106,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "stop",
                        config_file = "secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
@@ -112,14 +114,16 @@ class TestZookeeperServer(RMFTestCase):
                   user = 'zookeeper',
     )
 
-    self.assertResourceCalled('Execute', 'rm -f /var/run/zookeeper/zookeeper_server.pid')
+    self.assertResourceCalled('File', '/var/run/zookeeper/zookeeper_server.pid',
+        action = ['delete'],
+    )
     self.assertNoMoreResources()
 
   def assert_configure_default(self):
     self.assertResourceCalled('Directory', '/etc/zookeeper/conf',
       owner = 'zookeeper',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
     )
     self.assertResourceCalled('File', '/etc/zookeeper/conf/zookeeper-env.sh',
       owner = 'zookeeper',
@@ -141,18 +145,21 @@ class TestZookeeperServer(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
+      mode = 0755,
     )
     self.assertResourceCalled('Directory', '/var/log/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
+      mode = 0755,
     )
     self.assertResourceCalled('Directory', '/hadoop/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
-      recursive = True,
-      cd_access='a'
+      create_parents = True,
+      cd_access='a',
+      mode = 0755,
     )
     self.assertResourceCalled('File', '/hadoop/zookeeper/myid',
       content = '1',
@@ -174,7 +181,7 @@ class TestZookeeperServer(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/zookeeper/conf',
       owner = 'zookeeper',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
     )
     self.assertResourceCalled('File', '/etc/zookeeper/conf/zookeeper-env.sh',
       owner = 'zookeeper',
@@ -196,18 +203,21 @@ class TestZookeeperServer(RMFTestCase):
     self.assertResourceCalled('Directory', '/var/run/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
+      mode = 0755,
     )
     self.assertResourceCalled('Directory', '/var/log/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
+      mode = 0755,
     )
     self.assertResourceCalled('Directory', '/hadoop/zookeeper',
       owner = 'zookeeper',
       group = 'hadoop',
-      recursive = True,
-      cd_access='a'
+      create_parents = True,
+      cd_access='a',
+      mode = 0755,
     )
     self.assertResourceCalled('File', '/hadoop/zookeeper/myid',
       content = '1',
@@ -265,7 +275,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "security_status",
                        config_file = "secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
@@ -288,7 +298,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "security_status",
                        config_file = "secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
       )
     except:
@@ -305,7 +315,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "security_status",
                        config_file = "secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     put_structured_out_mock.assert_called_with({"securityIssuesFound": "Keytab file or principal are not set property."})
@@ -324,7 +334,7 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "security_status",
                        config_file = "secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     put_structured_out_mock.assert_called_with({"securityState": "UNSECURED"})
@@ -334,13 +344,13 @@ class TestZookeeperServer(RMFTestCase):
                        classname = "ZookeeperServer",
                        command = "security_status",
                        config_file = "default.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     put_structured_out_mock.assert_called_with({"securityState": "UNSECURED"})
 
 
-  def test_pre_rolling_restart(self):
+  def test_pre_upgrade_restart(self):
     config_file = self.get_src_folder()+"/test/python/stacks/2.0.6/configs/default.json"
     with open(config_file, "r") as f:
       json_content = json.load(f)
@@ -348,16 +358,16 @@ class TestZookeeperServer(RMFTestCase):
     json_content['commandParams']['version'] = version
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/zookeeper_server.py",
                        classname = "ZookeeperServer",
-                       command = "pre_rolling_restart",
+                       command = "pre_upgrade_restart",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES)
     self.assertResourceCalled('Execute',
-                              ('hdp-select', 'set', 'zookeeper-server', version), sudo=True)
+                              ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'zookeeper-server', version), sudo=True)
     self.assertNoMoreResources()
 
   @patch("resource_management.core.shell.call")
-  def test_pre_rolling_restart_23(self, call_mock):
+  def test_pre_upgrade_restart_23(self, call_mock):
     call_mock.side_effects = [(0, None), (0, None)]
 
     config_file = self.get_src_folder()+"/test/python/stacks/2.0.6/configs/default.json"
@@ -369,29 +379,30 @@ class TestZookeeperServer(RMFTestCase):
     mocks_dict = {}
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/zookeeper_server.py",
                        classname = "ZookeeperServer",
-                       command = "pre_rolling_restart",
+                       command = "pre_upgrade_restart",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES,
-                       call_mocks = [(0, None), (0, None)],
+                       call_mocks = [(0, None, ''), (0, None)],
                        mocks_dict = mocks_dict)
 
+    self.assertResourceCalledIgnoreEarlier('Link', ('/etc/zookeeper/conf'), to='/etc/zookeeper/conf.backup')
     self.assertResourceCalled('Execute',
-                              ('hdp-select', 'set', 'zookeeper-server', version), sudo=True)
+                              ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'zookeeper-server', version), sudo=True)
 
     self.assertEquals(1, mocks_dict['call'].call_count)
     self.assertEquals(1, mocks_dict['checked_call'].call_count)
     self.assertEquals(
-      ('conf-select', 'set-conf-dir', '--package', 'zookeeper', '--stack-version', '2.3.0.0-3242', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'set-conf-dir', '--package', 'zookeeper', '--stack-version', '2.3.0.0-3242', '--conf-version', '0'),
        mocks_dict['checked_call'].call_args_list[0][0][0])
     self.assertEquals(
-      ('conf-select', 'create-conf-dir', '--package', 'zookeeper', '--stack-version', '2.3.0.0-3242', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'create-conf-dir', '--package', 'zookeeper', '--stack-version', '2.3.0.0-3242', '--conf-version', '0'),
        mocks_dict['call'].call_args_list[0][0][0])
 
     self.assertNoMoreResources()
 
   @patch.object(resource_management.libraries.functions, "get_unique_id_and_date")
-  def test_post_rolling_restart(self, get_unique_id_and_date_mock):
+  def test_post_upgrade_restart(self, get_unique_id_and_date_mock):
     unique_value = "unique1"
     get_unique_id_and_date_mock.return_value = unique_value
     config_file = self.get_src_folder()+"/test/python/stacks/2.0.6/configs/default.json"
@@ -403,9 +414,9 @@ class TestZookeeperServer(RMFTestCase):
     mocks_dict = {}
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/zookeeper_server.py",
                        classname = "ZookeeperServer",
-                       command = "post_rolling_restart",
+                       command = "post_upgrade_restart",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES,
                        call_mocks = [
                          (0, 'Created'),

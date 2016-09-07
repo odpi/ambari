@@ -18,12 +18,12 @@
 
 var App = require('app');
 
+var validator = require('utils/validator');
+
 App.WidgetWizardStep3Controller = Em.Controller.extend({
   name: "widgetWizardStep3Controller",
 
-  isEditController: function () {
-    return this.get('content.controllerName') == 'widgetEditController';
-  }.property('content.controllerName'),
+  isEditController: Em.computed.equal('content.controllerName', 'widgetEditController'),
 
   /**
    * @type {string}
@@ -31,9 +31,24 @@ App.WidgetWizardStep3Controller = Em.Controller.extend({
   widgetName: '',
 
   /**
+   * @type {boolean}
+   */
+  isNameInvalid: false,
+
+  /**
    * @type {string}
    */
   widgetAuthor: '',
+
+  /**
+   * @type {string}
+   */
+  widgetNameErrorMessage: '',
+
+  /**
+   * @type {string}
+   */
+  descriptionErrorMessage: '',
 
   /**
    * @type {boolean}
@@ -48,14 +63,17 @@ App.WidgetWizardStep3Controller = Em.Controller.extend({
   /**
    * @type {string}
    */
-  widgetScope: function () {
-    return this.get('isSharedChecked') ? 'Cluster' : 'User';
-  }.property('isSharedChecked'),
+  widgetScope: Em.computed.ifThenElse('isSharedChecked', 'Cluster', 'User'),
 
   /**
    * @type {string}
    */
   widgetDescription: '',
+
+  /**
+   * @type {boolean}
+   */
+  isDescriptionInvalid: false,
 
   /**
    * actual values of properties in API format
@@ -74,26 +92,54 @@ App.WidgetWizardStep3Controller = Em.Controller.extend({
   widgetMetrics: [],
 
   /**
-   * @type {boolean}
+   * @type {bool}
    */
-  isSubmitDisabled: function () {
-    var widgetNameEmpty = this.get('widgetName') ? !Boolean(this.get('widgetName').trim()) : true;
-    return widgetNameEmpty || this.get('isNameInvalid') || this.get('isDescriptionInvalid');
-  }.property('widgetName', 'isNameInvalid', 'isDescriptionInvalid'),
-
-  /**
-   * @type {boolean}
-   */
-  isNameInvalid: function () {
-    return this.get('widgetName') ? this.get('widgetName').length >= 129 : false;
+  widgetNameEmpty: function () {
+    return this.get('widgetName') ? !Boolean(this.get('widgetName').trim()) : true;
   }.property('widgetName'),
 
   /**
    * @type {boolean}
    */
-  isDescriptionInvalid: function () {
-    return this.get('widgetDescription') ? this.get('widgetDescription').length >= 2049 : false;
-  }.property('widgetDescription'),
+  isSubmitDisabled: Em.computed.or('widgetNameEmpty', 'isNameInvalid', 'isDescriptionInvalid'),
+
+  /**
+   * validates the name on 3rd step
+   */
+  validateName: function(){
+    var errorMessage='';
+    var widgetName = this.get('widgetName');
+    this.set("isNameInvalid",false);
+    if(widgetName && widgetName.length > 128){
+      errorMessage = Em.I18n.t("widget.create.wizard.step3.name.invalid.msg");
+      this.set("isNameInvalid",true);
+    }
+
+    if(widgetName && !validator.isValidWidgetName(widgetName)){
+      errorMessage = Em.I18n.t("widget.create.wizard.step3.name.invalidCharacter.msg");
+      this.set("isNameInvalid",true);
+    }
+    this.set('widgetNameErrorMessage',errorMessage);
+  }.observes('widgetName'),
+
+  /**
+   * validates the description on 3rd step
+   */
+  validateDescription: function(){
+    var errorMessage='';
+    var widgetDescription = this.get('widgetDescription');
+    this.set("isDescriptionInvalid",false);
+    if(widgetDescription && widgetDescription.length > 2048){
+      errorMessage = Em.I18n.t("widget.create.wizard.step3.description.invalid.msg");
+      this.set("isDescriptionInvalid",true);
+    }
+
+    if(widgetDescription && !validator.isValidWidgetDescription(widgetDescription)){
+      errorMessage = Em.I18n.t("widget.create.wizard.step3.description.invalidCharacter.msg");
+      this.set("isDescriptionInvalid",true);
+    }
+    this.set('descriptionErrorMessage',errorMessage);
+  }.observes('widgetDescription'),
 
   /**
    * restore widget data set on 2nd step

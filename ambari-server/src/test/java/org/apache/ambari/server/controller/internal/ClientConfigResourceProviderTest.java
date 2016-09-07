@@ -18,14 +18,58 @@
 
 package org.apache.ambari.server.controller.internal;
 
+import static org.easymock.EasyMock.anyObject;
+import static org.easymock.EasyMock.createMock;
+import static org.easymock.EasyMock.createNiceMock;
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.verify;
+import static org.junit.Assert.assertFalse;
+
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.configuration.Configuration;
-import org.apache.ambari.server.controller.*;
-import org.apache.ambari.server.controller.spi.*;
+import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.controller.RequestStatusResponse;
+import org.apache.ambari.server.controller.ServiceComponentHostRequest;
+import org.apache.ambari.server.controller.ServiceComponentHostResponse;
+import org.apache.ambari.server.controller.spi.Predicate;
+import org.apache.ambari.server.controller.spi.Request;
+import org.apache.ambari.server.controller.spi.Resource;
+import org.apache.ambari.server.controller.spi.ResourceProvider;
+import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.utilities.PredicateBuilder;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
-import org.apache.ambari.server.state.*;
+import org.apache.ambari.server.stack.StackManager;
+import org.apache.ambari.server.state.ClientConfigFileDefinition;
+import org.apache.ambari.server.state.Cluster;
+import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.CommandScriptDefinition;
+import org.apache.ambari.server.state.ComponentInfo;
+import org.apache.ambari.server.state.Config;
+import org.apache.ambari.server.state.ConfigHelper;
+import org.apache.ambari.server.state.DesiredConfig;
+import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.PropertyInfo;
+import org.apache.ambari.server.state.Service;
+import org.apache.ambari.server.state.ServiceComponent;
+import org.apache.ambari.server.state.ServiceComponentHost;
+import org.apache.ambari.server.state.ServiceInfo;
+import org.apache.ambari.server.state.ServiceOsSpecific;
+import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.utils.StageUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -33,17 +77,6 @@ import org.junit.runner.RunWith;
 import org.powermock.api.easymock.PowerMock;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
-
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.InputStream;
-import java.io.PrintWriter;
-import java.util.*;
-
-import org.apache.ambari.server.stack.StackManager;
-
-import static org.easymock.EasyMock.*;
-import static org.junit.Assert.assertFalse;
 
 /**
  * TaskResourceProvider tests.
@@ -190,6 +223,7 @@ public class ClientConfigResourceProviderTest {
     String clusterName = "C1";
     String serviceName = "PIG";
     String componentName = "PIG";
+    String displayName = "Pig Client";
     String hostName = "Host100";
     String desiredState = "INSTALLED";
 
@@ -215,32 +249,32 @@ public class ClientConfigResourceProviderTest {
     HashMap<String, ServiceOsSpecific> serviceOsSpecificHashMap = new HashMap<String, ServiceOsSpecific>();
     serviceOsSpecificHashMap.put("key",serviceOsSpecific);
 
-    ServiceComponentHostResponse shr1 = new ServiceComponentHostResponse(clusterName, serviceName, componentName, hostName, desiredState, "", null, null, null);
+    ServiceComponentHostResponse shr1 = new ServiceComponentHostResponse(clusterName, serviceName, componentName, displayName, hostName, desiredState, "", null, null, null);
 
     Set<ServiceComponentHostResponse> responses = new LinkedHashSet<ServiceComponentHostResponse>();
     responses.add(shr1);
 
     Map<String, String> returnConfigMap = new HashMap<String, String>();
-    returnConfigMap.put(Configuration.SERVER_TMP_DIR_KEY, Configuration.SERVER_TMP_DIR_DEFAULT);
-    returnConfigMap.put(Configuration.AMBARI_PYTHON_WRAP_KEY, Configuration.AMBARI_PYTHON_WRAP_DEFAULT);
-    
+    returnConfigMap.put(Configuration.SERVER_TMP_DIR.getKey(), Configuration.SERVER_TMP_DIR.getDefaultValue());
+    returnConfigMap.put(Configuration.AMBARI_PYTHON_WRAP.getKey(), Configuration.AMBARI_PYTHON_WRAP.getDefaultValue());
+
     // set expectations
     expect(managementController.getConfigHelper()).andReturn(configHelper);
     expect(managementController.getAmbariMetaInfo()).andReturn(ambariMetaInfo).anyTimes();
     expect(managementController.getClusters()).andReturn(clusters).anyTimes();
     expect(clusters.getCluster(clusterName)).andReturn(cluster).anyTimes();
     expect(configHelper.getEffectiveConfigProperties(cluster, configTags)).andReturn(properties);
-    expect(clusterConfig.getType()).andReturn(Configuration.HIVE_CONFIG_TAG).anyTimes();
     expect(configHelper.getEffectiveConfigAttributes(cluster, configTags)).andReturn(attributes);
-    expect(configMap.get(Configuration.SERVER_TMP_DIR_KEY)).andReturn(Configuration.SERVER_TMP_DIR_DEFAULT);
-    expect(configMap.get(Configuration.AMBARI_PYTHON_WRAP_KEY)).andReturn(Configuration.AMBARI_PYTHON_WRAP_DEFAULT);
+    expect(configMap.get(Configuration.SERVER_TMP_DIR.getKey())).andReturn(Configuration.SERVER_TMP_DIR.getDefaultValue());
+    expect(configMap.get(Configuration.AMBARI_PYTHON_WRAP.getKey())).andReturn(Configuration.AMBARI_PYTHON_WRAP.getDefaultValue());
     expect(configuration.getConfigsMap()).andReturn(returnConfigMap);
     expect(configuration.getResourceDirPath()).andReturn(stackRoot);
     expect(configuration.getJavaVersion()).andReturn(8);
     expect(configuration.areHostsSysPrepped()).andReturn("false");
-    expect(configuration.getExternalScriptTimeout()).andReturn(Integer.parseInt(Configuration.EXTERNAL_SCRIPT_TIMEOUT_DEFAULT));
+    expect(configuration.isAgentStackRetryOnInstallEnabled()).andReturn("false");
+    expect(configuration.getAgentStackRetryOnInstallCount()).andReturn("5");
+    expect(configuration.getExternalScriptTimeout()).andReturn(Configuration.EXTERNAL_SCRIPT_TIMEOUT.getDefaultValue());
     Map<String,String> props = new HashMap<String, String>();
-    props.put(Configuration.HIVE_METASTORE_PASSWORD_PROPERTY, "pass");
     props.put("key","value");
     expect(clusterConfig.getProperties()).andReturn(props);
     expect(configHelper.getEffectiveDesiredTags(cluster, hostName)).andReturn(allConfigTags);
@@ -278,6 +312,7 @@ public class ClientConfigResourceProviderTest {
     expect(componentInfo.getCommandScript()).andReturn(commandScriptDefinition);
     expect(componentInfo.getClientConfigFiles()).andReturn(clientConfigFileDefinitionList);
     expect(cluster.getConfig("hive-site", null)).andReturn(clusterConfig);
+    expect(clusterConfig.getType()).andReturn("hive-site").anyTimes();
     expect(cluster.getDesiredConfigs()).andReturn(desiredConfigMap);
     expect(clusters.getHost(hostName)).andReturn(host);
 
@@ -288,7 +323,7 @@ public class ClientConfigResourceProviderTest {
     expect(serviceInfo.getOsSpecifics()).andReturn(new HashMap<String, ServiceOsSpecific>()).anyTimes();
     Set<String> userSet = new HashSet<String>();
     userSet.add("hdfs");
-    expect(configHelper.getPropertyValuesWithPropertyType(stackId, PropertyInfo.PropertyType.USER, cluster)).andReturn(userSet);
+    expect(configHelper.getPropertyValuesWithPropertyType(stackId, PropertyInfo.PropertyType.USER, cluster, desiredConfigMap)).andReturn(userSet);
     PowerMock.expectNew(File.class, new Class<?>[]{String.class}, anyObject(String.class)).andReturn(mockFile).anyTimes();
     PowerMock.createNiceMockAndExpectNew(PrintWriter.class, anyObject());
     expect(mockFile.getParent()).andReturn("");
@@ -388,6 +423,7 @@ public class ClientConfigResourceProviderTest {
     String clusterName = "C1";
     String serviceName = "PIG";
     String componentName = "PIG";
+    String displayName = "Pig Client";
     String hostName = "Host100";
     String desiredState = "INSTALLED";
 
@@ -414,33 +450,33 @@ public class ClientConfigResourceProviderTest {
     HashMap<String, ServiceOsSpecific> serviceOsSpecificHashMap = new HashMap<String, ServiceOsSpecific>();
     serviceOsSpecificHashMap.put("key",serviceOsSpecific);
 
-    ServiceComponentHostResponse shr1 = new ServiceComponentHostResponse(clusterName, serviceName, componentName, hostName, desiredState, "", null, null, null);
+    ServiceComponentHostResponse shr1 = new ServiceComponentHostResponse(clusterName, serviceName, componentName, displayName, hostName, desiredState, "", null, null, null);
 
     Set<ServiceComponentHostResponse> responses = new LinkedHashSet<ServiceComponentHostResponse>();
     responses.add(shr1);
-    
+
     Map<String, String> returnConfigMap = new HashMap<String, String>();
-    returnConfigMap.put(Configuration.SERVER_TMP_DIR_KEY, Configuration.SERVER_TMP_DIR_DEFAULT);
-    returnConfigMap.put(Configuration.AMBARI_PYTHON_WRAP_KEY, Configuration.AMBARI_PYTHON_WRAP_DEFAULT);
-    
+    returnConfigMap.put(Configuration.SERVER_TMP_DIR.getKey(), Configuration.SERVER_TMP_DIR.getDefaultValue());
+    returnConfigMap.put(Configuration.AMBARI_PYTHON_WRAP.getKey(), Configuration.AMBARI_PYTHON_WRAP.getDefaultValue());
+
     // set expectations
     expect(managementController.getConfigHelper()).andReturn(configHelper);
     expect(managementController.getAmbariMetaInfo()).andReturn(ambariMetaInfo).anyTimes();
     expect(managementController.getClusters()).andReturn(clusters).anyTimes();
     expect(clusters.getCluster(clusterName)).andReturn(cluster).anyTimes();
     expect(configHelper.getEffectiveConfigProperties(cluster, configTags)).andReturn(properties);
-    expect(clusterConfig.getType()).andReturn(Configuration.HIVE_CONFIG_TAG).anyTimes();
     expect(configHelper.getEffectiveConfigAttributes(cluster, configTags)).andReturn(attributes);
-    expect(configMap.get(Configuration.SERVER_TMP_DIR_KEY)).andReturn(Configuration.SERVER_TMP_DIR_DEFAULT);
-    expect(configMap.get(Configuration.AMBARI_PYTHON_WRAP_KEY)).andReturn(Configuration.AMBARI_PYTHON_WRAP_DEFAULT);
+    expect(configMap.get(Configuration.SERVER_TMP_DIR.getKey())).andReturn(Configuration.SERVER_TMP_DIR.getDefaultValue());
+    expect(configMap.get(Configuration.AMBARI_PYTHON_WRAP.getKey())).andReturn(Configuration.AMBARI_PYTHON_WRAP.getDefaultValue());
     expect(configuration.getConfigsMap()).andReturn(returnConfigMap);
     expect(configuration.getResourceDirPath()).andReturn("/var/lib/ambari-server/src/main/resources");
     expect(configuration.getJavaVersion()).andReturn(8);
     expect(configuration.areHostsSysPrepped()).andReturn("false");
-    expect(configuration.getExternalScriptTimeout()).andReturn(Integer.parseInt(Configuration.EXTERNAL_SCRIPT_TIMEOUT_DEFAULT));
+    expect(configuration.isAgentStackRetryOnInstallEnabled()).andReturn("false");
+    expect(configuration.getAgentStackRetryOnInstallCount()).andReturn("5");
+    expect(configuration.getExternalScriptTimeout()).andReturn(Configuration.EXTERNAL_SCRIPT_TIMEOUT.getDefaultValue());
 
     Map<String,String> props = new HashMap<String, String>();
-    props.put(Configuration.HIVE_METASTORE_PASSWORD_PROPERTY, "pass");
     props.put("key","value");
     expect(clusterConfig.getProperties()).andReturn(props);
     expect(configHelper.getEffectiveDesiredTags(cluster, hostName)).andReturn(allConfigTags);
@@ -478,6 +514,7 @@ public class ClientConfigResourceProviderTest {
     expect(componentInfo.getCommandScript()).andReturn(commandScriptDefinition);
     expect(componentInfo.getClientConfigFiles()).andReturn(clientConfigFileDefinitionList);
     expect(cluster.getConfig("hive-site", null)).andReturn(clusterConfig);
+    expect(clusterConfig.getType()).andReturn("hive-site").anyTimes();
     expect(cluster.getDesiredConfigs()).andReturn(desiredConfigMap);
     expect(clusters.getHost(hostName)).andReturn(host);
 
@@ -488,7 +525,7 @@ public class ClientConfigResourceProviderTest {
     expect(serviceInfo.getOsSpecifics()).andReturn(new HashMap<String, ServiceOsSpecific>()).anyTimes();
     Set<String> userSet = new HashSet<String>();
     userSet.add("hdfs");
-    expect(configHelper.getPropertyValuesWithPropertyType(stackId, PropertyInfo.PropertyType.USER, cluster)).andReturn(userSet);
+    expect(configHelper.getPropertyValuesWithPropertyType(stackId, PropertyInfo.PropertyType.USER, cluster, desiredConfigMap)).andReturn(userSet);
     PowerMock.expectNew(File.class, new Class<?>[]{String.class}, anyObject(String.class)).andReturn(mockFile).anyTimes();
     PowerMock.createNiceMockAndExpectNew(PrintWriter.class, anyObject());
     expect(mockFile.getParent()).andReturn("");
@@ -526,9 +563,9 @@ public class ClientConfigResourceProviderTest {
             runtime, process);
     PowerMock.verifyAll();
   }
-  
-  
-  
+
+
+
   @Test
   public void testDeleteResources() throws Exception {
     Resource.Type type = Resource.Type.ClientConfig;
@@ -547,7 +584,7 @@ public class ClientConfigResourceProviderTest {
     Predicate predicate = new PredicateBuilder().property(
             ClientConfigResourceProvider.COMPONENT_COMPONENT_NAME_PROPERTY_ID).equals("HDFS_CLIENT").toPredicate();
     try {
-      provider.deleteResources(predicate);
+      provider.deleteResources(new RequestImpl(null, null, null, null), predicate);
       Assert.fail("Expected an UnsupportedOperationException");
     } catch (SystemException e) {
       // expected

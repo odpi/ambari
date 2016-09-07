@@ -20,12 +20,19 @@ package org.apache.ambari.server.topology;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
+
+import javax.annotation.Nullable;
+import javax.inject.Inject;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.ClusterNotFoundException;
@@ -56,6 +63,7 @@ import org.apache.ambari.server.controller.spi.ClusterController;
 import org.apache.ambari.server.controller.spi.Predicate;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.utilities.ClusterControllerHelper;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Config;
@@ -65,8 +73,13 @@ import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.SecurityType;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.configgroup.ConfigGroup;
+import org.apache.ambari.server.utils.RetryHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
+
 
 /**
  * Provides topology related information as well as access to the core Ambari functionality.
@@ -75,7 +88,12 @@ public class AmbariContext {
 
   public enum TaskType {INSTALL, START}
 
-  private static PersistedState persistedState = new PersistedStateImpl();
+  @Inject
+  private PersistedState persistedState;
+
+  @Inject
+  private org.apache.ambari.server.configuration.Configuration configs;
+
   private static AmbariManagementController controller;
   private static ClusterController clusterController;
   //todo: task id's.  Use existing mechanism for getting next task id sequence
@@ -100,8 +118,10 @@ public class AmbariContext {
   }
 
   //todo: change return type to a topology abstraction
-  public HostRoleCommand createAmbariTask(long requestId, long stageId, String component, String host, TaskType type) {
-    HostRoleCommand task = hostRoleCommandFactory.create(host, Role.valueOf(component), null, RoleCommand.valueOf(type.name()));
+  public HostRoleCommand createAmbariTask(long requestId, long stageId, String component, String host,
+                                          TaskType type, boolean skipFailure) {
+    HostRoleCommand task = hostRoleCommandFactory.create(
+            host, Role.valueOf(component), null, RoleCommand.valueOf(type.name()), false, skipFailure);
     task.setStatus(HostRoleStatus.PENDING);
     task.setCommandDetail(String.format("Logical Task: %s component %s on host %s", type.name(), component, host));
     task.setTaskId(nextTaskId.getAndIncrement());
@@ -113,7 +133,7 @@ public class AmbariContext {
 
   //todo: change return type to a topology abstraction
   public HostRoleCommand createAmbariTask(long taskId, long requestId, long stageId,
-                                          String component, String host, TaskType type) {
+                                          String component, String host, TaskType type, boolean skipFailure) {
     synchronized (nextTaskId) {
       if (nextTaskId.get() <= taskId) {
         nextTaskId.set(taskId + 1);
@@ -121,7 +141,7 @@ public class AmbariContext {
     }
 
     HostRoleCommand task = hostRoleCommandFactory.create(
-        host, Role.valueOf(component), null, RoleCommand.valueOf(type.name()));
+        host, Role.valueOf(component), null, RoleCommand.valueOf(type.name()), false, skipFailure);
     task.setStatus(HostRoleStatus.PENDING);
     task.setCommandDetail(String.format("Logical Task: %s component %s on host %s",
         type.name(), component, host));
@@ -136,17 +156,31 @@ public class AmbariContext {
     return getController().getActionManager().getTaskById(id);
   }
 
-  public void createAmbariResources(ClusterTopology topology, String clusterName) {
+  public Collection<HostRoleCommand> getPhysicalTasks(Collection<Long> ids) {
+    return getController().getActionManager().getTasks(ids);
+  }
+
+  public void createAmbariResources(ClusterTopology topology, String clusterName, SecurityType securityType, String repoVersion) {
     Stack stack = topology.getBlueprint().getStack();
-    createAmbariClusterResource(clusterName, stack.getName(), stack.getVersion());
+
+    createAmbariClusterResource(clusterName, stack.getName(), stack.getVersion(), securityType, repoVersion);
     createAmbariServiceAndComponentResources(topology, clusterName);
   }
 
-  public void createAmbariClusterResource(String clusterName, String stackName, String stackVersion) {
+  public void createAmbariClusterResource(String clusterName, String stackName, String stackVersion, SecurityType securityType, String repoVersion) {
     String stackInfo = String.format("%s-%s", stackName, stackVersion);
-    ClusterRequest clusterRequest = new ClusterRequest(null, clusterName, stackInfo, null);
+    final ClusterRequest clusterRequest = new ClusterRequest(null, clusterName, null, securityType, stackInfo, null);
+    clusterRequest.setRepositoryVersion(repoVersion);
+
     try {
-      getController().createCluster(clusterRequest);
+      RetryHelper.executeWithRetry(new Callable<Object>() {
+        @Override
+        public Object call() throws Exception {
+          getController().createCluster(clusterRequest);
+          return null;
+        }
+      });
+
     } catch (AmbariException e) {
       e.printStackTrace();
       throw new RuntimeException("Failed to create Cluster resource: " + e, e);
@@ -167,13 +201,14 @@ public class AmbariContext {
     for (String service : services) {
       serviceRequests.add(new ServiceRequest(clusterName, service, null));
       for (String component : topology.getBlueprint().getComponents(service)) {
-        componentRequests.add(new ServiceComponentRequest(clusterName, service, component, null));
+        String recoveryEnabled = topology.getBlueprint().getRecoveryEnabled(service, component);
+        componentRequests.add(new ServiceComponentRequest(clusterName, service, component, null, recoveryEnabled));
       }
     }
     try {
       getServiceResourceProvider().createServices(serviceRequests);
       getComponentResourceProvider().createComponents(componentRequests);
-    } catch (AmbariException e) {
+    } catch (AmbariException | AuthorizationException e) {
       throw new RuntimeException("Failed to persist service and component resources: " + e, e);
     }
     // set all services state to INSTALLED->STARTED
@@ -229,7 +264,7 @@ public class AmbariContext {
           hostName, e.toString()), e);
     }
 
-    Set<ServiceComponentHostRequest> requests = new HashSet<ServiceComponentHostRequest>();
+    final Set<ServiceComponentHostRequest> requests = new HashSet<ServiceComponentHostRequest>();
     for (Map.Entry<String, Collection<String>> entry : components.entrySet()) {
       String service = entry.getKey();
       for (String component : entry.getValue()) {
@@ -240,7 +275,13 @@ public class AmbariContext {
       }
     }
     try {
-      getController().createHostComponents(requests);
+      RetryHelper.executeWithRetry(new Callable<Object>() {
+        @Override
+        public Object call() throws Exception {
+          getController().createHostComponents(requests);
+          return null;
+        }
+      });
     } catch (AmbariException e) {
       e.printStackTrace();
       throw new RuntimeException(String.format("Unable to create host component resource for host '%s': %s",
@@ -286,9 +327,15 @@ public class AmbariContext {
     hostRoleCommandFactory = factory;
   }
 
-  public void registerHostWithConfigGroup(String hostName, ClusterTopology topology, String groupName) {
+  public void registerHostWithConfigGroup(final String hostName, final ClusterTopology topology, final String groupName) {
     try {
-      if (!addHostToExistingConfigGroups(hostName, topology, groupName)) {
+      boolean hostAdded = RetryHelper.executeWithRetry(new Callable<Boolean>() {
+        @Override
+        public Boolean call() throws Exception {
+          return addHostToExistingConfigGroups(hostName, topology, groupName);
+        }
+      });
+      if (!hostAdded) {
         createConfigGroupsAndRegisterHost(topology, groupName);
       }
     } catch (Exception e) {
@@ -297,20 +344,21 @@ public class AmbariContext {
     }
   }
 
-  public RequestStatusResponse installHost(String hostName, String clusterName) {
+  public RequestStatusResponse installHost(String hostName, String clusterName, Collection<String> skipInstallForComponents, Collection<String> dontSkipInstallForComponents, boolean skipFailure) {
     try {
-      return getHostResourceProvider().install(clusterName, hostName);
+      return getHostResourceProvider().install(clusterName, hostName, skipInstallForComponents,
+        dontSkipInstallForComponents, skipFailure);
     } catch (Exception e) {
-      e.printStackTrace();
+      LOG.error("INSTALL Host request submission failed:", e);
       throw new RuntimeException("INSTALL Host request submission failed: " + e, e);
     }
   }
 
-  public RequestStatusResponse startHost(String hostName, String clusterName) {
+  public RequestStatusResponse startHost(String hostName, String clusterName, Collection<String> installOnlyComponents, boolean skipFailure) {
     try {
-      return getHostComponentResourceProvider().start(clusterName, hostName);
+      return getHostComponentResourceProvider().start(clusterName, hostName, installOnlyComponents, skipFailure);
     } catch (Exception e) {
-      e.printStackTrace();
+      LOG.error("START Host request submission failed:", e);
       throw new RuntimeException("START Host request submission failed: " + e, e);
     }
   }
@@ -325,10 +373,16 @@ public class AmbariContext {
    */
   public void persistInstallStateForUI(String clusterName, String stackName, String stackVersion) {
     String stackInfo = String.format("%s-%s", stackName, stackVersion);
-    ClusterRequest clusterRequest = new ClusterRequest(null, clusterName, "INSTALLED", null, stackInfo, null);
+    final ClusterRequest clusterRequest = new ClusterRequest(null, clusterName, "INSTALLED", null, stackInfo, null);
 
     try {
-      getController().updateClusters(Collections.singleton(clusterRequest), null);
+      RetryHelper.executeWithRetry(new Callable<Object>() {
+        @Override
+        public Object call() throws Exception {
+          getController().updateClusters(Collections.singleton(clusterRequest), null);
+          return null;
+        }
+      });
     } catch (AmbariException e) {
       LOG.error("Unable to set install state for UI", e);
     }
@@ -339,9 +393,15 @@ public class AmbariContext {
     return AbstractResourceProvider.getConfigurationRequests("Clusters", clusterProperties);
   }
 
-  public void setConfigurationOnCluster(ClusterRequest clusterRequest) {
+  public void setConfigurationOnCluster(final ClusterRequest clusterRequest) {
     try {
-      getController().updateClusters(Collections.singleton(clusterRequest), null);
+      RetryHelper.executeWithRetry(new Callable<Object>() {
+        @Override
+        public Object call() throws Exception {
+          getController().updateClusters(Collections.singleton(clusterRequest), null);
+          return null;
+        }
+      });
     } catch (AmbariException e) {
       e.printStackTrace();
       throw new RuntimeException("Failed to set configurations on cluster: " + e, e);
@@ -393,17 +453,55 @@ public class AmbariContext {
     }
   }
 
-  public boolean doesConfigurationWithTagExist(long clusterId, String tag) {
+  /**
+   * Verifies if the given cluster has at least one desired configuration transitioned through
+   * TopologyManager.INITIAL -> .... -> TopologyManager.TOPOLOGY_RESOLVED -> ....
+   * @param clusterId the identifier of the cluster to be checked
+   * @return true if the cluster
+   */
+  public boolean isTopologyResolved(long clusterId) {
     boolean isTopologyResolved = false;
     try {
       Cluster cluster = getController().getClusters().getClusterById(clusterId);
-      Collection<DesiredConfig> desiredConfigs = cluster.getDesiredConfigs().values();
-      for (DesiredConfig config : desiredConfigs) {
-        if (config.getTag().equals(tag)) {
+
+      // Check through the various cluster config versions that these transitioned through TopologyManager.INITIAL -> .... -> TopologyManager.TOPOLOGY_RESOLVED -> ....
+      Map<String, Set<DesiredConfig>> allDesiredConfigsByType = cluster.getAllDesiredConfigVersions();
+
+      for (String configType: allDesiredConfigsByType.keySet()) {
+        Set<DesiredConfig> desiredConfigVersions = allDesiredConfigsByType.get(configType);
+
+        SortedSet<DesiredConfig> desiredConfigsOrderedByVersion = new TreeSet<>(new Comparator<DesiredConfig>() {
+          @Override
+          public int compare(DesiredConfig o1, DesiredConfig o2) {
+            if (o1.getVersion() < o2.getVersion())
+              return -1;
+
+            if (o1.getVersion() > o2.getVersion())
+              return 1;
+
+            return 0;
+          }
+        });
+
+        desiredConfigsOrderedByVersion.addAll(desiredConfigVersions);
+
+        int tagMatchState = 0; // 0 -> INITIAL -> tagMatchState = 1 -> TOPLOGY_RESOLVED -> tagMatchState = 2
+
+        for (DesiredConfig config: desiredConfigsOrderedByVersion) {
+          if (config.getTag().equals(TopologyManager.INITIAL_CONFIG_TAG) && tagMatchState == 0)
+            tagMatchState = 1;
+          else if (config.getTag().equals(TopologyManager.TOPOLOGY_RESOLVED_TAG) && tagMatchState == 1) {
+            tagMatchState = 2;
+            break;
+          }
+        }
+
+        if (tagMatchState == 2) {
           isTopologyResolved = true;
           break;
         }
       }
+
     } catch (ClusterNotFoundException e) {
       LOG.info("Attempted to determine if configuration is topology resolved for a non-existent cluster: {}",
               clusterId);
@@ -528,9 +626,28 @@ public class AmbariContext {
       groupHosts = topology.getHostGroupInfo().
           get(groupName).getHostNames();
 
+      // remove hosts that are not assigned to the cluster yet
+      String clusterName = null;
+      try {
+        clusterName = getClusterName(topology.getClusterId());
+      } catch (AmbariException e) {
+        LOG.error("Cannot get cluster name for clusterId = " + topology.getClusterId(), e);
+        throw new RuntimeException(e);
+      }
+
+      final Map<String, Host> clusterHosts = getController().getClusters().getHostsForCluster(clusterName);
+      Iterable<String> filteredGroupHosts = Iterables.filter(groupHosts, new com.google.common.base.Predicate<String>() {
+        @Override
+        public boolean apply(@Nullable String groupHost) {
+          return clusterHosts.containsKey(groupHost);
+        }
+      });
+
+
+
       ConfigGroupRequest request = new ConfigGroupRequest(
-          null, getClusterName(topology.getClusterId()), absoluteGroupName, service, "Host Group Configuration",
-          new HashSet<String>(groupHosts), serviceConfigs);
+          null, clusterName, absoluteGroupName, service, "Host Group Configuration",
+        Sets.newHashSet(filteredGroupHosts), serviceConfigs);
 
       // get the config group provider and create config group resource
       ConfigGroupResourceProvider configGroupProvider = (ConfigGroupResourceProvider)

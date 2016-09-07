@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.ambari.server.RoleCommand;
+import org.apache.ambari.server.state.ServiceInfo;
 import org.apache.ambari.server.utils.StageUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -87,11 +88,8 @@ public class ExecutionCommand extends AgentCommand {
   @SerializedName("configurationTags")
   private Map<String, Map<String, String>> configurationTags;
 
-  @SerializedName("forceRefreshConfigTags")
-  private Set<String> forceRefreshConfigTags = new HashSet<String>();
-
   @SerializedName("forceRefreshConfigTagsBeforeExecution")
-  private Set<String> forceRefreshConfigTagsBeforeExecution = new HashSet<String>();
+  private boolean forceRefreshConfigTagsBeforeExecution = false;
 
   @SerializedName("commandParams")
   private Map<String, String> commandParams = new HashMap<String, String>();
@@ -100,13 +98,19 @@ public class ExecutionCommand extends AgentCommand {
   private String serviceName;
 
   @SerializedName("serviceType")
-  private String serviceType;  
-  
+  private String serviceType;
+
   @SerializedName("componentName")
   private String componentName;
 
   @SerializedName("kerberosCommandParams")
   private List<Map<String, String>> kerberosCommandParams = new ArrayList<Map<String, String>>();
+
+  @SerializedName("localComponents")
+  private Set<String> localComponents = new HashSet<String>();
+
+  @SerializedName("availableServices")
+  private Map<String, String> availableServices = new HashMap<>();
 
   public String getCommandId() {
     return commandId;
@@ -226,28 +230,37 @@ public class ExecutionCommand extends AgentCommand {
   public void setConfigurations(Map<String, Map<String, String>> configurations) {
     this.configurations = configurations;
   }
-  /**
-   * @return Returns the set of config-types that have to be propagated to actual-config of component of given custom command, if command is successfully finished.
-   */
-  public Set<String> getForceRefreshConfigTags() {
-    return forceRefreshConfigTags;
-  }
-
-  public void setForceRefreshConfigTags(Set<String> forceRefreshConfigTags) {
-    this.forceRefreshConfigTags = forceRefreshConfigTags;
-  }
 
   /**
-   * Comma separated list of config-types whose tags have be refreshed
-   * at runtime before being executed. If all config-type tags have to be
-   * refreshed, "*" can be specified.
+   * Gets whether configuration tags shoudl be refreshed right before the
+   * command is scheduled.
    */
-  public Set<String> getForceRefreshConfigTagsBeforeExecution() {
+  public boolean getForceRefreshConfigTagsBeforeExecution() {
     return forceRefreshConfigTagsBeforeExecution;
   }
 
-  public void setForceRefreshConfigTagsBeforeExecution(Set<String> forceRefreshConfigTagsBeforeExecution) {
+  public void setForceRefreshConfigTagsBeforeExecution(boolean forceRefreshConfigTagsBeforeExecution) {
     this.forceRefreshConfigTagsBeforeExecution = forceRefreshConfigTagsBeforeExecution;
+  }
+
+  public Set<String> getLocalComponents() {
+    return localComponents;
+  }
+
+  public void setLocalComponents(Set<String> localComponents) {
+    this.localComponents = localComponents;
+  }
+
+  public Map<String, String> getAvailableServices() {
+    return availableServices;
+  }
+
+  public void setAvailableServicesFromServiceInfoMap(Map<String, ServiceInfo> serviceInfoMap) {
+    Map<String, String> serviceVersionMap = new HashMap<>();
+    for (Map.Entry<String, ServiceInfo> entry : serviceInfoMap.entrySet()) {
+      serviceVersionMap.put(entry.getKey(), entry.getValue().getVersion());
+    }
+    availableServices = serviceVersionMap;
   }
 
   public Map<String, Map<String, Map<String, String>>> getConfigurationAttributes() {
@@ -273,7 +286,7 @@ public class ExecutionCommand extends AgentCommand {
   public void setServiceName(String serviceName) {
     this.serviceName = serviceName;
   }
-  
+
   public String getServiceType() {
 	return serviceType;
   }
@@ -352,23 +365,44 @@ public class ExecutionCommand extends AgentCommand {
     String AMBARI_DB_RCA_USERNAME = "ambari_db_rca_username";
     String AMBARI_DB_RCA_PASSWORD = "ambari_db_rca_password";
     String COMPONENT_CATEGORY = "component_category";
-    String REFRESH_ADITIONAL_COMPONENT_TAGS = "forceRefreshConfigTags";
     String USER_LIST = "user_list";
     String GROUP_LIST = "group_list";
+    String NOT_MANAGED_HDFS_PATH_LIST = "not_managed_hdfs_path_list";
     String VERSION = "version";
     String REFRESH_TOPOLOGY = "refresh_topology";
     String HOST_SYS_PREPPED = "host_sys_prepped";
     String MAX_DURATION_OF_RETRIES = "max_duration_for_retries";
     String COMMAND_RETRY_ENABLED = "command_retry_enabled";
+    String AGENT_STACK_RETRY_ON_UNAVAILABILITY = "agent_stack_retry_on_unavailability";
+    String AGENT_STACK_RETRY_COUNT = "agent_stack_retry_count";
+    String LOG_OUTPUT = "log_output";
+
     /**
-     * Comma separated list of config-types whose tags have be refreshed
-     * at runtime before being executed. If all config-type tags have to be
-     * refreshed, "*" can be specified.
+     * A boolean indicating whether configuration tags should be refreshed
+     * before sending the command.
      */
     String REFRESH_CONFIG_TAGS_BEFORE_EXECUTION = "forceRefreshConfigTagsBeforeExecution";
 
     String SERVICE_CHECK = "SERVICE_CHECK"; // TODO: is it standard command? maybe add it to RoleCommand enum?
     String CUSTOM_COMMAND = "custom_command";
-  }
 
+    /**
+     * The key indicating that the package_version string is available
+     */
+    String PACKAGE_VERSION = "package_version";
+
+    /**
+     * The key indicating that there is an un-finalized upgrade which is suspended.
+     */
+    String UPGRADE_SUSPENDED = "upgrade_suspended";
+
+    /**
+     * When installing packages, optionally provide the row id the version is
+     * for in order to precisely match response data.
+     * <p/>
+     * The agent will return this value back in its response so the repository
+     * can be looked up and possibly have its version updated.
+     */
+    String REPO_VERSION_ID = "repository_version_id";
+  }
 }

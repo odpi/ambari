@@ -18,7 +18,6 @@
 
 package org.apache.hadoop.metrics2.sink.flume;
 
-import org.apache.commons.lang.ClassUtils;
 import org.apache.commons.lang.math.NumberUtils;
 import org.apache.flume.Context;
 import org.apache.flume.FlumeException;
@@ -36,6 +35,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,10 +46,17 @@ import java.util.concurrent.TimeUnit;
 
 public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implements MonitorService {
   private String collectorUri;
-  private TimelineMetricsCache metricsCache;
+  private String protocol;
+  // Key - component(instance_id)
+  private Map<String, TimelineMetricsCache> metricsCaches;
+  private int maxRowCacheSize;
+  private int metricsSendInterval;
   private ScheduledExecutorService scheduledExecutorService;
   private long pollFrequency;
   private String hostname;
+  private String port;
+  private String collectors;
+  private String zookeeperQuorum;
   private final static String COUNTER_METRICS_PROPERTY = "counters";
   private final Set<String> counterMetrics = new HashSet<String>();
   private int timeoutSeconds = 10;
@@ -76,6 +83,10 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
     LOG.info("Context parameters " + context);
     try {
       hostname = InetAddress.getLocalHost().getHostName();
+      //If not FQDN , call  DNS
+      if ((hostname == null) || (!hostname.contains("."))) {
+        hostname = InetAddress.getLocalHost().getCanonicalHostName();
+      }
     } catch (UnknownHostException e) {
       LOG.error("Could not identify hostname.");
       throw new FlumeException("Could not identify hostname.", e);
@@ -83,14 +94,25 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
     Configuration configuration = new Configuration("/flume-metrics2.properties");
     timeoutSeconds = Integer.parseInt(configuration.getProperty(METRICS_POST_TIMEOUT_SECONDS,
         String.valueOf(DEFAULT_POST_TIMEOUT_SECONDS)));
-    int maxRowCacheSize = Integer.parseInt(configuration.getProperty(MAX_METRIC_ROW_CACHE_SIZE,
+    maxRowCacheSize = Integer.parseInt(configuration.getProperty(MAX_METRIC_ROW_CACHE_SIZE,
         String.valueOf(TimelineMetricsCache.MAX_RECS_PER_NAME_DEFAULT)));
-    int metricsSendInterval = Integer.parseInt(configuration.getProperty(METRICS_SEND_INTERVAL,
+    metricsSendInterval = Integer.parseInt(configuration.getProperty(METRICS_SEND_INTERVAL,
         String.valueOf(TimelineMetricsCache.MAX_EVICTION_TIME_MILLIS)));
-    metricsCache = new TimelineMetricsCache(maxRowCacheSize, metricsSendInterval);
-    String collectorHostname = configuration.getProperty(COLLECTOR_HOST_PROPERTY);
-    String port = configuration.getProperty(COLLECTOR_PORT_PROPERTY);
-    collectorUri = "http://" + collectorHostname + ":" + port + "/ws/v1/timeline/metrics";
+    metricsCaches = new HashMap<String, TimelineMetricsCache>();
+    collectors = configuration.getProperty(COLLECTOR_PROPERTY);
+    zookeeperQuorum = configuration.getProperty("zookeeper.quorum");
+    protocol = configuration.getProperty(COLLECTOR_PROTOCOL, "http");
+    port = configuration.getProperty(COLLECTOR_PORT, "6188");
+    // Initialize the collector write strategy
+    super.init();
+
+    collectorUri = constructTimelineMetricUri(protocol, findPreferredCollectHost(), port);
+    if (protocol.contains("https")) {
+      String trustStorePath = configuration.getProperty(SSL_KEYSTORE_PATH_PROPERTY).trim();
+      String trustStoreType = configuration.getProperty(SSL_KEYSTORE_TYPE_PROPERTY).trim();
+      String trustStorePwd = configuration.getProperty(SSL_KEYSTORE_PASSWORD_PROPERTY).trim();
+      loadTruststore(trustStorePath, trustStoreType, trustStorePwd);
+    }
     pollFrequency = Long.parseLong(configuration.getProperty("collectionFrequency"));
 
     String[] metrics = configuration.getProperty(COUNTER_METRICS_PROPERTY).trim().split(",");
@@ -98,8 +120,13 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
   }
 
   @Override
-  public String getCollectorUri() {
-    return collectorUri;
+  public String getCollectorUri(String host) {
+    return constructTimelineMetricUri(protocol, host, port);
+  }
+
+  @Override
+  protected String getCollectorProtocol() {
+    return protocol;
   }
 
   @Override
@@ -107,12 +134,28 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
     return timeoutSeconds;
   }
 
+  @Override
+  protected String getZookeeperQuorum() {
+    return zookeeperQuorum;
+  }
+
+  @Override
+  protected String getConfiguredCollectors() {
+    return collectors;
+  }
+
+  @Override
+  protected String getHostname() {
+    return hostname;
+  }
+
   public void setPollFrequency(long pollFrequency) {
     this.pollFrequency = pollFrequency;
   }
 
-  public void setMetricsCache(TimelineMetricsCache metricsCache) {
-    this.metricsCache = metricsCache;
+  //Test hepler method
+  protected void setMetricsCaches(Map<String, TimelineMetricsCache> metricsCaches) {
+    this.metricsCaches = metricsCaches;
   }
 
   /**
@@ -126,12 +169,11 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
     public void run() {
       LOG.debug("Collecting Metrics for Flume");
       try {
-        Map<String, Map<String, String>> metricsMap =
-            JMXPollUtil.getAllMBeans();
+        Map<String, Map<String, String>> metricsMap = JMXPollUtil.getAllMBeans();
         long currentTimeMillis = System.currentTimeMillis();
         for (String component : metricsMap.keySet()) {
           Map<String, String> attributeMap = metricsMap.get(component);
-          LOG.info("Attributes for component " + component);
+          LOG.debug("Attributes for component " + component);
           processComponentAttributes(currentTimeMillis, component, attributeMap);
         }
       } catch (UnableToConnectException uce) {
@@ -144,6 +186,10 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
 
     private void processComponentAttributes(long currentTimeMillis, String component, Map<String, String> attributeMap) throws IOException {
       List<TimelineMetric> metricList = new ArrayList<TimelineMetric>();
+      if (!metricsCaches.containsKey(component)) {
+        metricsCaches.put(component, new TimelineMetricsCache(maxRowCacheSize, metricsSendInterval));
+      }
+      TimelineMetricsCache metricsCache = metricsCaches.get(component);
       for (String attributeName : attributeMap.keySet()) {
         String attributeValue = attributeMap.get(attributeName);
         if (NumberUtils.isNumber(attributeValue)) {
@@ -175,8 +221,6 @@ public class FlumeTimelineMetricsSink extends AbstractTimelineMetricsSink implem
       timelineMetric.setInstanceId(component);
       timelineMetric.setAppId("FLUME_HANDLER");
       timelineMetric.setStartTime(currentTimeMillis);
-      timelineMetric.setType(ClassUtils.getShortCanonicalName(
-          attributeValue, "Number"));
       timelineMetric.getMetricValues().put(currentTimeMillis, Double.parseDouble(attributeValue));
       return timelineMetric;
     }

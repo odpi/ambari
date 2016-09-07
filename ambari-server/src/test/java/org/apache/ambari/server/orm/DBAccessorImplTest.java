@@ -19,9 +19,13 @@
 package org.apache.ambari.server.orm;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 import static org.junit.matchers.JUnitMatchers.containsString;
 
+import java.io.ByteArrayInputStream;
+import java.sql.Clob;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -33,8 +37,6 @@ import java.util.Map;
 import java.util.Vector;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import junit.framework.Assert;
-
 import org.apache.ambari.server.orm.DBAccessor.DBColumnInfo;
 import org.eclipse.persistence.sessions.DatabaseSession;
 import org.junit.After;
@@ -45,13 +47,13 @@ import org.junit.rules.ExpectedException;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import java.io.ByteArrayInputStream;
-import java.sql.Clob;
-import java.sql.PreparedStatement;
+
+import junit.framework.Assert;
 
 public class DBAccessorImplTest {
   private Injector injector;
-  private static final AtomicInteger counter = new AtomicInteger(1);
+  private static final AtomicInteger tables_counter = new AtomicInteger(1);
+  private static final AtomicInteger schemas_counter = new AtomicInteger(1);
 
   @Rule
   public ExpectedException exception = ExpectedException.none();
@@ -67,7 +69,11 @@ public class DBAccessorImplTest {
   }
 
   private static String getFreeTableName() {
-    return "test_table_" + counter.getAndIncrement();
+    return "test_table_" + tables_counter.getAndIncrement();
+  }
+
+  private static String getFreeSchamaName() {
+    return "test_schema_" + schemas_counter.getAndIncrement();
   }
 
   private void createMyTable(String tableName) throws Exception {
@@ -320,12 +326,46 @@ public class DBAccessorImplTest {
   }
 
   @Test
+  public void testGetCheckedForeignKey() throws Exception {
+    String tableName = getFreeTableName();
+    createMyTable(tableName);
+
+    DBAccessorImpl dbAccessor = injector.getInstance(DBAccessorImpl.class);
+
+    List<DBColumnInfo> columns = new ArrayList<DBColumnInfo>();
+    columns.add(new DBColumnInfo("fid", Long.class, null, null, false));
+    columns.add(new DBColumnInfo("fname", String.class, null, null, false));
+
+    String foreignTableName = getFreeTableName();
+    dbAccessor.createTable(foreignTableName, columns, "fid");
+
+    Statement statement = dbAccessor.getConnection().createStatement();
+    statement.execute("ALTER TABLE " + foreignTableName + " ADD CONSTRAINT FK_test1 FOREIGN KEY (fid) REFERENCES " +
+            tableName + " (id)");
+
+    Assert.assertEquals("FK_TEST1", dbAccessor.getCheckedForeignKey(foreignTableName, "fk_test1"));
+  }
+
+  @Test
   public void testTableExists() throws Exception {
     DBAccessorImpl dbAccessor = injector.getInstance(DBAccessorImpl.class);
 
     Statement statement = dbAccessor.getConnection().createStatement();
     String tableName = getFreeTableName();
     statement.execute("Create table " + tableName + " (id VARCHAR(255))");
+
+    Assert.assertTrue(dbAccessor.tableExists(tableName));
+  }
+
+  @Test
+  public void testTableExistsMultipleSchemas() throws Exception {
+    DBAccessorImpl dbAccessor = injector.getInstance(DBAccessorImpl.class);
+
+    String tableName = getFreeTableName();
+    createMyTable(tableName);
+
+    // create table with the same name but in custom schema
+    createTableUnderNewSchema(dbAccessor, tableName);
 
     Assert.assertTrue(dbAccessor.tableExists(tableName));
   }
@@ -338,6 +378,32 @@ public class DBAccessorImplTest {
     DBAccessorImpl dbAccessor = injector.getInstance(DBAccessorImpl.class);
 
     Assert.assertTrue(dbAccessor.tableHasColumn(tableName, "time"));
+  }
+
+  @Test
+  public void testColumnExistsMultipleSchemas() throws Exception {
+    DBAccessorImpl dbAccessor = injector.getInstance(DBAccessorImpl.class);
+
+    String tableName = getFreeTableName();
+    createMyTable(tableName);
+
+    // create table with the same name and same field (id) but in custom schema
+    createTableUnderNewSchema(dbAccessor, tableName);
+
+    Assert.assertTrue(dbAccessor.tableHasColumn(tableName, "id"));
+  }
+
+  @Test
+  public void testColumnsExistsMultipleSchemas() throws Exception {
+    DBAccessorImpl dbAccessor = injector.getInstance(DBAccessorImpl.class);
+
+    String tableName = getFreeTableName();
+    createMyTable(tableName);
+
+    // create table with the same name and same field (id) but in custom schema
+    createTableUnderNewSchema(dbAccessor, tableName);
+
+    Assert.assertTrue(dbAccessor.tableHasColumn(tableName, "id", "time"));
   }
 
   @Test
@@ -429,33 +495,82 @@ public class DBAccessorImplTest {
     createMyTable(tableName);
     DBAccessorImpl dbAccessor = injector.getInstance(DBAccessorImpl.class);
 
-    dbAccessor.addColumn(tableName, new DBColumnInfo("isNullable",
-        String.class, 1000, "test", false));
+    // create a column with a non-NULL constraint
+    DBColumnInfo dbColumnInfo = new DBColumnInfo("isNullable", String.class, 1000, "test", false);
+    dbAccessor.addColumn(tableName, dbColumnInfo);
 
     Statement statement = dbAccessor.getConnection().createStatement();
-    ResultSet resultSet = statement.executeQuery("SELECT isNullable FROM "
-        + tableName);
+    ResultSet resultSet = statement.executeQuery("SELECT isNullable FROM " + tableName);
     ResultSetMetaData rsmd = resultSet.getMetaData();
+    assertEquals(ResultSetMetaData.columnNoNulls, rsmd.isNullable(1));
+
+    statement.close();
+
+    // set it to nullable
+    dbAccessor.setColumnNullable(tableName, dbColumnInfo, true);
+    statement = dbAccessor.getConnection().createStatement();
+    resultSet = statement.executeQuery("SELECT isNullable FROM " + tableName);
+    rsmd = resultSet.getMetaData();
     assertEquals(ResultSetMetaData.columnNullable, rsmd.isNullable(1));
 
     statement.close();
 
-    dbAccessor.setColumnNullable(tableName, new DBColumnInfo("isNullable",
-                                                              String.class, 1000, "test", false), false);
+    // set it back to non-NULL
+    dbAccessor.setColumnNullable(tableName, dbColumnInfo, false);
     statement = dbAccessor.getConnection().createStatement();
     resultSet = statement.executeQuery("SELECT isNullable FROM " + tableName);
     rsmd = resultSet.getMetaData();
     assertEquals(ResultSetMetaData.columnNoNulls, rsmd.isNullable(1));
 
     statement.close();
-
-    dbAccessor.setColumnNullable(tableName, new DBColumnInfo("isNullable",
-                                                              String.class, 1000, "test", false), true);
-    statement = dbAccessor.getConnection().createStatement();
-    resultSet = statement.executeQuery("SELECT isNullable FROM " + tableName);
-    rsmd = resultSet.getMetaData();
-    assertEquals(ResultSetMetaData.columnNullable, rsmd.isNullable(1));
-
-    statement.close();
   }
+
+  private void createTableUnderNewSchema(DBAccessorImpl dbAccessor, String tableName) throws SQLException {
+    Statement schemaCreation = dbAccessor.getConnection().createStatement();
+    String schemaName = getFreeSchamaName();
+    schemaCreation.execute("create schema " + schemaName);
+
+    Statement customSchemaTableCreation = dbAccessor.getConnection().createStatement();
+    customSchemaTableCreation.execute(toString().format("Create table %s.%s (id int, time int)", schemaName, tableName));
+  }
+
+  /**
+   * Checks to ensure that columns created with a default have the correct
+   * DEFAULT constraint value set in.
+   *
+   * @throws Exception
+   */
+  @Test
+  public void testDefaultColumnConstraintOnAddColumn() throws Exception {
+    String tableName = getFreeTableName().toUpperCase();
+    String columnName = "COLUMN_WITH_DEFAULT_VALUE";
+
+    createMyTable(tableName);
+    DBAccessorImpl dbAccessor = injector.getInstance(DBAccessorImpl.class);
+
+    // create a column with a non-NULL constraint that has a default value
+    DBColumnInfo dbColumnInfo = new DBColumnInfo(columnName, String.class, 32, "foo", false);
+    dbAccessor.addColumn(tableName, dbColumnInfo);
+
+    String schema = null;
+    Connection connection = dbAccessor.getConnection();
+    DatabaseMetaData databaseMetadata = connection.getMetaData();
+    ResultSet schemaResultSet = databaseMetadata.getSchemas();
+    if (schemaResultSet.next()) {
+      schema = schemaResultSet.getString(1);
+    }
+
+    schemaResultSet.close();
+
+    String columnDefaultVal = null;
+    ResultSet rs = databaseMetadata.getColumns(null, schema, tableName, columnName);
+
+    if (rs.next()) {
+      columnDefaultVal = rs.getString("COLUMN_DEF");
+    }
+
+    rs.close();
+
+    assertEquals("'foo'", columnDefaultVal);
+   }
 }

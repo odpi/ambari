@@ -19,7 +19,11 @@ Ambari Agent
 
 """
 
-from resource_management import *
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.resources.execute_hadoop import ExecuteHadoop
+from resource_management.core.resources.system import Directory, Execute, File
+
 
 class MahoutServiceCheck(Script):
   def service_check(self, env):
@@ -34,6 +38,13 @@ class MahoutServiceCheck(Script):
         content = "Test text which will be converted to sequence file.",
         mode = 0755
     )
+
+    params.HdfsResource(format("/user/{smokeuser}"),
+                        type="directory",
+                        action="create_on_execute",
+                        owner=params.smokeuser,
+                        mode=params.smoke_hdfs_user_mode,
+                        )
     
     params.HdfsResource(format("/user/{smokeuser}/mahoutsmokeoutput"),
                        action="delete_on_execute",

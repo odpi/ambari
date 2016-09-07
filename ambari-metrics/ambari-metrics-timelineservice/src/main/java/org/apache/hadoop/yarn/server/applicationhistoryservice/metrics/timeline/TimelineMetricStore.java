@@ -17,12 +17,18 @@
  */
 package org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline;
 
+import org.apache.hadoop.metrics2.sink.timeline.ContainerMetric;
+import org.apache.hadoop.metrics2.sink.timeline.Precision;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetric;
+import org.apache.hadoop.metrics2.sink.timeline.TimelineMetricMetadata;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetrics;
+import org.apache.hadoop.metrics2.sink.timeline.TopNConfig;
 import org.apache.hadoop.yarn.api.records.timeline.TimelinePutResponse;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public interface TimelineMetricStore {
   /**
@@ -38,25 +44,17 @@ public interface TimelineMetricStore {
    * @param limit Override default result limit
    * @param groupedByHosts Group {@link TimelineMetric} by metric name, hostname,
    *                app id and instance id
+   * @param seriesAggregateFunction Specify this when caller want to aggregate multiple metrics
+   *                                series into one. [ SUM, AVG, MIN, MAX ]
    *
    * @return {@link TimelineMetric}
    * @throws java.sql.SQLException
    */
   TimelineMetrics getTimelineMetrics(List<String> metricNames, List<String> hostnames,
-      String applicationId, String instanceId, Long startTime,
-      Long endTime, Precision precision, Integer limit, boolean groupedByHosts)
+                                     String applicationId, String instanceId, Long startTime,
+                                     Long endTime, Precision precision, Integer limit, boolean groupedByHosts,
+                                     TopNConfig topNConfig, String seriesAggregateFunction)
     throws SQLException, IOException;
-
-
-  /**
-   * Return all records for a single metric satisfying the filter criteria.
-   * @return {@link TimelineMetric}
-   */
-  TimelineMetric getTimelineMetric(String metricName, List<String> hostname,
-      String applicationId, String instanceId, Long startTime,
-      Long endTime, Precision precision, Integer limit)
-      throws SQLException, IOException;
-
 
   /**
    * Stores metric information to the timeline store. Any errors occurring for
@@ -66,6 +64,33 @@ public interface TimelineMetricStore {
    * @return An {@link org.apache.hadoop.yarn.api.records.timeline.TimelinePutResponse}.
    * @throws SQLException, IOException
    */
-  TimelinePutResponse putMetrics(TimelineMetrics metrics)
-    throws SQLException, IOException;
+  TimelinePutResponse putMetrics(TimelineMetrics metrics) throws SQLException, IOException;
+
+  /**
+   * Store container metric into the timeline tore
+   */
+  TimelinePutResponse putContainerMetrics(List<ContainerMetric> metrics)
+      throws SQLException, IOException;
+
+  /**
+   * Return all metrics metadata that have been written to the store.
+   * @return { appId : [ @TimelineMetricMetadata ] }
+   * @throws SQLException
+   * @throws IOException
+   */
+  Map<String, List<TimelineMetricMetadata>> getTimelineMetricMetadata() throws SQLException, IOException;
+
+  /**
+   * Returns all hosts that have written metrics with the apps on the host
+   * @return { hostname : [ appIds ] }
+   * @throws SQLException
+   * @throws IOException
+   */
+  Map<String, Set<String>> getHostAppsMetadata() throws SQLException, IOException;
+
+  /**
+   * Return a list of known live collector nodes
+   * @return [ hostname ]
+   */
+  List<String> getLiveInstances();
 }

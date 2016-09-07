@@ -17,13 +17,23 @@
  */
 package org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline;
 
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.DoNotRetryIOException;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.metrics2.sink.timeline.Precision;
+import org.apache.hadoop.metrics2.sink.timeline.TimelineMetric;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetrics;
+import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.MetricClusterAggregate;
+import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.MetricHostAggregate;
+import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.TimelineClusterMetric;
 import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.Function;
 import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.Condition;
-import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.ConnectionProvider;
 import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.DefaultCondition;
+import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixConnectionProvider;
 import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.query.PhoenixTransactSQL;
+import org.apache.phoenix.exception.PhoenixIOException;
 import org.easymock.EasyMock;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -36,16 +46,16 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
-/**
- * Created by user on 9/7/15.
- */
 @RunWith(PowerMockRunner.class)
 @PrepareForTest(PhoenixTransactSQL.class)
 public class PhoenixHBaseAccessorTest {
@@ -58,7 +68,12 @@ public class PhoenixHBaseAccessorTest {
     hbaseConf.setStrings(ZOOKEEPER_QUORUM, "quorum");
     Configuration metricsConf = new Configuration();
 
-    ConnectionProvider connectionProvider = new ConnectionProvider() {
+    PhoenixConnectionProvider connectionProvider = new PhoenixConnectionProvider() {
+      @Override
+      public HBaseAdmin getHBaseAdmin() throws IOException {
+        return null;
+      }
+
       @Override
       public Connection getConnection() throws SQLException {
         return null;
@@ -69,7 +84,7 @@ public class PhoenixHBaseAccessorTest {
 
     List<String> metricNames = new LinkedList<>();
     List<String> hostnames = new LinkedList<>();
-    Map<String, List<Function>> metricFunctions = new HashMap<>();
+    Multimap<String, List<Function>> metricFunctions = ArrayListMultimap.create();
 
     PowerMock.mockStatic(PhoenixTransactSQL.class);
     PreparedStatement preparedStatementMock = EasyMock.createNiceMock(PreparedStatement.class);
@@ -95,13 +110,19 @@ public class PhoenixHBaseAccessorTest {
   }
 
   @Test
-  public void testGetMetricRecordsException() throws SQLException, IOException {
+  public void testGetMetricRecordsIOException()
+    throws SQLException, IOException {
 
     Configuration hbaseConf = new Configuration();
     hbaseConf.setStrings(ZOOKEEPER_QUORUM, "quorum");
     Configuration metricsConf = new Configuration();
 
-    ConnectionProvider connectionProvider = new ConnectionProvider() {
+    PhoenixConnectionProvider connectionProvider = new PhoenixConnectionProvider() {
+      @Override
+      public HBaseAdmin getHBaseAdmin() throws IOException {
+        return null;
+      }
+
       @Override
       public Connection getConnection() throws SQLException {
         return null;
@@ -112,7 +133,7 @@ public class PhoenixHBaseAccessorTest {
 
     List<String> metricNames = new LinkedList<>();
     List<String> hostnames = new LinkedList<>();
-    Map<String, List<Function>> metricFunctions = new HashMap<>();
+    Multimap<String, List<Function>> metricFunctions = ArrayListMultimap.create();
 
     PowerMock.mockStatic(PhoenixTransactSQL.class);
     PreparedStatement preparedStatementMock = EasyMock.createNiceMock(PreparedStatement.class);
@@ -136,6 +157,165 @@ public class PhoenixHBaseAccessorTest {
 
     PowerMock.verifyAll();
     EasyMock.verify(preparedStatementMock, rsMock, io, runtimeException);
+  }
+
+  @Test
+  public void testGetMetricRecordsPhoenixIOExceptionDoNotRetryException()
+    throws SQLException, IOException {
+
+    Configuration hbaseConf = new Configuration();
+    hbaseConf.setStrings(ZOOKEEPER_QUORUM, "quorum");
+    Configuration metricsConf = new Configuration();
+
+    PhoenixConnectionProvider connectionProvider = new PhoenixConnectionProvider() {
+      @Override
+      public HBaseAdmin getHBaseAdmin() throws IOException {
+        return null;
+      }
+
+      @Override
+      public Connection getConnection() throws SQLException {
+        return null;
+      }
+    };
+
+    PhoenixHBaseAccessor accessor = new PhoenixHBaseAccessor(hbaseConf, metricsConf, connectionProvider);
+
+    List<String> metricNames = new LinkedList<>();
+    List<String> hostnames = new LinkedList<>();
+    Multimap<String, List<Function>> metricFunctions = ArrayListMultimap.create();
+
+    PowerMock.mockStatic(PhoenixTransactSQL.class);
+    PreparedStatement preparedStatementMock = EasyMock.createNiceMock(PreparedStatement.class);
+    Condition condition = new DefaultCondition(metricNames, hostnames, "appid", "instanceid", null, null, Precision.SECONDS, 10, true);
+    EasyMock.expect(PhoenixTransactSQL.prepareGetLatestMetricSqlStmt(null, condition)).andReturn(preparedStatementMock).once();
+    PhoenixTransactSQL.setSortMergeJoinEnabled(true);
+    EasyMock.expectLastCall();
+    ResultSet rsMock = EasyMock.createNiceMock(ResultSet.class);
+    PhoenixIOException pioe1 = EasyMock.createNiceMock(PhoenixIOException.class);
+    PhoenixIOException pioe2 = EasyMock.createNiceMock(PhoenixIOException.class);
+    DoNotRetryIOException dnrioe = EasyMock.createNiceMock(DoNotRetryIOException.class);
+    EasyMock.expect(preparedStatementMock.executeQuery()).andThrow(pioe1);
+    EasyMock.expect(pioe1.getCause()).andReturn(pioe2).atLeastOnce();
+    EasyMock.expect(pioe2.getCause()).andReturn(dnrioe).atLeastOnce();
+    StackTraceElement stackTrace[] = new StackTraceElement[]{new StackTraceElement("HashJoinRegionScanner","method","file",1)};
+    EasyMock.expect(dnrioe.getStackTrace()).andReturn(stackTrace).atLeastOnce();
+
+
+    PowerMock.replayAll();
+    EasyMock.replay(preparedStatementMock, rsMock, pioe1, pioe2, dnrioe);
+    try {
+      accessor.getMetricRecords(condition, metricFunctions);
+      fail();
+    } catch (Exception e) {
+      //NOP
+    }
+    PowerMock.verifyAll();
+  }
+
+  @Test
+  public void testMetricsCacheCommittingWhenFull() throws IOException, SQLException {
+    Configuration hbaseConf = new Configuration();
+    hbaseConf.setStrings(ZOOKEEPER_QUORUM, "quorum");
+    Configuration metricsConf = new Configuration();
+    metricsConf.setStrings(TimelineMetricConfiguration.TIMELINE_METRICS_CACHE_SIZE, "1");
+    metricsConf.setStrings(TimelineMetricConfiguration.TIMELINE_METRICS_CACHE_COMMIT_INTERVAL, "100");
+    final Connection connection = EasyMock.createNiceMock(Connection.class);
+
+
+    PhoenixHBaseAccessor accessor = new PhoenixHBaseAccessor(hbaseConf, metricsConf) {
+      @Override
+      public void commitMetrics(Collection<TimelineMetrics> timelineMetricsCollection) {
+        try {
+          connection.commit();
+        } catch (SQLException e) {
+          e.printStackTrace();
+        }
+      }
+    };
+
+    TimelineMetrics timelineMetrics = EasyMock.createNiceMock(TimelineMetrics.class);
+    EasyMock.expect(timelineMetrics.getMetrics()).andReturn(Collections.singletonList(new TimelineMetric())).anyTimes();
+    connection.commit();
+    EasyMock.expectLastCall().once();
+
+    EasyMock.replay(timelineMetrics, connection);
+
+    accessor.insertMetricRecords(timelineMetrics);
+    accessor.insertMetricRecords(timelineMetrics);
+    accessor.insertMetricRecords(timelineMetrics);
+
+    EasyMock.verify(timelineMetrics, connection);
+  }
+
+  @Test
+  public void testMetricsAggregatorSink() throws IOException, SQLException {
+    Configuration hbaseConf = new Configuration();
+    hbaseConf.setStrings(ZOOKEEPER_QUORUM, "quorum");
+    Configuration metricsConf = new Configuration();
+    Map<TimelineClusterMetric, MetricClusterAggregate> clusterAggregateMap =
+        new HashMap<>();
+    Map<TimelineClusterMetric, MetricHostAggregate> clusterTimeAggregateMap =
+        new HashMap<>();
+    Map<TimelineMetric, MetricHostAggregate> hostAggregateMap = new HashMap<>();
+
+    metricsConf.setStrings(
+        TimelineMetricConfiguration.TIMELINE_METRICS_CACHE_SIZE, "1");
+    metricsConf.setStrings(
+        TimelineMetricConfiguration.TIMELINE_METRICS_CACHE_COMMIT_INTERVAL,
+        "100");
+    metricsConf.setStrings(
+        TimelineMetricConfiguration.TIMELINE_METRIC_AGGREGATOR_SINK_CLASS,
+        "org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.TimelineMetricsAggregatorMemorySink");
+
+    final Connection connection = EasyMock.createNiceMock(Connection.class);
+    final PreparedStatement statement =
+        EasyMock.createNiceMock(PreparedStatement.class);
+    EasyMock.expect(connection.prepareStatement(EasyMock.anyString()))
+        .andReturn(statement).anyTimes();
+    EasyMock.replay(statement);
+    EasyMock.replay(connection);
+
+    PhoenixConnectionProvider connectionProvider =
+        new PhoenixConnectionProvider() {
+          @Override
+          public HBaseAdmin getHBaseAdmin() throws IOException {
+            return null;
+          }
+
+          @Override
+          public Connection getConnection() throws SQLException {
+            return connection;
+          }
+        };
+
+    TimelineClusterMetric clusterMetric =
+        new TimelineClusterMetric("metricName", "appId", "instanceId",
+            System.currentTimeMillis(), "type");
+    TimelineMetric timelineMetric = new TimelineMetric();
+    timelineMetric.setMetricName("Metric1");
+    timelineMetric.setType("type1");
+    timelineMetric.setAppId("App1");
+    timelineMetric.setInstanceId("instance1");
+    timelineMetric.setHostName("host1");
+
+    clusterAggregateMap.put(clusterMetric, new MetricClusterAggregate());
+    clusterTimeAggregateMap.put(clusterMetric, new MetricHostAggregate());
+    hostAggregateMap.put(timelineMetric, new MetricHostAggregate());
+
+    PhoenixHBaseAccessor accessor =
+        new PhoenixHBaseAccessor(hbaseConf, metricsConf, connectionProvider);
+    accessor.saveClusterAggregateRecords(clusterAggregateMap);
+    accessor.saveHostAggregateRecords(hostAggregateMap,
+        PhoenixTransactSQL.METRICS_AGGREGATE_MINUTE_TABLE_NAME);
+    accessor.saveClusterTimeAggregateRecords(clusterTimeAggregateMap,
+        PhoenixTransactSQL.METRICS_CLUSTER_AGGREGATE_HOURLY_TABLE_NAME);
+
+    TimelineMetricsAggregatorMemorySink memorySink =
+        new TimelineMetricsAggregatorMemorySink();
+    assertEquals(1, memorySink.getClusterAggregateRecords().size());
+    assertEquals(1, memorySink.getClusterTimeAggregateRecords().size());
+    assertEquals(1, memorySink.getHostAggregateRecords().size());
   }
 
 }

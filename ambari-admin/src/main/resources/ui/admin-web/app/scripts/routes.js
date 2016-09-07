@@ -24,6 +24,25 @@ angular.module('ambariAdminConsole')
     templateUrl: 'views/main.html',
     controller: 'MainCtrl'
   },
+  authentication: {
+    main: {
+      url: '/authentication',
+      templateUrl: 'views/authentication/main.html',
+      controller: 'AuthenticationMainCtrl'
+    }
+  },
+  loginActivities: {
+    loginMessage:{
+      url: '/loginMessage',
+      templateUrl: 'views/loginActivities/main.html',
+      controller: 'LoginActivitiesMainCtrl'
+    },
+    homeDirectory: {
+      url: '/homeDirectory',
+      templateUrl: 'views/loginActivities/main.html',
+      controller: 'LoginActivitiesMainCtrl'
+    }
+  },
   users: {
     list: {
       url: '/users',
@@ -69,6 +88,26 @@ angular.module('ambariAdminConsole')
       templateUrl: 'views/ambariViews/listTable.html',
       controller: 'ViewsListCtrl'
     },
+    listViewUrls: {
+      url: '/viewUrls',
+      templateUrl: 'views/ambariViews/listUrls.html',
+      controller: 'ViewsListCtrl'
+    },
+    createViewUrl:{
+      url: '/urls/new',
+      templateUrl: 'views/urls/create.html',
+      controller: 'ViewUrlCtrl'
+    },
+    linkViewUrl:{
+      url: '/urls/link/:viewName/:viewVersion/:viewInstanceName',
+      templateUrl: 'views/urls/create.html',
+      controller: 'ViewUrlCtrl'
+    },
+    editViewUrl:{
+      url: '/urls/edit/:urlName',
+      templateUrl: 'views/urls/edit.html',
+      controller: 'ViewUrlEditCtrl'
+    },
     edit: {
       url: '/views/:viewId/versions/:version/instances/:instanceId/edit',
       templateUrl: 'views/ambariViews/edit.html',
@@ -97,11 +136,38 @@ angular.module('ambariAdminConsole')
       controller: 'StackVersionsEditCtrl'
     }
   },
+  remoteClusters: {
+    list: {
+      url: '/remoteClusters',
+      templateUrl: 'views/remoteClusters/list.html',
+      controller: 'RemoteClustersListCtrl'
+    },
+    create: {
+      url: '/remoteClusters/create',
+      templateUrl: 'views/remoteClusters/remoteClusterPage.html',
+      controller: 'RemoteClustersCreateCtrl'
+    },
+     edit: {
+     url: '/remoteClusters/:clusterName/edit',
+     templateUrl: 'views/remoteClusters/editRemoteClusterPage.html',
+     controller: 'RemoteClustersEditCtrl'
+     }
+  },
   clusters: {
     manageAccess: {
       url: '/clusters/:id/manageAccess',
       templateUrl: 'views/clusters/manageAccess.html',
       controller: 'ClustersManageAccessCtrl'
+    },
+    userAccessList: {
+      url: '/clusters/:id/userAccessList',
+      templateUrl: 'views/clusters/userAccessList.html',
+      controller: 'UserAccessListCtrl'
+    },
+    exportBlueprint: {
+      url: '/clusters/:id/exportBlueprint',
+      templateUrl: 'views/clusters/exportBlueprint.html',
+      controller: 'ExportBlueprintCtrl'
     }
   },
   dashboard:{
@@ -122,7 +188,30 @@ angular.module('ambariAdminConsole')
   };
   angular.forEach(ROUTES, createRoute);
 }])
-.run(['$rootScope', 'ROUTES', function($rootScope, ROUTES) {
+.run(['$rootScope', 'ROUTES', 'Settings', function($rootScope, ROUTES, Settings) {
   // Make routes available in every template and controller
   $rootScope.ROUTES = ROUTES;
+  $rootScope.$on('$locationChangeStart', function (e, nextUrl) {
+    if (/\/authentication$/.test(nextUrl) && !Settings.isLDAPConfigurationSupported) {
+      e.preventDefault();
+    }
+  });
+  $rootScope.$on('$locationChangeStart', function (e, nextUrl) {
+    if ((/\/loginMessage$/.test(nextUrl) || /\/homeDirectory$/.test(nextUrl)) && !Settings.isLoginActivitiesSupported) {
+      e.preventDefault();
+    }
+  });
+
+  /**
+   * Method using to generate full URI from site root, this method should be used
+   * along with all 'href' attribute or methods which invoke redirect to Ambari Web.
+   * This method is useful to determine actual site root when ambari run under proxy server.
+   *
+   * @param {string} url
+   * @returns {string}
+   */
+  $rootScope.fromSiteRoot = function(url) {
+    var path = url[0] === '/' ? url.substring(1) : url;
+    return Settings.siteRoot + path;
+  };
 }]);

@@ -25,6 +25,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -37,17 +38,21 @@ import org.apache.ambari.server.controller.AmbariServer;
 import org.apache.ambari.server.controller.RequestStatusResponse;
 import org.apache.ambari.server.controller.ShortTaskStatus;
 import org.apache.ambari.server.orm.dao.HostRoleCommandStatusSummaryDTO;
-import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
 import org.apache.ambari.server.orm.entities.StageEntity;
 import org.apache.ambari.server.orm.entities.TopologyHostGroupEntity;
+import org.apache.ambari.server.orm.entities.TopologyHostInfoEntity;
 import org.apache.ambari.server.orm.entities.TopologyHostRequestEntity;
 import org.apache.ambari.server.orm.entities.TopologyLogicalRequestEntity;
 import org.apache.ambari.server.state.host.HostImpl;
+import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.collect.Iterables;
+
+
 /**
- * Logical Request implementation.
+ * Logical Request implementation used to provision a cluster deployed by Blueprints.
  */
 public class LogicalRequest extends Request {
 
@@ -188,13 +193,14 @@ public class LogicalRequest extends Request {
           hostComponents = new HashSet<String>();
           hostComponentMap.put(host, hostComponents);
         }
-        hostComponents.addAll(hostGroup.getComponents());
+        hostComponents.addAll(hostGroup.getComponentNames());
       }
     }
     return hostComponentMap;
   }
 
   // currently we are just returning all stages for all requests
+  //TODO technically StageEntity is simply a container for HostRequest info with additional redundant transformations
   public Collection<StageEntity> getStageEntities() {
     Collection<StageEntity> stages = new ArrayList<StageEntity>();
     for (HostRequest hostRequest : allHostRequests) {
@@ -205,7 +211,9 @@ public class LogicalRequest extends Request {
       //todo: not sure what this byte array is???
       //stage.setClusterHostInfo();
       stage.setClusterId(getClusterId());
-      stage.setSkippable(false);
+      boolean skipFailure = hostRequest.shouldSkipFailure();
+      stage.setSkippable(skipFailure);
+      stage.setAutoSkipFailureSupported(skipFailure);
       // getTaskEntities() sync's state with physical tasks
       stage.setHostRoleCommands(hostRequest.getTaskEntities());
 
@@ -231,7 +239,32 @@ public class LogicalRequest extends Request {
   public Map<Long, HostRoleCommandStatusSummaryDTO> getStageSummaries() {
     Map<Long, HostRoleCommandStatusSummaryDTO> summaryMap = new HashMap<Long, HostRoleCommandStatusSummaryDTO>();
 
-    for (StageEntity stage : getStageEntities()) {
+    Map<Long, Collection<HostRoleCommand>> stageTasksMap = new HashMap<>();
+
+    Map<Long, Long> taskToStageMap = new HashMap<>();
+
+
+    for (HostRequest hostRequest : getHostRequests()) {
+      Map<Long, Long> physicalTaskMapping = hostRequest.getPhysicalTaskMapping();
+      Collection<Long> stageTasks = physicalTaskMapping.values();
+      for (Long stageTask : stageTasks) {
+        taskToStageMap.put(stageTask, hostRequest.getStageId());
+      }
+    }
+
+    Collection<HostRoleCommand> physicalTasks = topology.getAmbariContext().getPhysicalTasks(taskToStageMap.keySet());
+
+    for (HostRoleCommand physicalTask : physicalTasks) {
+      Long stageId = taskToStageMap.get(physicalTask.getTaskId());
+      Collection<HostRoleCommand> stageTasks = stageTasksMap.get(stageId);
+      if (stageTasks == null) {
+        stageTasks = new ArrayList<>();
+        stageTasksMap.put(stageId, stageTasks);
+      }
+      stageTasks.add(physicalTask);
+    }
+
+    for (Long stageId : stageTasksMap.keySet()) {
       //Number minStartTime = 0;
       //Number maxEndTime = 0;
       int aborted = 0;
@@ -247,7 +280,7 @@ public class LogicalRequest extends Request {
       int skippedFailed = 0;
 
       //todo: where does this logic belong?
-      for (HostRoleCommandEntity task : stage.getHostRoleCommands()) {
+      for (HostRoleCommand task : stageTasksMap.get(stageId)) {
         HostRoleStatus taskStatus = task.getStatus();
 
         switch (taskStatus) {
@@ -290,18 +323,51 @@ public class LogicalRequest extends Request {
       }
 
       HostRoleCommandStatusSummaryDTO stageSummary = new HostRoleCommandStatusSummaryDTO(
-          stage.isSkippable() ? 1 : 0, 0, 0, stage.getStageId(), aborted, completed, failed,
+          0, 0, 0, stageId, aborted, completed, failed,
           holding, holdingFailed, holdingTimedout, inProgress, pending, queued, timedout,
           skippedFailed);
 
-      summaryMap.put(stage.getStageId(), stageSummary);
+      summaryMap.put(stageId, stageSummary);
     }
+
     return summaryMap;
+  }
+
+  /**
+   * Removes all HostRequest associated with the passed host name from internal collections
+   * @param hostName name of the host
+   */
+  public void removeHostRequestByHostName(String hostName) {
+    synchronized (requestsWithReservedHosts) {
+      synchronized (outstandingHostRequests) {
+        requestsWithReservedHosts.remove(hostName);
+
+        Iterator<HostRequest> hostRequestIterator = outstandingHostRequests.iterator();
+        while (hostRequestIterator.hasNext()) {
+          if (hostRequestIterator.next().getHostName().equals(hostName)) {
+            hostRequestIterator.remove();
+            break;
+          }
+        }
+
+        //todo: synchronization
+        Iterator<HostRequest> allHostRequesIterator = allHostRequests.iterator();
+        while (allHostRequesIterator.hasNext()) {
+          if (allHostRequesIterator.next().getHostName().equals(hostName)) {
+            allHostRequesIterator.remove();
+            break;
+          }
+        }
+      }
+    }
+
+
   }
 
   private void createHostRequests(TopologyRequest request, ClusterTopology topology) {
     Map<String, HostGroupInfo> hostGroupInfoMap = request.getHostGroupInfo();
     Blueprint blueprint = topology.getBlueprint();
+    boolean skipFailure = topology.getBlueprint().shouldSkipFailure();
     for (HostGroupInfo hostGroupInfo : hostGroupInfoMap.values()) {
       String groupName = hostGroupInfo.getHostGroupName();
       int hostCardinality = hostGroupInfo.getRequestedHostCount();
@@ -312,14 +378,14 @@ public class LogicalRequest extends Request {
           // host names are specified
           String hostname = hostnames.get(i);
           HostRequest hostRequest = new HostRequest(getRequestId(), hostIdCounter.getAndIncrement(), getClusterId(),
-              hostname, blueprint.getName(), blueprint.getHostGroup(groupName), null, topology);
+              hostname, blueprint.getName(), blueprint.getHostGroup(groupName), null, topology, skipFailure);
           synchronized (requestsWithReservedHosts) {
             requestsWithReservedHosts.put(hostname, hostRequest);
           }
         } else {
           // host count is specified
           HostRequest hostRequest = new HostRequest(getRequestId(), hostIdCounter.getAndIncrement(), getClusterId(),
-              null, blueprint.getName(), blueprint.getHostGroup(groupName), hostGroupInfo.getPredicate(), topology);
+              null, blueprint.getName(), blueprint.getHostGroup(groupName), hostGroupInfo.getPredicate(), topology, skipFailure);
           outstandingHostRequests.add(hostRequest);
         }
       }
@@ -334,6 +400,25 @@ public class LogicalRequest extends Request {
   private void createHostRequests(ClusterTopology topology,
                                   TopologyLogicalRequestEntity requestEntity) {
 
+    Collection<TopologyHostGroupEntity> hostGroupEntities = requestEntity.getTopologyRequestEntity().getTopologyHostGroupEntities();
+    Map<String, Set<String>> allReservedHostNamesByHostGroups = getReservedHostNamesByHostGroupName(hostGroupEntities);
+    Map<String, Set<String>> pendingReservedHostNamesByHostGroups = new HashMap<>(allReservedHostNamesByHostGroups);
+
+    for (TopologyHostRequestEntity hostRequestEntity : requestEntity.getTopologyHostRequestEntities()) {
+      TopologyHostGroupEntity hostGroupEntity = hostRequestEntity.getTopologyHostGroupEntity();
+      String hostGroupName = hostGroupEntity.getName();
+      String hostName = hostRequestEntity.getHostName();
+
+      if (hostName != null && pendingReservedHostNamesByHostGroups.containsKey(hostGroupName)) {
+        Set<String> pendingReservedHostNamesInHostGroup = pendingReservedHostNamesByHostGroups.get(hostGroupName);
+
+        if (pendingReservedHostNamesInHostGroup != null) {
+          pendingReservedHostNamesInHostGroup.remove(hostName);
+        }
+      }
+    }
+
+    boolean skipFailure = topology.getBlueprint().shouldSkipFailure();
     for (TopologyHostRequestEntity hostRequestEntity : requestEntity.getTopologyHostRequestEntities()) {
       Long hostRequestId = hostRequestEntity.getId();
       synchronized (hostIdCounter) {
@@ -342,18 +427,21 @@ public class LogicalRequest extends Request {
         }
       }
       TopologyHostGroupEntity hostGroupEntity = hostRequestEntity.getTopologyHostGroupEntity();
+      Set<String> pendingReservedHostsInGroup = pendingReservedHostNamesByHostGroups.get(hostGroupEntity.getName());
 
-      String reservedHostName = hostGroupEntity.
-          getTopologyHostInfoEntities().iterator().next().getFqdn();
+      // get next host name from pending host names
+      String reservedHostName = Iterables.getFirst(pendingReservedHostsInGroup, null);
+
 
       //todo: move predicate processing to host request
       HostRequest hostRequest = new HostRequest(getRequestId(), hostRequestId,
-          reservedHostName, topology, hostRequestEntity);
+          reservedHostName, topology, hostRequestEntity, skipFailure);
 
       allHostRequests.add(hostRequest);
       if (! hostRequest.isCompleted()) {
         if (reservedHostName != null) {
           requestsWithReservedHosts.put(reservedHostName, hostRequest);
+          pendingReservedHostsInGroup.remove(reservedHostName);
           LOG.info("LogicalRequest.createHostRequests: created new request for a reserved request ID = {} for host name = {}",
             hostRequest.getId(), reservedHostName);
         } else {
@@ -362,6 +450,30 @@ public class LogicalRequest extends Request {
         }
       }
     }
+  }
+
+  /**
+   * Returns a map where the keys are the host group names and the values the
+   * collection of FQDNs the hosts in the host group
+   * @param hostGroups
+   * @return
+   */
+  private Map<String, Set<String>> getReservedHostNamesByHostGroupName(Collection<TopologyHostGroupEntity> hostGroups) {
+    Map<String, Set<String>> reservedHostNamesByHostGroups = new HashMap<>();
+
+    for (TopologyHostGroupEntity hostGroupEntity: hostGroups) {
+      String hostGroupName = hostGroupEntity.getName();
+
+      if ( !reservedHostNamesByHostGroups.containsKey(hostGroupName) )
+        reservedHostNamesByHostGroups.put(hostGroupName, new HashSet<String>());
+
+      for (TopologyHostInfoEntity hostInfoEntity: hostGroupEntity.getTopologyHostInfoEntities()) {
+        if (StringUtils.isNotEmpty(hostInfoEntity.getFqdn())) {
+          reservedHostNamesByHostGroups.get(hostGroupName).add(hostInfoEntity.getFqdn());
+        }
+      }
+    }
+    return reservedHostNamesByHostGroups;
   }
 
   private synchronized static AmbariManagementController getController() {

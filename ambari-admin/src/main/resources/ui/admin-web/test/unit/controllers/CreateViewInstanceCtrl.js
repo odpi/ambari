@@ -53,6 +53,7 @@ describe('#CreateViewInstanceCtrl', function () {
       }
     };
     $httpBackend.flush();
+    scope.instance = {};
     scope.save();
     expect(View.createInstance).toHaveBeenCalled();
   });
@@ -63,9 +64,30 @@ describe('#CreateViewInstanceCtrl', function () {
         $dirty: true
       }
     };
+    scope.instance = {};
     scope.version = '1.0.0';
     $httpBackend.expectGET('template/modal/backdrop.html');
     $httpBackend.expectGET('template/modal/window.html');
+    $httpBackend.whenGET(/\/api\/v1\/clusters\?fields=Clusters\/cluster_id&_=\d+/).respond(200, {
+      "items" : [
+        {
+          "Clusters" : {
+            "cluster_name" : "c1",
+            "version" : "HDP-2.2"
+          }
+        }
+      ]
+    });
+    $httpBackend.whenGET(/\/api\/v1\/remoteclusters\?fields=ClusterInfo\/services,ClusterInfo\/cluster_id&_=\d+/).respond(200, {
+      "items" : [
+         {
+           "ClusterInfo" : {
+            "name" : "c1",
+            "services" : ["HDFS"]
+          }
+        }
+      ]
+    });
     scope.$digest();
     $httpBackend.flush();
     chai.expect(scope.view.ViewVersionInfo.parameters[0].value).to.equal('d');

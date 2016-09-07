@@ -13,18 +13,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-STACKS_FOLDER="/var/lib/ambari-server/resources/stacks"
-STACKS_FOLDER_OLD=/var/lib/ambari-server/resources/stacks_$(date '+%d_%m_%y_%H_%M').old
+ROOT="${RPM_INSTALL_PREFIX}"
 
-COMMON_SERVICES_FOLDER="/var/lib/ambari-server/resources/common-services"
-COMMON_SERVICES_FOLDER_OLD=/var/lib/ambari-server/resources/common-services_$(date '+%d_%m_%y_%H_%M').old
+STACKS_FOLDER="${ROOT}/var/lib/ambari-server/resources/stacks"
+STACKS_FOLDER_OLD="${ROOT}/var/lib/ambari-server/resources/stacks_$(date '+%d_%m_%y_%H_%M').old"
 
-AMBARI_VIEWS_FOLDER="/var/lib/ambari-server/resources/views"
+COMMON_SERVICES_FOLDER=${ROOT}"/var/lib/ambari-server/resources/common-services"
+COMMON_SERVICES_FOLDER_OLD="${ROOT}/var/lib/ambari-server/resources/common-services_$(date '+%d_%m_%y_%H_%M').old"
+
+AMBARI_PROPERTIES="${ROOT}/etc/ambari-server/conf/ambari.properties"
+AMBARI_PROPERTIES_OLD="$AMBARI_PROPERTIES.rpmsave"
+
+AMBARI_ENV="${ROOT}/var/lib/ambari-server/ambari-env.sh"
+AMBARI_ENV_OLD="$AMBARI_ENV.rpmsave"
+
+AMBARI_KRB_JAAS_LOGIN_FILE="${ROOT}/etc/ambari-server/conf/krb5JAASLogin.conf"
+AMBARI_KRB_JAAS_LOGIN_FILE_OLD="$AMBARI_KRB_JAAS_LOGIN_FILE.rpmsave"
+
+AMBARI_VIEWS_FOLDER="${ROOT}/var/lib/ambari-server/resources/views"
 AMBARI_VIEWS_BACKUP_FOLDER="$AMBARI_VIEWS_FOLDER/backups"
 
-if [ -d "/etc/ambari-server/conf.save" ]
+AMBARI_SERVER_JAR_FILES="/usr/lib/ambari-server/ambari-server-*.jar"
+AMBARI_SERVER_JAR_FILES_BACKUP_FOLDER="/usr/lib/ambari-server-backups"
+SERVER_CONF_SAVE="${ROOT}/etc/ambari-server/conf.save"
+SERVER_CONF_SAVE_BACKUP="${ROOT}/etc/ambari-server/conf_$(date '+%d_%m_%y_%H_%M').save"
+
+if [ -d "$SERVER_CONF_SAVE" ]
 then
-    mv /etc/ambari-server/conf.save /etc/ambari-server/conf_$(date '+%d_%m_%y_%H_%M').save
+    mv "$SERVER_CONF_SAVE" "$SERVER_CONF_SAVE_BACKUP"
+fi
+
+# Creating rpmsave files is done automatically by rpm, however on minor version upgrade (e.g. 2.4.0 -> 2.4.0.1) has to be done manually.
+if [ -f "$AMBARI_PROPERTIES" ]
+then
+    mv -f "$AMBARI_PROPERTIES" "$AMBARI_PROPERTIES_OLD"
+fi
+
+# Creating rpmsave files is done automatically by rpm, however on minor version upgrade (e.g. 2.4.0 -> 2.4.0.1) has to be done manually.
+if [ -f "$AMBARI_ENV" ]
+then
+    mv -f "$AMBARI_ENV" "$AMBARI_ENV_OLD"
+fi
+
+# Creating rpmsave files is done automatically by rpm, however on minor version upgrade (e.g. 2.4.0 -> 2.4.0.1) has to be done manually.
+if [ -f "$AMBARI_KRB_JAAS_LOGIN_FILE" ]
+then
+    mv -f "$AMBARI_KRB_JAAS_LOGIN_FILE" "$AMBARI_KRB_JAAS_LOGIN_FILE_OLD"
 fi
 
 if [ -d "$STACKS_FOLDER" ]
@@ -32,7 +66,7 @@ then
     mv -f "$STACKS_FOLDER" "$STACKS_FOLDER_OLD"
 fi
 
-if [ -d "$COMMON_SERVICES_FOLDER_OLD" ]
+if [ -d "$COMMON_SERVICES_FOLDER" ]
 then
     mv -f "$COMMON_SERVICES_FOLDER" "$COMMON_SERVICES_FOLDER_OLD"
 fi
@@ -42,9 +76,23 @@ then
     mkdir "$AMBARI_VIEWS_BACKUP_FOLDER"
 fi
 
-if [ -d "$AMBARI_VIEWS_FOLDER" ] && [ -d "$AMBARI_VIEWS_BACKUP_FOLDER" ]
+ls $AMBARI_VIEWS_FOLDER/*.jar > /dev/null 2>&1
+JARS_EXIST="$?"
+if [ -d "$AMBARI_VIEWS_FOLDER" ] && [ -d "$AMBARI_VIEWS_BACKUP_FOLDER" ] && [ "$JARS_EXIST" -eq 0 ]
 then
     cp -u $AMBARI_VIEWS_FOLDER/*.jar $AMBARI_VIEWS_BACKUP_FOLDER/
 fi
+
+for f in $AMBARI_SERVER_JAR_FILES;
+do
+    if [ -f "$f" ]
+    then
+        if [ ! -d "$AMBARI_SERVER_JAR_FILES_BACKUP_FOLDER" ]
+        then
+            mkdir -p "$AMBARI_SERVER_JAR_FILES_BACKUP_FOLDER"
+        fi
+        mv -f $f $AMBARI_SERVER_JAR_FILES_BACKUP_FOLDER/
+    fi
+done
 
 exit 0

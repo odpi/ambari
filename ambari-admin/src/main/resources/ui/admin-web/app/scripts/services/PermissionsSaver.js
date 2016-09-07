@@ -18,11 +18,11 @@
 'use strict';
 
 angular.module('ambariAdminConsole')
-.factory('PermissionSaver', ['Cluster', 'View', '$q', 'getDifference', function(Cluster, View, $q, getDifference) {
+.factory('PermissionSaver', ['Cluster', 'View', '$q', 'getDifference', '$translate', function(Cluster, View, $q, getDifference, $translate) {
+  var $t = $translate.instant;
 
   function savePermissionsFor(resource, permissions, params){
     var arr = [];
-
     angular.forEach(permissions, function(permission) {
       // Sanitaize input
       var users = permission.USER.toString().split(',').filter(function(item) {return item.trim();}).map(function(item) {return item.trim()});
@@ -47,91 +47,54 @@ angular.module('ambariAdminConsole')
           }
         }
       }));
-    });
 
+      angular.forEach(View.clusterInheritedPermissionKeys, function(key) {
+        if(permission[key] === true) {
+          arr.push({
+            'PrivilegeInfo': {
+              'permission_name': 'VIEW.USER',
+              'principal_name': '*',
+              'principal_type': key
+            }
+          });
+        }
+      });
+
+    });
+    if (!passOneRoleCheck(arr)) {
+      console.log("CHECK FAILED");
+      var deferred = $q.defer();
+      deferred.reject({
+        data: {
+          message: $t('users.roles.oneRolePerUser')
+        }
+      });
+      return deferred.promise;
+    }
     return resource.updatePrivileges(params, arr);
   }
-  
-  function savePermissionsForOld(resource, oldPermissions, newPermissions, params){
-    var deferred = $q.defer();
 
-    var addArr = [];
-    var delArr = [];
-    angular.forEach(newPermissions, function(permission) {
-      // Sanitize input
-      var users = permission.USER.toString().split(',').filter(function(item) {return item.trim();}).map(function(item) {return item.trim()});
-      var groups = permission.GROUP.toString().split(',').filter(function(item) {return item.trim();}).map(function(item) {return item.trim()});
-
-      var userObj = getDifference(angular.copy(oldPermissions[permission.PermissionInfo.permission_name].USER) , users);
-      var groupObj = getDifference(angular.copy(oldPermissions[permission.PermissionInfo.permission_name].GROUP) , groups);
-
-      // Build Add array
-      addArr = addArr.concat(userObj.add.map(function(user) {
-        return {
-          'PrivilegeInfo':{
-            'permission_name': permission.PermissionInfo.permission_name,
-            'principal_name': user,
-            'principal_type': 'USER'
-          }
-        }
-      }));
-      addArr = addArr.concat(groupObj.add.map(function(group) {
-        return {
-          'PrivilegeInfo':{
-            'permission_name': permission.PermissionInfo.permission_name,
-            'principal_name': group,
-            'principal_type': 'GROUP'
-          }
-        }
-      }));
-
-      // Build del array
-      delArr = delArr.concat(userObj.del.map(function(user) {
-        return {
-          'PrivilegeInfo':{
-            'permission_name': permission.PermissionInfo.permission_name,
-            'principal_name': user,
-            'principal_type': 'USER'
-          }
-        }
-      }));
-      delArr = delArr.concat(groupObj.del.map(function(group) {
-        return {
-          'PrivilegeInfo':{
-            'permission_name': permission.PermissionInfo.permission_name,
-            'principal_name': group,
-            'principal_type': 'GROUP'
-          }
-        }
-      }));
-    });
-
-    if(addArr.length){
-      resource.createPrivileges(params, addArr)
-      .then(function() {
-        deferred.resolve();
-      })
-      .catch(function(data) {
-        deferred.reject(data);
-      });
+  function passOneRoleCheck(arr) {
+    var hashes = {};
+    for(var i = 0; i < arr.length; i++) {
+      var obj = arr[i],
+        type = obj.PrivilegeInfo.principal_type,
+        name = obj.PrivilegeInfo.principal_name;
+      if (!hashes[type]) {
+        hashes[type] = {};
+      }
+      if (hashes[type][name] && name !== "*") {
+        return false;
+      } else {
+        hashes[type][name] = true;
+      }
     }
-
-    if(delArr.length){
-      resource.deletePrivileges(params, delArr)
-      .then(function() {
-        deferred.resolve();
-      })
-      .catch(function(data) {
-        deferred.resolve(data);
-      });
-    }
-
-    return deferred.promise;
+    return true;
   }
 
   return {
-    saveClusterPermissions: function(oldPermissions, newPermissions, params) {
-      return savePermissionsFor(Cluster, oldPermissions, newPermissions, params);
+    saveClusterPermissions: function(permissions, params) {
+      return savePermissionsFor(Cluster, permissions, params);
     },
     saveViewPermissions: function(permissions, params) {
       return savePermissionsFor(View, permissions, params);

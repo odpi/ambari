@@ -29,18 +29,12 @@ App.ChartServiceMetricsFlume_IncommingSum = App.ChartLinearTimeView.extend({
   id: "service-metrics-flume-incoming_sum",
   title: Em.I18n.t('services.service.info.metrics.flume.incoming.sum'),
 
-  ajaxIndex: 'service.metrics.flume.incoming_event_put_successCount',
+  ajaxIndex: 'service.metrics.flume.incoming_event_put_successCount.sum',
 
-  transformToSeries: function (jsonData) {
-    var seriesArray = [];
-    var self = this;
-    if(Em.get(jsonData, "metrics.flume.flume.CHANNEL.EventPutSuccessCount.rate.sum")){
-      var seriesName = Em.I18n.t('services.service.info.metrics.flume.incoming.sum');
-      var seriesData = jsonData.metrics.flume.flume.CHANNEL.EventPutSuccessCount.rate.sum;
-      if (seriesData) {
-        seriesArray.push(self.transformData(seriesData, seriesName));
-      }
+  seriesTemplate: {
+    path: 'metrics.flume.flume.CHANNEL.EventPutSuccessCount.rate',
+    displayName: function () {
+      return Em.I18n.t('services.service.info.metrics.flume.incoming.sum');
     }
-    return seriesArray;
   }
 });

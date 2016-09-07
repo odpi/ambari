@@ -19,16 +19,20 @@ package org.apache.ambari.server.orm.dao;
 
 import java.util.List;
 
+import javax.persistence.EntityManager;
 import javax.persistence.NoResultException;
 import javax.persistence.NonUniqueResultException;
 import javax.persistence.TypedQuery;
 
 import org.apache.ambari.server.orm.RequiresSession;
+import org.apache.ambari.server.orm.entities.ClusterEntity;
 import org.apache.ambari.server.orm.entities.ClusterVersionEntity;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.state.RepositoryVersionState;
 import org.apache.ambari.server.state.StackId;
 
 import com.google.inject.Singleton;
+import com.google.inject.persist.Transactional;
 
 /**
  * The {@link ClusterVersionDAO} class manages the {@link ClusterVersionEntity} instances associated with a cluster.
@@ -153,4 +157,77 @@ public class ClusterVersionDAO extends CrudDAO<ClusterVersionEntity, Long>{
 
     return daoUtils.selectList(query);
   }
+
+  /**
+   * Construct a Cluster Version. Additionally this will update parent connection relations without
+   * forcing refresh of parent entity
+   * @param entity entity to create
+   */
+  @Override
+  @Transactional
+  public void create(ClusterVersionEntity entity) throws IllegalArgumentException {
+    // check if repository version is not missing, to avoid NPE
+    if (entity.getRepositoryVersion() == null) {
+      throw new IllegalArgumentException("RepositoryVersion argument is not set for the entity");
+    }
+
+    super.create(entity);
+    entity.getRepositoryVersion().updateClusterVersionEntityRelation(entity);
+  }
+
+  /**
+   * Construct a Cluster Version and return it. This is primarily used to be able to construct the object and mock
+   * the function call.
+   * @param cluster Cluster
+   * @param repositoryVersion Repository Version
+   * @param state Initial State
+   * @param startTime Start Time
+   * @param endTime End Time
+   * @param userName Username, such as "admin"
+   * @return Return new ClusterVersion object.
+   */
+  @Transactional
+  public ClusterVersionEntity create(ClusterEntity cluster, RepositoryVersionEntity repositoryVersion,
+                                     RepositoryVersionState state, long startTime, long endTime, String userName) {
+    ClusterVersionEntity clusterVersionEntity = new ClusterVersionEntity(cluster,
+        repositoryVersion, state, startTime, endTime, userName);
+    this.create(clusterVersionEntity);
+    return clusterVersionEntity;
+  }
+
+  /**
+   * Updates the cluster version's existing CURRENT record to the INSTALLED, and the target
+   * becomes CURRENT.  This method invokes {@code clear()} on the entity manager to force entities to be refreshed.
+   * @param clusterId the cluster
+   * @param target    the repo version that will be marked as CURRENT
+   * @param current   the cluster's current record to be marked INSTALLED
+   */
+  @Transactional
+  public void updateVersions(Long clusterId, RepositoryVersionEntity target, RepositoryVersionEntity current) {
+    // !!! first update target to be current
+    StringBuilder sb = new StringBuilder("UPDATE ClusterVersionEntity cve");
+    sb.append(" SET cve.state = ?1 ");
+    sb.append(" WHERE cve.clusterId = ?2");
+    sb.append(" AND cve.repositoryVersion = ?3");
+
+    EntityManager em = entityManagerProvider.get();
+
+    TypedQuery<Long> query = em.createQuery(sb.toString(), Long.class);
+    daoUtils.executeUpdate(query, RepositoryVersionState.CURRENT, clusterId, target);
+
+    // !!! then move existing current to installed
+    sb = new StringBuilder("UPDATE ClusterVersionEntity cve");
+    sb.append(" SET cve.state = ?1 ");
+    sb.append(" WHERE cve.clusterId = ?2");
+    sb.append(" AND cve.repositoryVersion = ?3");
+    sb.append(" AND cve.state = ?4");
+
+    query = em.createQuery(sb.toString(), Long.class);
+    daoUtils.executeUpdate(query, RepositoryVersionState.INSTALLED, clusterId, current,
+        RepositoryVersionState.CURRENT);
+
+    em.clear();
+  }
+
+
 }

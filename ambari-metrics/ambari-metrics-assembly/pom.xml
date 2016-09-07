@@ -23,20 +23,22 @@
   <parent>
     <artifactId>ambari-metrics</artifactId>
     <groupId>org.apache.ambari</groupId>
-    <version>2.0.0-SNAPSHOT</version>
+    <version>2.0.0.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>ambari-metrics-assembly</artifactId>
   <name>Ambari Metrics Assembly</name>
   <packaging>pom</packaging>
-  <version>2.0.0-SNAPSHOT</version>
-  <description>Ambari Metrics</description>
+  <version>2.0.0.0-SNAPSHOT</version>
+  <description>Ambari Metrics Assembly</description>
 
   <properties>
     <collector.dir>${project.basedir}/../ambari-metrics-timelineservice</collector.dir>
     <monitor.dir>${project.basedir}/../ambari-metrics-host-monitoring</monitor.dir>
+    <grafana.dir>${project.basedir}/../ambari-metrics-grafana</grafana.dir>
     <hadoop-sink.dir>${project.basedir}/../ambari-metrics-hadoop-sink</hadoop-sink.dir>
     <storm-sink.dir>${project.basedir}/../ambari-metrics-storm-sink</storm-sink.dir>
+    <storm-sink-legacy.dir>${project.basedir}/../ambari-metrics-storm-sink-legacy</storm-sink-legacy.dir>
     <flume-sink.dir>${project.basedir}/../ambari-metrics-flume-sink</flume-sink.dir>
     <kafka-sink.dir>${project.basedir}/../ambari-metrics-kafka-sink</kafka-sink.dir>
     <python.ver>python &gt;= 2.6</python.ver>
@@ -50,6 +52,7 @@
     <deb.dependency.list>${deb.python.ver},python-dev,gcc</deb.dependency.list>
     <hadoop.sink.jar>ambari-metrics-hadoop-sink-with-common-${project.version}.jar</hadoop.sink.jar>
     <storm.sink.jar>ambari-metrics-storm-sink-with-common-${project.version}.jar</storm.sink.jar>
+    <storm.sink.legacy.jar>ambari-metrics-storm-sink-legacy-with-common-${project.version}.jar</storm.sink.legacy.jar>
     <flume.sink.jar>ambari-metrics-flume-sink-with-common-${project.version}.jar</flume.sink.jar>
     <kafka.sink.jar>ambari-metrics-kafka-sink-with-common-${project.version}.jar</kafka.sink.jar>
   </properties>
@@ -76,8 +79,8 @@
             <configuration>
               <name>ambariVersion</name>
               <value>${project.version}</value>
-              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
-              <replacement>$1.$2.$3</replacement>
+              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
+              <replacement>$1.$2.$3.$4</replacement>
               <failIfNoMatch>false</failIfNoMatch>
             </configuration>
           </execution>
@@ -88,7 +91,7 @@
         <executions>
           <execution>
             <id>collector</id>
-            <phase>package</phase>
+            <phase>prepare-package</phase>
             <goals>
               <goal>single</goal>
             </goals>
@@ -104,7 +107,7 @@
           </execution>
           <execution>
             <id>monitor</id>
-            <phase>package</phase>
+            <phase>prepare-package</phase>
             <goals>
               <goal>single</goal>
             </goals>
@@ -119,8 +122,24 @@
             </configuration>
           </execution>
           <execution>
+            <id>grafana</id>
+            <phase>prepare-package</phase>
+            <goals>
+              <goal>single</goal>
+            </goals>
+            <configuration>
+              <attach>false</attach>
+              <finalName>ambari-metrics-grafana-${project.version}</finalName>
+              <appendAssemblyId>false</appendAssemblyId>
+              <descriptors>
+                <descriptor>${assemblydescriptor.grafana}</descriptor>
+              </descriptors>
+              <tarLongFileMode>gnu</tarLongFileMode>
+            </configuration>
+          </execution>
+          <execution>
             <id>hadoop-sink</id>
-            <phase>package</phase>
+            <phase>prepare-package</phase>
             <goals>
               <goal>single</goal>
             </goals>
@@ -158,7 +177,7 @@
             <executions>
               <execution>
                 <id>copy-resources</id>
-                <phase>prepare-package</phase>
+                <phase>package</phase>
                 <goals>
                   <goal>copy-resources</goal>
                 </goals>
@@ -191,6 +210,314 @@
               <defaultGroupname>root</defaultGroupname>
             </configuration>
             <executions>
+
+              <!--ambari-metrics-collector-->
+              <execution>
+                <id>ambari-metrics-collector</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>rpm</goal>
+                </goals>
+                <configuration>
+                  <name>ambari-metrics-collector</name>
+                  <copyright>2012, Apache Software Foundation</copyright>
+                  <group>Development</group>
+                  <description>Maven Recipe: RPM Package.</description>
+                  <autoRequires>false</autoRequires>
+                  <requires>
+                    <require>snappy</require>
+                    <require>${python.ver}</require>
+                  </requires>
+
+                  <defaultFilemode>644</defaultFilemode>
+                  <defaultDirmode>755</defaultDirmode>
+                  <defaultUsername>root</defaultUsername>
+                  <defaultGroupname>root</defaultGroupname>
+
+                  <mappings>
+                    <mapping>
+                      <!--jars-->
+                      <directory>/usr/lib/ambari-metrics-collector/</directory>
+                      <sources>
+                        <source>
+                          <location>${collector.dir}/target/lib</location>
+                          <excludes>
+                            <exclude>*tests.jar</exclude>
+                          </excludes>
+                        </source>
+                        <source>
+                          <location>
+                            ${collector.dir}/target/ambari-metrics-timelineservice-${project.version}.jar
+                          </location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <!--embedded applications-->
+                      <directory>/usr/lib/ams-hbase/</directory>
+                      <sources>
+                        <source>
+                          <location>${collector.dir}/target/embedded/${hbase.folder}</location>
+                          <excludes>
+                            <exclude>bin/**</exclude>
+                            <exclude>bin/*</exclude>
+                            <exclude>lib/*tests.jar</exclude>
+                          </excludes>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/ams-hbase/bin</directory>
+                      <filemode>755</filemode>
+                      <sources>
+                        <source>
+                          <location>${collector.dir}/target/embedded/${hbase.folder}/bin</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/ams-hbase/lib/</directory>
+                      <sources>
+                        <source>
+                          <location>${collector.dir}/target/lib</location>
+                          <includes>
+                            <include>phoenix*.jar</include>
+                            <include>antlr*.jar</include>
+                          </includes>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/ams-hbase/lib/hadoop-native/</directory>
+                      <sources>
+                        <source>
+                          <location>${project.build.directory}/ambari-metrics-collector-${project.version}/ambari-metrics-collector-${project.version}/hbase/lib/hadoop-native</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/sbin</directory>
+                      <filemode>755</filemode>
+                      <username>root</username>
+                      <groupname>root</groupname>
+                      <directoryIncluded>false</directoryIncluded>
+                      <sources>
+                        <source>
+                          <location>${collector.dir}/conf/unix/ambari-metrics-collector</location>
+                          <filter>false</filter>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/ambari-metrics-collector/bin</directory>
+                      <filemode>755</filemode>
+                      <username>root</username>
+                      <groupname>root</groupname>
+                      <directoryIncluded>false</directoryIncluded>
+                      <sources>
+                        <source>
+                          <location>${collector.dir}/conf/unix/sqlline</location>
+                          <filter>false</filter>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/etc/ambari-metrics-collector/conf</directory>
+                      <configuration>true</configuration>
+                      <sources>
+                        <source>
+                          <location>${collector.dir}/conf/unix/ams-env.sh</location>
+                        </source>
+                        <source>
+                          <location>${collector.dir}/conf/unix/ams-site.xml</location>
+                        </source>
+                        <source>
+                          <location>${collector.dir}/conf/unix/log4j.properties</location>
+                        </source>
+                        <source>
+                          <location>${collector.dir}/target/embedded/${hbase.folder}/conf/hbase-site.xml</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/etc/ams-hbase/conf</directory>
+                      <configuration>true</configuration>
+                      <sources>
+                        <source>
+                          <location>${collector.dir}/target/embedded/${hbase.folder}/conf</location>
+                          <includes>
+                            <include>*.*</include>
+                          </includes>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/var/run/ams-hbase</directory>
+                    </mapping>
+                    <mapping>
+                      <directory>/var/lib/ambari-metrics-collector</directory>
+                    </mapping>
+                  </mappings>
+                </configuration>
+              </execution>
+
+              <!--hadoop-sink-->
+              <execution>
+                <id>ambari-metrics-hadoop-sink</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>rpm</goal>
+                </goals>
+
+                <configuration>
+                  <name>ambari-metrics-hadoop-sink</name>
+                  <copyright>2012, Apache Software Foundation</copyright>
+                  <group>Development</group>
+                  <description>Maven Recipe: RPM Package.</description>
+
+                  <defaultDirmode>755</defaultDirmode>
+                  <defaultFilemode>644</defaultFilemode>
+                  <defaultUsername>root</defaultUsername>
+                  <defaultGroupname>root</defaultGroupname>
+
+                  <postinstallScriptlet>
+                    <scriptFile>${project.build.directory}/resources/rpm/sink/postinstall.sh</scriptFile>
+                    <fileEncoding>utf-8</fileEncoding>
+                  </postinstallScriptlet>
+
+                  <mappings>
+                    <mapping>
+                      <directory>/usr/lib/ambari-metrics-hadoop-sink</directory>
+                      <sources>
+                        <source>
+                          <location>${hadoop-sink.dir}/target/ambari-metrics-hadoop-sink-with-common-${project.version}.jar</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/flume/lib</directory>
+                      <sources>
+                        <source>
+                          <location>${flume-sink.dir}/target/ambari-metrics-flume-sink-with-common-${project.version}.jar</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/storm/lib</directory>
+                      <sources>
+                        <source>
+                          <location>${storm-sink.dir}/target/ambari-metrics-storm-sink-with-common-${project.version}.jar</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/storm/lib</directory>
+                      <sources>
+                        <source>
+                          <location>${storm-sink-legacy.dir}/target/ambari-metrics-storm-sink-legacy-with-common-${project.version}.jar</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/ambari-metrics-kafka-sink</directory>
+                      <sources>
+                        <source>
+                          <location>${kafka-sink.dir}/target/${kafka.sink.jar}</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/ambari-metrics-kafka-sink/lib</directory>
+                      <sources>
+                        <source>
+                          <location>${kafka-sink.dir}/target/lib</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                  </mappings>
+                </configuration>
+              </execution>
+
+              <!--ambari-metrics-grafana-->
+              <execution>
+                <id>ambari-metrics-grafana</id>
+                <!-- unbinds rpm creation from maven lifecycle -->
+                <phase>package</phase>
+                <goals>
+                  <goal>rpm</goal>
+                </goals>
+                <configuration>
+                  <name>ambari-metrics-grafana</name>
+                  <group>Development</group>
+                  <needarch>x86_64</needarch>
+                  <autoRequires>false</autoRequires>
+                  <mappings>
+                    <mapping>
+                      <!--grafana-->
+                      <directory>/usr/lib/ambari-metrics-grafana/</directory>
+                      <sources>
+                        <source>
+                          <location>${grafana.dir}/target/grafana/${grafana.folder}</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/lib/ambari-metrics-grafana/bin</directory>
+                      <filemode>755</filemode>
+                      <sources>
+                        <source>
+                          <location>${grafana.dir}/target/grafana/${grafana.folder}/bin</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/usr/sbin</directory>
+                      <filemode>755</filemode>
+                      <username>root</username>
+                      <groupname>root</groupname>
+                      <directoryIncluded>false</directoryIncluded>
+                      <sources>
+                        <source>
+                          <location>${grafana.dir}/conf/unix/ambari-metrics-grafana</location>
+                          <filter>false</filter>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/etc/ambari-metrics-grafana/conf</directory>
+                      <filemode>755</filemode>
+                      <username>root</username>
+                      <groupname>root</groupname>
+                      <directoryIncluded>false</directoryIncluded>
+                      <sources>
+                        <source>
+                          <location>${grafana.dir}/conf/unix/ams-grafana-env.sh</location>
+                          <filter>false</filter>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/etc/ambari-metrics-grafana/conf</directory>
+                      <configuration>true</configuration>
+                      <sources>
+                        <source>
+                          <location>${grafana.dir}/conf/unix/ams-grafana.ini</location>
+                        </source>
+                      </sources>
+                    </mapping>
+                    <mapping>
+                      <directory>/var/run/ambari-metrics-grafana</directory>
+                    </mapping>
+                    <mapping>
+                      <directory>/var/lib/ambari-metrics-grafana</directory>
+                    </mapping>
+                    <mapping>
+                      <directory>/var/log/ambari-metrics-grafana</directory>
+                    </mapping>
+                  </mappings>
+                </configuration>
+              </execution>
+
               <!--ambari-metrics-monitor-->
               <execution>
                 <id>ambari-metrics-monitor</id>
@@ -288,207 +615,6 @@
                 </configuration>
               </execution>
 
-              <!--ambari-metrics-collector-->
-              <execution>
-                <id>ambari-metrics-collector</id>
-                <phase>package</phase>
-                <goals>
-                  <goal>rpm</goal>
-                </goals>
-                <configuration>
-                  <name>ambari-metrics-collector</name>
-                  <copyright>2012, Apache Software Foundation</copyright>
-                  <group>Development</group>
-                  <description>Maven Recipe: RPM Package.</description>
-                  <autoRequires>false</autoRequires>
-                  <requires>
-                    <require>${python.ver}</require>
-                  </requires>
-
-                  <defaultFilemode>644</defaultFilemode>
-                  <defaultDirmode>755</defaultDirmode>
-                  <defaultUsername>root</defaultUsername>
-                  <defaultGroupname>root</defaultGroupname>
-
-                  <mappings>
-                    <mapping>
-                      <!--jars-->
-                      <directory>/usr/lib/ambari-metrics-collector/</directory>
-                      <sources>
-                        <source>
-                          <location>${collector.dir}/target/lib</location>
-                        </source>
-                        <source>
-                          <location>
-                            ${collector.dir}/target/ambari-metrics-timelineservice-${project.version}.jar
-                          </location>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <!--embedded applications-->
-                      <directory>/usr/lib/ams-hbase/</directory>
-                      <sources>
-                        <source>
-                          <location>${collector.dir}/target/embedded/${hbase.folder}</location>
-                          <excludes>
-                            <exclude>bin/**</exclude>
-                            <exclude>bin/*</exclude>
-                          </excludes>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/usr/lib/ams-hbase/bin</directory>
-                      <filemode>755</filemode>
-                      <sources>
-                        <source>
-                          <location>${collector.dir}/target/embedded/${hbase.folder}/bin</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/usr/lib/ams-hbase/lib/</directory>
-                      <sources>
-                        <source>
-                          <location>${collector.dir}/target/lib</location>
-                          <includes>
-                            <include>phoenix*.jar</include>
-                            <include>antlr*.jar</include>
-                          </includes>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/usr/lib/ams-hbase/lib/hadoop-native/</directory>
-                      <sources>
-                        <source>
-                          <location>${project.build.directory}/ambari-metrics-collector-${project.version}/ambari-metrics-collector-${project.version}/hbase/lib/hadoop-native</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/usr/sbin</directory>
-                      <filemode>755</filemode>
-                      <username>root</username>
-                      <groupname>root</groupname>
-                      <directoryIncluded>false</directoryIncluded>
-                      <sources>
-                        <source>
-                          <location>${collector.dir}/conf/unix/ambari-metrics-collector</location>
-                          <filter>false</filter>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/etc/ambari-metrics-collector/conf</directory>
-                      <configuration>true</configuration>
-                      <sources>
-                        <source>
-                          <location>${collector.dir}/conf/unix/ams-env.sh</location>
-                        </source>
-                        <source>
-                          <location>${collector.dir}/conf/unix/ams-site.xml</location>
-                        </source>
-                        <source>
-                          <location>${collector.dir}/conf/unix/log4j.properties</location>
-                        </source>
-                        <source>
-                          <location>${collector.dir}/target/embedded/${hbase.folder}/conf/hbase-site.xml</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/etc/ams-hbase/conf</directory>
-                      <configuration>true</configuration>
-                      <sources>
-                        <source>
-                          <location>${collector.dir}/target/embedded/${hbase.folder}/conf</location>
-                          <includes>
-                            <include>*.*</include>
-                          </includes>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/var/run/ams-hbase</directory>
-                    </mapping>
-                    <mapping>
-                      <directory>/var/lib/ambari-metrics-collector</directory>
-                    </mapping>
-                  </mappings>
-                </configuration>
-              </execution>
-
-              <!--hadoop-sink-->
-              <execution>
-                <id>ambari-metrics-hadoop-sink</id>
-                <phase>package</phase>
-                <goals>
-                  <goal>rpm</goal>
-                </goals>
-
-                <configuration>
-                  <name>ambari-metrics-hadoop-sink</name>
-                  <copyright>2012, Apache Software Foundation</copyright>
-                  <group>Development</group>
-                  <description>Maven Recipe: RPM Package.</description>
-
-                  <defaultDirmode>755</defaultDirmode>
-                  <defaultFilemode>644</defaultFilemode>
-                  <defaultUsername>root</defaultUsername>
-                  <defaultGroupname>root</defaultGroupname>
-
-                  <postinstallScriptlet>
-                    <scriptFile>${project.build.directory}/resources/rpm/sink/postinstall.sh</scriptFile>
-                    <fileEncoding>utf-8</fileEncoding>
-                  </postinstallScriptlet>
-
-                  <mappings>
-                    <mapping>
-                      <directory>/usr/lib/ambari-metrics-hadoop-sink</directory>
-                      <sources>
-                        <source>
-                          <location>${hadoop-sink.dir}/target/ambari-metrics-hadoop-sink-with-common-${project.version}.jar</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/usr/lib/flume/lib</directory>
-                      <sources>
-                        <source>
-                          <location>${flume-sink.dir}/target/ambari-metrics-flume-sink-with-common-${project.version}.jar</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/usr/lib/storm/lib</directory>
-                      <sources>
-                        <source>
-                          <location>${storm-sink.dir}/target/ambari-metrics-storm-sink-with-common-${project.version}.jar</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                    <mapping>
-                      <directory>/usr/lib/ambari-metrics-kafka-sink</directory>
-                      <sources>
-                        <source>
-                          <location>${kafka-sink.dir}/target/${kafka.sink.jar}</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                     <mapping>
-                      <directory>/usr/lib/ambari-metrics-kafka-sink/lib</directory>
-                      <sources>
-                        <source>
-                          <location>${kafka-sink.dir}/target/lib</location>
-                        </source>
-                      </sources>
-                    </mapping>
-                  </mappings>
-                </configuration>
-
-              </execution>
 
             </executions>
           </plugin>
@@ -513,7 +639,7 @@
             <executions>
               <execution>
                 <id>copy-resources</id>
-                <phase>prepare-package</phase>
+                <phase>package</phase>
                 <goals>
                   <goal>copy-resources</goal>
                 </goals>
@@ -553,7 +679,7 @@
             </executions>
             <configuration>
               <controlDir>${project.build.directory}/resources/deb/control</controlDir>
-              <deb>${basedir}/target/${artifactId}_${package-version}-${package-release}.deb</deb>
+              <deb>${basedir}/target/${project.artifactId}_${package-version}-${package-release}.deb</deb>
               <dataSet>
                 <data>
                   <type>file</type>
@@ -605,11 +731,14 @@
                   <type>template</type>
                   <paths>
                     <path>/etc/ambari-metrics-monitor/conf</path>
-                    <path>/usr/lib/ambari-metrics-collector</path>
                     <path>/etc/ambari-metrics-collector/conf</path>
+                    <path>/etc/ambari-metrics-grafana/conf</path>
                     <path>/etc/ams-hbase/conf</path>
                     <path>/var/run/ams-hbase</path>
+                    <path>/var/run/ambari-metrics-grafana</path>
+                    <path>/var/log/ambari-metrics-grafana</path>
                     <path>/var/lib/ambari-metrics-collector</path>
+                    <path>/var/lib/ambari-metrics-grafana</path>
                     <path>/usr/lib/ambari-metrics-hadoop-sink</path>
                     <path>/usr/lib/ambari-metrics-kafka-sink</path>
                     <path>/usr/lib/ambari-metrics-kafka-sink/lib</path>
@@ -659,6 +788,7 @@
                 <data>
                   <src>${collector.dir}/target/lib</src>
                   <type>directory</type>
+                  <excludes>*tests.jar</excludes>
                   <mapper>
                     <type>perm</type>
                     <filemode>644</filemode>
@@ -668,7 +798,7 @@
                 <data>
                   <src>${collector.dir}/target/embedded/${hbase.folder}</src>
                   <type>directory</type>
-                  <excludes>bin/**,bin/*</excludes>
+                  <excludes>bin/**,bin/*,lib/*tests.jar</excludes>
                   <mapper>
                     <type>perm</type>
                     <prefix>/usr/lib/ams-hbase</prefix>
@@ -759,6 +889,54 @@
                   </mapper>
                 </data>
 
+                <!-- Metric Grafana -->
+
+                <data>
+                  <src>${grafana.dir}/target/grafana/${grafana.folder}</src>
+                  <type>directory</type>
+                  <mapper>
+                    <type>perm</type>
+                    <filemode>644</filemode>
+                    <prefix>/usr/lib/ambari-metrics-grafana</prefix>
+                  </mapper>
+                </data>
+                <data>
+                  <src>${grafana.dir}/target/grafana/${grafana.folder}/bin</src>
+                  <type>directory</type>
+                  <mapper>
+                    <type>perm</type>
+                    <filemode>755</filemode>
+                    <prefix>/usr/lib/ambari-metrics-grafana/bin</prefix>
+                  </mapper>
+                </data>
+                <data>
+                  <src>${grafana.dir}/conf/unix/ambari-metrics-grafana</src>
+                  <type>file</type>
+                  <mapper>
+                    <type>perm</type>
+                    <filemode>755</filemode>
+                    <prefix>/usr/sbin</prefix>
+                  </mapper>
+                </data>
+                <data>
+                  <src>${grafana.dir}/conf/unix/ams-grafana-env.sh</src>
+                  <type>file</type>
+                  <mapper>
+                    <type>perm</type>
+                    <filemode>755</filemode>
+                    <prefix>/etc/ambari-metrics-grafana/conf</prefix>
+                  </mapper>
+                </data>
+                <data>
+                  <src>${grafana.dir}/conf/unix/ams-grafana.ini</src>
+                  <type>file</type>
+                  <mapper>
+                    <type>perm</type>
+                    <filemode>644</filemode>
+                    <prefix>/etc/ambari-metrics-grafana/conf</prefix>
+                  </mapper>
+                </data>
+
                 <!-- hadoop sink -->
 
                 <data>
@@ -785,10 +963,20 @@
                   </mapper>
                 </data>
 
-                <!-- storm sink -->
+                <!-- storm sinks -->
 
                 <data>
                   <src>${storm-sink.dir}/target/${storm.sink.jar}</src>
+                  <type>file</type>
+                  <mapper>
+                    <type>perm</type>
+                    <filemode>644</filemode>
+                    <dirmode>755</dirmode>
+                    <prefix>/usr/lib/storm/lib</prefix>
+                  </mapper>
+                </data>
+                <data>
+                  <src>${storm-sink-legacy.dir}/target/${storm.sink.legacy.jar}</src>
                   <type>file</type>
                   <mapper>
                     <type>perm</type>
@@ -844,6 +1032,7 @@
         <assemblydescriptor.collector>src/main/assembly/collector.xml</assemblydescriptor.collector>
         <assemblydescriptor.monitor>src/main/assembly/monitor.xml</assemblydescriptor.monitor>
         <assemblydescriptor.sink>src/main/assembly/sink.xml</assemblydescriptor.sink>
+        <assemblydescriptor.grafana>src/main/assembly/grafana.xml</assemblydescriptor.grafana>
         <packagingFormat>jar</packagingFormat>
       </properties>
       <build>
@@ -1099,6 +1288,11 @@
     <dependency>
       <groupId>org.apache.ambari</groupId>
       <artifactId>ambari-metrics-storm-sink</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.ambari</groupId>
+      <artifactId>ambari-metrics-storm-sink-legacy</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

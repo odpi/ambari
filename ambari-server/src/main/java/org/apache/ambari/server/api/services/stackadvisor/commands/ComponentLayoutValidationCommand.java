@@ -31,9 +31,9 @@ import org.apache.ambari.server.api.services.stackadvisor.validations.Validation
  */
 public class ComponentLayoutValidationCommand extends StackAdvisorCommand<ValidationResponse> {
 
-  public ComponentLayoutValidationCommand(File recommendationsDir, String stackAdvisorScript,
+  public ComponentLayoutValidationCommand(File recommendationsDir, String recommendationsArtifactsLifetime, String stackAdvisorScript,
                                           int requestId, StackAdvisorRunner saRunner, AmbariMetaInfo metaInfo) {
-    super(recommendationsDir, stackAdvisorScript, requestId, saRunner, metaInfo);
+    super(recommendationsDir, recommendationsArtifactsLifetime, stackAdvisorScript, requestId, saRunner, metaInfo);
   }
 
   @Override
@@ -44,8 +44,7 @@ public class ComponentLayoutValidationCommand extends StackAdvisorCommand<Valida
   @Override
   protected void validate(StackAdvisorRequest request) throws StackAdvisorException {
     if (request.getHosts() == null || request.getHosts().isEmpty() || request.getServices() == null
-        || request.getServices().isEmpty() || request.getComponentHostsMap() == null
-        || request.getComponentHostsMap().isEmpty()) {
+        || request.getServices().isEmpty()) {
       throw new StackAdvisorException("Hosts, services and recommendations must not be empty");
     }
   }

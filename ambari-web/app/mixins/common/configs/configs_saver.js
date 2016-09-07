@@ -17,21 +17,14 @@
  */
 
 var App = require('app');
-var dataManipulationUtils = require('utils/data_manipulation');
 var lazyLoading = require('utils/lazy_loading');
 
 /**
- * this mixin has method to save configs (used in MainServiceInfoConfigsController)
- * all methods are divided into couple groups :
- *  0. HELPERS - some helper methods
- *  1. PRE SAVE CHECKS - warning popups and validations checks
- *  2. PREPARE CONFIGS TO SAVE - filtering and formatting changed configs
- *    2.1 PREPARE DATABASE CONFIGS - modify database properties
- *    2.2 ADD DYNAMIC CONFIGS - !!!NEED INVESTIGATION
- *  3. GENERATING JSON TO SAVE - generating json data
- *  4. AJAX REQUESTS - ajax request
- *  5. AFTER SAVE INFO - after save methods like to show popup with result
- *  6. ADDITIONAL
+ * Mixin for saving configs
+ * Contains methods for
+ * - generation JSON for saving configs and groups
+ * - format properties if needed
+ * - requests to save configs and groups
  */
 App.ConfigsSaverMixin = Em.Mixin.create({
 
@@ -50,13 +43,40 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * List of heapsize properties not to be parsed
    * @type {string[]}
    */
-  heapsizeException: ['hadoop_heapsize', 'yarn_heapsize', 'nodemanager_heapsize', 'resourcemanager_heapsize', 'apptimelineserver_heapsize', 'jobhistory_heapsize', 'nfsgateway_heapsize', 'accumulo_master_heapsize', 'accumulo_tserver_heapsize', 'accumulo_monitor_heapsize', 'accumulo_gc_heapsize', 'accumulo_other_heapsize'],
+  heapsizeException: ['hadoop_heapsize', 'yarn_heapsize', 'nodemanager_heapsize', 'resourcemanager_heapsize',
+    'apptimelineserver_heapsize', 'jobhistory_heapsize', 'nfsgateway_heapsize', 'accumulo_master_heapsize',
+    'accumulo_tserver_heapsize', 'accumulo_monitor_heapsize', 'accumulo_gc_heapsize', 'accumulo_other_heapsize',
+    'hbase_master_heapsize', 'hbase_regionserver_heapsize', 'metrics_collector_heapsize'],
 
   /**
    * Regular expression for heapsize properties detection
    * @type {regexp}
    */
   heapsizeRegExp: /_heapsize|_newsize|_maxnewsize|_permsize|_maxpermsize$/,
+
+  /**
+   * If some of services has such type core-site can be saved
+   *
+   * @type {string}
+   */
+  coreSiteServiceType: 'HCFS',
+
+  /**
+   * Core site can be used by multiple services
+   * If some of services listed below is selected/installed than core site can be saved
+   *
+   * @type {string[]}
+   */
+  coreSiteServiceNames: ['HDFS', 'GLUSTERFS', 'RANGER_KMS'],
+
+  /**
+   * List of services which configs should be saved
+   *
+   * @type {App.StackService[]}
+   */
+  currentServices: function() {
+    return [App.StackService.find(this.get('content.serviceName'))];
+  }.property('content.serviceName'),
 
   /**
    * clear info to default
@@ -100,50 +120,43 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * @method saveConfigs
    */
   saveConfigs: function () {
-    var selectedConfigGroup = this.get('selectedConfigGroup');
-    if (selectedConfigGroup.get('isDefault')) {
-
-      var data = [];
-      this.get('stepConfigs').forEach(function(stepConfig) {
-
-        var serviceConfig = this.getServiceConfigToSave(stepConfig.get('serviceName'), stepConfig.get('configs'));
-
-        if (serviceConfig)  {
-          data.push(serviceConfig);
-        }
-
-      }, this);
-
-      if (Em.isArray(data) && data.length) {
-        this.putChangedConfigurations(data, true);
-      } else {
-        this.onDoPUTClusterConfigurations();
-      }
+    if (this.get('selectedConfigGroup.isDefault')) {
+      this.saveConfigsForDefaultGroup();
     } else {
+      this.saveConfigsForNonDefaultGroup();
+    }
+  },
 
-      this.get('stepConfigs').forEach(function(stepConfig) {
-        var serviceName = stepConfig.get('serviceName');
-        var configs = stepConfig.get('configs');
-        var configGroup = this.getGroupFromModel(serviceName);
-        if (configGroup) {
-          if (configGroup.get('isDefault')) {
+  saveConfigsForNonDefaultGroup: function() {
+    this.get('stepConfigs').forEach(function(stepConfig) {
+      var serviceName = stepConfig.get('serviceName');
+      var configs = stepConfig.get('configs');
+      var configGroup = this.getGroupFromModel(serviceName);
+      if (configGroup && !configGroup.get('isDefault')) {
+        var overriddenConfigs = this.getConfigsForGroup(configs, configGroup.get('name'));
 
-            var configsToSave = this.getServiceConfigToSave(serviceName, configs);
-
-            if (configsToSave) {
-              this.putChangedConfigurations([configsToSave], false);
-            }
-
-          } else {
-
-            var overridenConfigs = this.getConfigsForGroup(configs, configGroup.get('name'));
-
-            if (Em.isArray(overridenConfigs)) {
-              this.saveGroup(overridenConfigs, configGroup, this.get('content.serviceName') === serviceName);
-            }
-          }
+        if (Em.isArray(overriddenConfigs)) {
+          var successCallback = this.get('content.serviceName') === serviceName ? 'putConfigGroupChangesSuccess' : null;
+          this.saveGroup(overriddenConfigs, configGroup, this.get('serviceConfigVersionNote'), successCallback);
         }
-      }, this);
+      }
+    }, this);
+  },
+
+  saveConfigsForDefaultGroup: function() {
+    var data = [];
+    this.get('stepConfigs').forEach(function(stepConfig) {
+      var serviceConfig = this.getServiceConfigToSave(stepConfig.get('serviceName'), stepConfig.get('configs'));
+
+      if (serviceConfig)  {
+        data.push(serviceConfig);
+      }
+    }, this);
+
+    if (data.length) {
+      this.putChangedConfigurations(data, 'doPUTClusterConfigurationSiteSuccessCallback');
+    } else {
+      this.onDoPUTClusterConfigurations();
     }
   },
 
@@ -175,7 +188,7 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * @method hasUnsavedChanges
    */
   hasUnsavedChanges: function () {
-    return !Em.isNone(this.get('hash')) && this.get('hash') != this.getHash();
+    return !Em.isNone(this.get('hash')) && this.get('hash') !== this.getHash();
   },
 
   /*********************************** 1. PRE SAVE CHECKS ************************************/
@@ -278,10 +291,11 @@ App.ConfigsSaverMixin = Em.Mixin.create({
       overridenConfigs = overridenConfigs.concat(config.get('overrides'));
     });
     // find custom original properties that assigned to selected config group
-    return overridenConfigs.concat(stepConfigs.filterProperty('group')
-      .filter(function (config) {
+    return overridenConfigs.concat(
+      stepConfigs.filterProperty('group').filter(function (config) {
         return config.get('group.name') == configGroupName;
-      }));
+      })
+    );
   },
 
   /**
@@ -296,11 +310,12 @@ App.ConfigsSaverMixin = Em.Mixin.create({
     if (serviceName === 'YARN') {
       configs = App.config.textareaIntoFileConfigs(configs, 'capacity-scheduler.xml');
     }
-    /**
-     * generates list of properties that was changed
-     * @type {Array}
-     */
+
+    //generates list of properties that was changed
     var modifiedConfigs = this.getModifiedConfigs(configs);
+    var serviceFileNames = Object.keys(App.StackService.find(serviceName).get('configTypes')).map(function (type) {
+      return App.config.getOriginalFileName(type);
+    });
 
     // save modified original configs that have no group
     modifiedConfigs = this.saveSiteConfigs(modifiedConfigs.filter(function (config) {
@@ -309,7 +324,9 @@ App.ConfigsSaverMixin = Em.Mixin.create({
 
     if (!Em.isArray(modifiedConfigs) || modifiedConfigs.length == 0) return null;
 
-    var fileNamesToSave = modifiedConfigs.mapProperty('filename').concat(this.get('modifiedFileNames')).uniq();
+    var fileNamesToSave = modifiedConfigs.mapProperty('filename').concat(this.get('modifiedFileNames')).filter(function(filename) {
+      return serviceFileNames.contains(filename);
+    }).uniq();
 
     var configsToSave = this.generateDesiredConfigsJSON(modifiedConfigs, fileNamesToSave, this.get('serviceConfigVersionNote'));
 
@@ -351,24 +368,40 @@ App.ConfigsSaverMixin = Em.Mixin.create({
   /*********************************** 3. GENERATING JSON TO SAVE *****************************/
 
   /**
+   * Map that contains last used timestamp per filename.
+   * There is a case when two config groups can update same filename almost simultaneously
+   * so they have equal timestamp only and this causes collision. So to prevent this we need to check
+   * if specific filename with specific timestamp is not saved yet
+   *
+   * @type {Object}
+   */
+  _timeStamps: {},
+
+  /**
    * generating common JSON object for desired configs
    * @param configsToSave
    * @param fileNamesToSave
-   * @param serviceConfigNote
-   * @param {boolean} [isNotDefaultGroup=false]
+   * @param {string} [serviceConfigNote='']
+   * @param {boolean} [ignoreVersionNote=false]
    * @returns {Array}
    */
-  generateDesiredConfigsJSON: function(configsToSave, fileNamesToSave, serviceConfigNote, isNotDefaultGroup) {
+  generateDesiredConfigsJSON: function(configsToSave, fileNamesToSave, serviceConfigNote, ignoreVersionNote) {
     var desired_config = [];
     if (Em.isArray(configsToSave) && Em.isArray(fileNamesToSave) && fileNamesToSave.length && configsToSave.length) {
       serviceConfigNote = serviceConfigNote || "";
       var tagVersion = "version" + (new Date).getTime();
-
       fileNamesToSave.forEach(function(fName) {
+
+        /** @see <code>_timeStamps<code> **/
+        if (this.get('_timeStamps')[fName] === tagVersion) {
+          tagVersion = "version" + ((new Date).getTime() + 1);
+        }
+        this.get('_timeStamps')[fName] = tagVersion;
+
         if (this.allowSaveSite(fName)) {
           var properties = configsToSave.filterProperty('filename', fName);
           var type = App.config.getConfigTagFromFileName(fName);
-          desired_config.push(this.createDesiredConfig(type, tagVersion, properties, serviceConfigNote, isNotDefaultGroup));
+          desired_config.push(this.createDesiredConfig(type, tagVersion, properties, serviceConfigNote, ignoreVersionNote));
         }
       }, this);
     }
@@ -376,22 +409,33 @@ App.ConfigsSaverMixin = Em.Mixin.create({
   },
 
   /**
-   * for some file names we have a restriction
-   * and can't save them, in this this method will return false
+   * For some file names we have a restriction
+   * and can't save them, in this case method will return false
+   *
    * @param fName
    * @returns {boolean}
    */
   allowSaveSite: function(fName) {
-    switch (fName) {
-      case 'mapred-queue-acls.xml':
+    switch(App.config.getConfigTagFromFileName(fName)) {
+      case 'mapred-queue-acls':
         return false;
-      case 'core-site.xml':
-        var serviceName = this.get('content.serviceName');
-        var serviceType = App.StackService.find().findProperty('serviceName',serviceName).get('serviceType');
-        return ['HDFS', 'GLUSTERFS', 'RANGER_KMS'].contains(this.get('content.serviceName')) || serviceType === 'HCFS';
-      default :
+      case 'core-site':
+        return this.allowSaveCoreSite();
+      default:
         return true;
     }
+  },
+
+  /**
+   * Defines conditions in which core-site can be saved
+   *
+   * @returns {boolean}
+   */
+  allowSaveCoreSite: function() {
+    return this.get('currentServices').some(function(service) {
+      return (this.get('coreSiteServiceNames').contains(service.get('serviceName'))
+        || this.get('coreSiteServiceType') === service.get('serviceType'));
+    }, this);
   },
 
   /**
@@ -399,37 +443,42 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * @param {string} type - file name without '.xml'
    * @param {string} tagVersion - version + timestamp
    * @param {App.ConfigProperty[]} properties - array of properties from model
-   * @param {string} serviceConfigNote
-   * @param {boolean} [isNotDefaultGroup=false]
+   * @param {string} [serviceConfigNote='']
+   * @param {boolean} [ignoreVersionNote=false]
    * @returns {{type: string, tag: string, properties: {}, properties_attributes: {}|undefined, service_config_version_note: string|undefined}}
    */
-  createDesiredConfig: function(type, tagVersion, properties, serviceConfigNote, isNotDefaultGroup) {
+  createDesiredConfig: function(type, tagVersion, properties, serviceConfigNote, ignoreVersionNote) {
     Em.assert('type and tagVersion should be defined', type && tagVersion);
     var desired_config = {
       "type": type,
       "tag": tagVersion,
       "properties": {}
     };
-    if (!isNotDefaultGroup) {
+    if (!ignoreVersionNote) {
       desired_config.service_config_version_note = serviceConfigNote || "";
     }
-    var attributes = { final: {} };
+    var attributes = { final: {}, password: {}, user: {}, group: {}, text: {}, additional_user_property: {}, not_managed_hdfs_path: {}, value_from_property_file: {} };
     if (Em.isArray(properties)) {
       properties.forEach(function(property) {
 
-        if (property.get('isRequiredByAgent')) {
-          desired_config.properties[property.get('name')] = this.formatValueBeforeSave(property);
+        if (Em.get(property, 'isRequiredByAgent') !== false) {
+          desired_config.properties[Em.get(property, 'name')] = this.formatValueBeforeSave(property);
           /**
            * add is final value
            */
-          if (property.get('isFinal')) {
-            attributes.final[property.get('name')] = "true";
+          if (Em.get(property, 'isFinal')) {
+            attributes.final[Em.get(property, 'name')] = "true";
+          }
+          if (Em.get(property,'propertyType') != null) {
+            Em.get(property,'propertyType').map(function(propType) {
+              attributes[propType.toLowerCase()][Em.get(property,'name')] = "true";
+            });
           }
         }
       }, this);
     }
 
-    if (Object.keys(attributes.final).length) {
+    if (Object.keys(attributes.final).length || Object.keys(attributes.password).length) {
       desired_config.properties_attributes = attributes;
     }
     return desired_config;
@@ -442,18 +491,21 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * @returns {string}
    */
   formatValueBeforeSave: function(property) {
-    var name = property.get('name');
-    var value = property.get('value');
-    //TODO check for core-site
-    if (this.get('heapsizeRegExp').test(name) && !this.get('heapsizeException').contains(name) && !(value).endsWith("m")) {
+    var name = Em.get(property, 'name');
+    var value = Em.get(property, 'value');
+    var kdcTypesMap = App.router.get('mainAdminKerberosController.kdcTypesValues');
+
+    if (this.addM(name, value)) {
       return value += "m";
     }
-    if (typeof property.get('value') === "boolean") {
-      return property.get('value').toString();
+    if (typeof value === "boolean") {
+      return value.toString();
     }
     switch (name) {
       case 'kdc_type':
-        return App.router.get('mainAdminKerberosController.kdcTypesValues')[property.get('value')];
+        return Em.keys(kdcTypesMap).filter(function(key) {
+            return kdcTypesMap[key] === value;
+        })[0];
       case 'storm.zookeeper.servers':
       case 'nimbus.seeds':
         if (Em.isArray(value)) {
@@ -463,48 +515,85 @@ App.ConfigsSaverMixin = Em.Mixin.create({
         }
         break;
       default:
-        return App.config.trimProperty(property, true);
+        return App.config.trimProperty(property);
     }
+  },
+
+  /**
+   * Site object name follow the format *permsize/*heapsize and the value NOT ends with "m"
+   *
+   * @param name
+   * @param value
+   * @returns {*|boolean}
+   */
+  addM: function (name, value) {
+    return this.get('heapsizeRegExp').test(name)
+      && !this.get('heapsizeException').contains(name)
+      && !(value).endsWith("m");
   },
 
   /*********************************** 4. AJAX REQUESTS **************************************/
 
   /**
    * save config group
-   * @param overridenConfigs
+   * @param overriddenConfigs
    * @param selectedConfigGroup
-   * @param showPopup
+   * @param configVersionNote
+   * @param successCallback
    */
-  saveGroup: function(overridenConfigs, selectedConfigGroup, showPopup) {
-    var groupHosts = [];
-    var fileNamesToSave = overridenConfigs.mapProperty('filename').uniq();
-    selectedConfigGroup.get('hosts').forEach(function (hostName) {
-      groupHosts.push({"host_name": hostName});
-    });
-    var id = selectedConfigGroup.get('configGroupId');
-    id = Em.isNone(id) ? selectedConfigGroup.get('id') : id;
-    this.putConfigGroupChanges({
+  saveGroup: function(overriddenConfigs, selectedConfigGroup, configVersionNote, successCallback) {
+    var fileNamesToSave = overriddenConfigs.mapProperty('filename').uniq();
+    var group = Ember.typeOf(selectedConfigGroup) === "instance" ? selectedConfigGroup.toJSON() : selectedConfigGroup;
+    var groupHosts = group.hosts.map(function (hostName) { return { "host_name": hostName }; });
+
+    var groupData = {
       ConfigGroup: {
-        "id": id,
-        "cluster_name": App.get('clusterName'),
-        "group_name": selectedConfigGroup.get('name'),
-        "tag": selectedConfigGroup.get('service.id'),
-        "description": selectedConfigGroup.get('description'),
+        "cluster_name": App.get('clusterName') || this.get('clusterName'),
+        "group_name": group.name,
+        "tag": group.service_id,
+        "description": group.description,
         "hosts": groupHosts,
-        "service_config_version_note": this.get('serviceConfigVersionNote'),
-        "desired_configs": this.generateDesiredConfigsJSON(overridenConfigs, fileNamesToSave, null, true)
+        "service_config_version_note": configVersionNote || "",
+        "desired_configs": this.generateDesiredConfigsJSON(overriddenConfigs, fileNamesToSave, null, true)
       }
-    }, showPopup);
+    };
+
+    if (group.is_temporary) {
+      this.createConfigGroup(groupData, successCallback);
+    } else {
+      groupData.ConfigGroup.id = group.id;
+      this.updateConfigGroup(groupData, successCallback);
+    }
+  },
+
+  /**
+   *
+   * @param data
+   * @param successCallback
+   * @returns {*|$.ajax}
+   */
+  createConfigGroup: function(data, successCallback) {
+    var ajaxOptions = {
+      name: 'wizard.step8.apply_configuration_groups',
+      sender: this,
+      data: {
+        data: JSON.stringify(data)
+      }
+    };
+    if (successCallback) {
+      ajaxOptions.success = successCallback;
+    }
+    return App.ajax.send(ajaxOptions);
   },
 
   /**
    * persist properties of config groups to server
    * show result popup if <code>showPopup</code> is true
    * @param data {Object}
-   * @param showPopup {Boolean}
+   * @param [successCallback] {String}
    * @method putConfigGroupChanges
    */
-  putConfigGroupChanges: function (data, showPopup) {
+  updateConfigGroup: function (data, successCallback) {
     var ajaxOptions = {
       name: 'config_groups.update_config_group',
       sender: this,
@@ -513,8 +602,8 @@ App.ConfigsSaverMixin = Em.Mixin.create({
         configGroup: data
       }
     };
-    if (showPopup) {
-      ajaxOptions.success = "putConfigGroupChangesSuccess";
+    if (successCallback) {
+      ajaxOptions.success = successCallback;
     }
     return App.ajax.send(ajaxOptions);
   },
@@ -523,11 +612,12 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * Saves configuration of set of sites. The provided data
    * contains the site name and tag to be used.
    * @param {Object[]} services
-   * @param {boolean} showPopup
+   * @param {String} [successCallback]
+   * @param {Function} [alwaysCallback]
    * @return {$.ajax}
    * @method putChangedConfigurations
    */
-  putChangedConfigurations: function (services, showPopup) {
+  putChangedConfigurations: function (services, successCallback, alwaysCallback) {
     var ajaxData = {
       name: 'common.across.services.configurations',
       sender: this,
@@ -536,8 +626,11 @@ App.ConfigsSaverMixin = Em.Mixin.create({
       },
       error: 'doPUTClusterConfigurationSiteErrorCallback'
     };
-    if (showPopup) {
-      ajaxData.success = 'doPUTClusterConfigurationSiteSuccessCallback'
+    if (successCallback) {
+      ajaxData.success = successCallback;
+    }
+    if (alwaysCallback) {
+      ajaxData.callback = alwaysCallback;
     }
     return App.ajax.send(ajaxData);
   },
@@ -558,7 +651,8 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * @method doPUTClusterConfigurationSiteSuccessCallback
    */
   doPUTClusterConfigurationSiteSuccessCallback: function () {
-    this.onDoPUTClusterConfigurations();
+    var doConfigActions = true;
+    this.onDoPUTClusterConfigurations(doConfigActions);
   },
 
   /**
@@ -567,17 +661,18 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    */
   doPUTClusterConfigurationSiteErrorCallback: function () {
     this.set('saveConfigsFlag', false);
-    this.doPUTClusterConfigurationSiteSuccessCallback();
+    this.onDoPUTClusterConfigurations();
   },
 
   /**
    * On save configs handler. Open save configs popup with appropriate message
    * and clear config dependencies list.
+   * @param  {Boolean} doConfigActions
    * @private
    * @method onDoPUTClusterConfigurations
    */
-  onDoPUTClusterConfigurations: function () {
-    var header, message, messageClass, value, status = 'unknown', urlParams = '',
+  onDoPUTClusterConfigurations: function (doConfigActions) {
+    var status = 'unknown',
       result = {
         flag: this.get('saveConfigsFlag'),
         message: null,
@@ -591,30 +686,55 @@ App.ConfigsSaverMixin = Em.Mixin.create({
     }
 
     App.router.get('clusterController').updateClusterData();
-    App.router.get('updateController').updateComponentConfig(function () {
-    });
-    var flag = result.flag;
+    App.router.get('updateController').updateComponentConfig(Em.K);
+    var popupOptions = this.getSaveConfigsPopupOptions(result);
+    if (currentService) {
+      App.router.get('clusterController').triggerQuickLinksUpdate();
+    }
+
+    //  update configs for service actions
+    App.router.get('mainServiceItemController').loadConfigs();
+
+    this.showSaveConfigsPopup(
+      popupOptions.header,
+      result.flag,
+      popupOptions.message,
+      popupOptions.messageClass,
+      popupOptions.value,
+      status,
+      popupOptions.urlParams,
+      doConfigActions);
+    this.clearAllRecommendations();
+  },
+
+  /**
+   *
+   * @param {object} result
+   * @returns {object}
+   */
+  getSaveConfigsPopupOptions: function(result) {
+    var options;
     if (result.flag === true) {
-      header = Em.I18n.t('services.service.config.saved');
-      message = Em.I18n.t('services.service.config.saved.message');
-      messageClass = 'alert alert-success';
-      // warn the user if any of the components are in UNKNOWN state
-      urlParams += ',ServiceComponentInfo/installed_count,ServiceComponentInfo/total_count';
+      options = {
+        header: Em.I18n.t('services.service.config.saved'),
+        message: Em.I18n.t('services.service.config.saved.message'),
+        messageClass: 'alert alert-success',
+        urlParams: ',ServiceComponentInfo/installed_count,ServiceComponentInfo/total_count'
+      };
+
       if (this.get('content.serviceName') === 'HDFS') {
-        urlParams += '&ServiceComponentInfo/service_name.in(HDFS)'
+        options.urlParams += '&ServiceComponentInfo/service_name.in(HDFS)'
       }
     } else {
-      header = Em.I18n.t('common.failure');
-      message = result.message;
-      messageClass = 'alert alert-error';
-      value = result.value;
+      options = {
+        urlParams: '',
+        header: Em.I18n.t('common.failure'),
+        message: result.message,
+        messageClass: 'alert alert-error',
+        value: result.value
+      }
     }
-    if(currentService){
-      App.QuickViewLinks.proto().set('content', currentService);
-      App.QuickViewLinks.proto().loadTags();
-    }
-    this.showSaveConfigsPopup(header, flag, message, messageClass, value, status, urlParams);
-    this.clearDependentConfigs();
+    return options;
   },
 
   /**
@@ -623,25 +743,30 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * @private
    * @method showSaveConfigsPopup
    */
-  showSaveConfigsPopup: function (header, flag, message, messageClass, value, status, urlParams) {
+  showSaveConfigsPopup: function (header, flag, message, messageClass, value, status, urlParams, doConfigActions) {
     var self = this;
-    if (flag) {
-      this.set('forceTransition', flag);
-      self.loadStep();
-    }
     return App.ModalPopup.show({
       header: header,
       primary: Em.I18n.t('ok'),
       secondary: null,
+      isBackgroundPopupToBeShown: false,
+
       onPrimary: function () {
         this.hide();
         if (!flag) {
           self.completeSave();
         }
+        this.showBackgroundPopup();
       },
       onClose: function () {
         this.hide();
         self.completeSave();
+        this.showBackgroundPopup();
+      },
+      showBackgroundPopup: function() {
+        if (this.get('isBackgroundPopupToBeShown')) {
+          App.router.get('backgroundOperationsController').showPopup();
+        }
       },
       disablePrimary: true,
       bodyClass: Ember.View.extend({
@@ -691,7 +816,7 @@ App.ConfigsSaverMixin = Em.Mixin.create({
                 if (!components[name]) {
                   components[name] = [];
                 }
-                components[name].push(App.format.role(item.ServiceComponentInfo.component_name));
+                components[name].push(App.format.role(item.ServiceComponentInfo.component_name, false));
               });
               return components;
             },
@@ -714,12 +839,12 @@ App.ConfigsSaverMixin = Em.Mixin.create({
           switch (status) {
             case 'unknown':
               response.items.filter(function (item) {
-                return (item.ServiceComponentInfo.total_count > item.ServiceComponentInfo.started_count + item.ServiceComponentInfo.installed_count);
+                return (item.ServiceComponentInfo.total_count > (item.ServiceComponentInfo.started_count + item.ServiceComponentInfo.installed_count));
               }).forEach(function (item) {
                 var total = item.ServiceComponentInfo.total_count,
                   started = item.ServiceComponentInfo.started_count,
                   installed = item.ServiceComponentInfo.installed_count,
-                  unknown = total - started + installed;
+                  unknown = total - (started + installed);
                 components = setComponents(item, components);
                 count += unknown;
               });
@@ -743,7 +868,8 @@ App.ConfigsSaverMixin = Em.Mixin.create({
           this.set('isLoaded', true);
         },
         didInsertElement: function () {
-          return App.ajax.send({
+          var context = this;
+          var dfd = App.ajax.send({
             name: 'components.filter_by_status',
             sender: this,
             data: {
@@ -752,6 +878,17 @@ App.ConfigsSaverMixin = Em.Mixin.create({
             },
             success: 'componentsFilterSuccessCallback',
             error: 'componentsFilterErrorCallback'
+          });
+
+          dfd.done(function() {
+            if (doConfigActions && self.doConfigActions) {
+              self.doConfigActions.bind(self)();
+              var isBackgroundPopupToBeShown = self.isComponentActionsPresent.bind(self)();
+              context.set('parentView.isBackgroundPopupToBeShown',isBackgroundPopupToBeShown);
+            }
+            if (flag) {
+              self.loadStep();
+            }
           });
         },
         getDisplayMessage: function () {
@@ -788,13 +925,9 @@ App.ConfigsSaverMixin = Em.Mixin.create({
 
         }.property('siteProperties'),
 
-        runningHostsMessage: function () {
-          return Em.I18n.t('services.service.config.stopService.runningHostComponents').format(this.get('runningComponentCount'), this.get('runningHosts.length'));
-        }.property('runningComponentCount', 'runningHosts.length'),
+        runningHostsMessage: Em.computed.i18nFormat('services.service.config.stopService.runningHostComponents', 'runningComponentCount', 'runningHosts.length'),
 
-        unknownHostsMessage: function () {
-          return Em.I18n.t('services.service.config.stopService.unknownHostComponents').format(this.get('unknownComponentCount'), this.get('unknownHosts.length'));
-        }.property('unknownComponentCount', 'unknownHosts.length'),
+        unknownHostsMessage: Em.computed.i18nFormat('services.service.config.stopService.unknownHostComponents', 'unknownComponentCount', 'unknownHosts.length'),
 
         templateName: require('templates/main/service/info/configs_save_popup')
       })
@@ -810,22 +943,30 @@ App.ConfigsSaverMixin = Em.Mixin.create({
    * @return {App.ModalPopup}
    * @method showSavePopup
    */
-  showSavePopup: function (path, callback) {
+  showSavePopup: function (transitionCallback, callback) {
     var self = this;
+    var passwordWasChanged = this.get('passwordConfigsAreChanged');
     return App.ModalPopup.show({
       header: Em.I18n.t('common.warning'),
       bodyClass: Em.View.extend({
         templateName: require('templates/common/configs/save_configuration'),
         showSaveWarning: true,
+        showPasswordChangeWarning: passwordWasChanged,
         notesArea: Em.TextArea.extend({
+          value: passwordWasChanged ? Em.I18n.t('dashboard.configHistory.info-bar.save.popup.notesForPasswordChange') : '',
           classNames: ['full-width'],
           placeholder: Em.I18n.t('dashboard.configHistory.info-bar.save.popup.placeholder'),
+          didInsertElement: function () {
+            if (this.get('value')) {
+              this.onChangeValue();
+            }
+          },
           onChangeValue: function() {
             this.get('parentView.parentView').set('serviceConfigNote', this.get('value'));
           }.observes('value')
         })
       }),
-      footerClass: Ember.View.extend({
+      footerClass: Em.View.extend({
         templateName: require('templates/main/service/info/save_popup_footer'),
         isSaveDisabled: function() {
           return self.get('isSubmitDisabled');
@@ -840,9 +981,8 @@ App.ConfigsSaverMixin = Em.Mixin.create({
       },
       onDiscard: function () {
         self.set('preSelectedConfigVersion', null);
-        if (path) {
-          self.set('forceTransition', true);
-          App.router.route(path);
+        if (transitionCallback) {
+          transitionCallback();
         } else if (callback) {
           self.doCancel();
           // Prevent multiple popups
@@ -855,94 +995,5 @@ App.ConfigsSaverMixin = Em.Mixin.create({
         this.hide();
       }
     });
-  },
-
-  /**
-   * Save "final" attribute for properties
-   * @param {Array} properties - array of properties
-   * @returns {Object|null}
-   * @method getConfigAttributes
-   */
-  getConfigAttributes: function(properties) {
-    var attributes = {
-      final: {}
-    };
-    var finalAttributes = attributes.final;
-    var hasAttributes = false;
-    properties.forEach(function (property) {
-      if (property.isRequiredByAgent !== false && property.isFinal) {
-        hasAttributes = true;
-        finalAttributes[property.name] = "true";
-      }
-    });
-    if (hasAttributes) {
-      return attributes;
-    }
-    return null;
-  },
-
-  /**
-   * create site object
-   * @param {string} siteName
-   * @param {string} tagName
-   * @param {object[]} siteObj
-   * @return {Object}
-   * @method createSiteObj
-   */
-  createSiteObj: function (siteName, tagName, siteObj) {
-    var heapsizeException = this.get('heapsizeException');
-    var heapsizeRegExp = this.get('heapsizeRegExp');
-    var siteProperties = {};
-    siteObj.forEach(function (_siteObj) {
-      var value = _siteObj.value;
-      if (_siteObj.isRequiredByAgent == false) return;
-      // site object name follow the format *permsize/*heapsize and the value NOT ends with "m"
-      if (heapsizeRegExp.test(_siteObj.name) && !heapsizeException.contains(_siteObj.name) && !(_siteObj.value).endsWith("m")) {
-        value += "m";
-      }
-      siteProperties[_siteObj.name] = value;
-      switch (siteName) {
-        case 'falcon-startup.properties':
-        case 'falcon-runtime.properties':
-        case 'pig-properties':
-          siteProperties[_siteObj.name] = value;
-          break;
-        default:
-          siteProperties[_siteObj.name] = this.setServerConfigValue(_siteObj.name, value);
-      }
-    }, this);
-    var result = {"type": siteName, "tag": tagName, "properties": siteProperties};
-    var attributes = this.getConfigAttributes(siteObj);
-    if (attributes) {
-      result['properties_attributes'] = attributes;
-    }
-    return result;
-  },
-
-  /**
-   * This method will be moved to config's decorators class.
-   *
-   * For now, provide handling for special properties that need
-   * be specified in special format required for server.
-   *
-   * @param configName {String} - name of config property
-   * @param value {*} - value of config property
-   *
-   * @return {String} - formatted value
-   * @method setServerConfigValue
-   */
-  setServerConfigValue: function (configName, value) {
-    switch (configName) {
-      case 'storm.zookeeper.servers':
-      case 'nimbus.seeds':
-        if(Em.isArray(value)) {
-          return JSON.stringify(value).replace(/"/g, "'");
-        } else {
-          return value;
-        }
-        break;
-      default:
-        return value;
-    }
   }
 });

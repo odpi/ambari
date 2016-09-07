@@ -27,8 +27,6 @@ import java.util.Map;
 import org.apache.ambari.view.URLStreamProvider;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.utils.ambari.AmbariApi;
-import org.apache.ambari.view.utils.ambari.URLStreamProviderBasicAuth;
-import org.apache.commons.httpclient.HttpException;
 import org.apache.commons.io.IOUtils;
 
 import com.google.gson.JsonElement;
@@ -77,7 +75,7 @@ public class BaseHttpClient {
 	}
 
 	public URLStreamProviderBasicAuth getUrlStreamProviderBasicAuth() {
-		return ambariApi.getUrlStreamProviderBasicAuth();
+		return new URLStreamProviderBasicAuth(getUrlStreamProvider(),getUserId(),getPassword());
 	}
 
 	public String getUrl() {
@@ -112,12 +110,11 @@ public class BaseHttpClient {
 		this.password = password;
 	}
 
-	public JsonElement doGetJson(String path) throws HttpException, IOException {
+	public JsonElement doGetJson(String path) throws IOException {
 		return doGetJson(getUrl(), path);
 	}
 
-	public JsonElement doGetJson(String url, String path) throws HttpException,
-			IOException {
+	public JsonElement doGetJson(String url, String path) throws IOException {
 		InputStream inputStream = null;
 		try {
 			Map<String, String> headers = new HashMap<String, String>();
@@ -125,21 +122,19 @@ public class BaseHttpClient {
 				inputStream = getUrlStreamProviderBasicAuth().readFrom(
 						url + path, "GET", (String) null, headers);
 			} else {
-				inputStream = getUrlStreamProviderBasicAuth().readAsCurrent(
+				inputStream = getUrlStreamProvider().readAsCurrent(
 						url + path, "GET", (String) null, headers);
 			}
 		} catch (IOException e) {
 			logger.error("Error while reading from url " + url + path, e);
-			HttpException httpException = new HttpException(
-					e.getLocalizedMessage());
-			throw httpException;
+			throw e;
 		}
 		JsonElement jsonElement = new JsonParser().parse(new JsonReader(
 				new InputStreamReader(inputStream)));
 		return jsonElement;
 	}
 
-	public String doGet(String path) throws HttpException, IOException {
+	public String doGet(String path) throws IOException {
 		String response = null;
 		try {
 			InputStream inputStream = null;
@@ -148,16 +143,14 @@ public class BaseHttpClient {
 						getUrl() + path, "GET", (String) null,
 						new HashMap<String, String>());
 			} else {
-				inputStream = getUrlStreamProviderBasicAuth().readAsCurrent(
+				inputStream = getUrlStreamProvider().readAsCurrent(
 						getUrl() + path, "GET", (String) null,
 						new HashMap<String, String>());
 			}
 			response = IOUtils.toString(inputStream);
 		} catch (IOException e) {
 			logger.error("Error while reading from url " + getUrl() + path, e);
-			HttpException httpException = new HttpException(
-					e.getLocalizedMessage());
-			throw httpException;
+			throw e;
 		}
 		return response;
 	}

@@ -20,9 +20,14 @@ Ambari Agent
 """
 
 import sys
-from resource_management import *
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.resources.execute_hadoop import ExecuteHadoop
+from resource_management.libraries.functions.format import format
+from resource_management.core.resources.system import Execute, File
+from resource_management.core.source import StaticFile
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
+from resource_management.core.logger import Logger
 
 
 class MapReduce2ServiceCheck(Script):
@@ -120,6 +125,12 @@ class MapReduce2ServiceCheckDefault(MapReduce2ServiceCheck):
     test_cmd = format("fs -test -e {output_file}")
     run_wordcount_job = format("jar {jar_path} wordcount {input_file} {output_file}")
 
+    params.HdfsResource(format("/user/{smokeuser}"),
+                      type="directory",
+                      action="create_on_execute",
+                      owner=params.smokeuser,
+                      mode=params.smoke_hdfs_user_mode,
+    )
     params.HdfsResource(output_file,
                         action = "delete_on_execute",
                         type = "directory",
@@ -133,27 +144,28 @@ class MapReduce2ServiceCheckDefault(MapReduce2ServiceCheck):
     )
     params.HdfsResource(None, action="execute")
 
+    # initialize the ticket
     if params.security_enabled:
       kinit_cmd = format("{kinit_path_local} -kt {smoke_user_keytab} {smokeuser_principal};")
+      Execute(kinit_cmd, user=params.smokeuser)
 
-      Execute(kinit_cmd,
-              user=params.smokeuser
-      )
-      
     ExecuteHadoop(run_wordcount_job,
                   tries=1,
                   try_sleep=5,
                   user=params.smokeuser,
                   bin_dir=params.execute_path,
                   conf_dir=params.hadoop_conf_dir,
-                  logoutput=True
-    )
+                  logoutput=True)
+
+    # the ticket may have expired, so re-initialize
+    if params.security_enabled:
+      kinit_cmd = format("{kinit_path_local} -kt {smoke_user_keytab} {smokeuser_principal};")
+      Execute(kinit_cmd, user=params.smokeuser)
 
     ExecuteHadoop(test_cmd,
                   user=params.smokeuser,
                   bin_dir=params.execute_path,
-                  conf_dir=params.hadoop_conf_dir
-    )
+                  conf_dir=params.hadoop_conf_dir)
 
 
 if __name__ == "__main__":

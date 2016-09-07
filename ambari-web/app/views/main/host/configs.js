@@ -17,17 +17,13 @@
  */
 
 var App = require('app');
-var date = require('utils/date');
+var date = require('utils/date/date');
 
 App.MainHostConfigsView = Em.View.extend({
   templateName: require('templates/main/host/configs'),
 
-  content: function(){
-    return App.router.get('mainHostDetailsController.content');
-  }.property('App.router.mainHostDetailsController.content'),
+  content: Em.computed.alias('App.router.mainHostDetailsController.content'),
 
-  isConfigAvailable: function () {
-    return !!this.get('content.hostComponents.length');
-  }.property('content.hostComponents.length')
+  isConfigAvailable: Em.computed.bool('content.hostComponents.length')
 
 });

@@ -27,10 +27,7 @@ App.alertDefinitionSummaryMapper = App.QuickDataMapper.create({
 
     if (!data.alerts_summary_grouped) return;
     var alertDefinitions = App.AlertDefinition.find();
-    var alertDefinitionsMap = {};
-    alertDefinitions.forEach(function (definition) {
-      alertDefinitionsMap[definition.get('id')] = definition;
-    });
+    var alertDefinitionsMap = alertDefinitions.toArray().toMapByProperty('id');
     var summaryMap = {};
     data.alerts_summary_grouped.forEach(function(alertDefinitionSummary) {
       var alertDefinition = alertDefinitionsMap[alertDefinitionSummary.definition_id];
@@ -51,13 +48,17 @@ App.alertDefinitionSummaryMapper = App.QuickDataMapper.create({
         });
         summaryMap[alertDefinitionSummary.definition_id] = {
           summary: summary,
-          lastTriggered: parseInt(timestamp)
+          lastTriggered: App.dateTimeWithTimeZone(parseInt(timestamp, 10)),
+          lastTriggeredRaw: timestamp
         };
       }
     });
 
     alertDefinitions.forEach(function (d) {
       var id = d.get('id');
+      if (alertDefinitionsMap[id].get('stateManager.currentState.name') !== 'saved') {
+        alertDefinitionsMap[id].get('stateManager').transitionTo('saved');
+      }
       alertDefinitionsMap[id].setProperties(summaryMap[id]);
       if (!alertDefinitionsMap[id].get('enabled')) {
         // clear summary for disabled alert definitions
@@ -66,11 +67,9 @@ App.alertDefinitionSummaryMapper = App.QuickDataMapper.create({
     });
     // set alertsCount and hasCriticalAlerts for each service
     var groupedByServiceName = dataManipulation.groupPropertyValues(alertDefinitions, 'service.serviceName');
+    var groupedByComponentName = dataManipulation.groupPropertyValues(alertDefinitions, 'componentName');
     var services = App.Service.find();
-    var servicesMap = {};
-    services.forEach(function (service) {
-      servicesMap[service.get('id')] = service;
-    });
+    var servicesMap = services.toArray().toMapByProperty('id');
     Object.keys(groupedByServiceName).forEach(function(serviceName) {
       var service = servicesMap[serviceName];
       if (service) {
@@ -92,9 +91,33 @@ App.alertDefinitionSummaryMapper = App.QuickDataMapper.create({
           alertsCount: alertsCount,
           hasCriticalAlerts: hasCriticalAlerts
         });
+
+        service.get('hostComponents').filterProperty('isMaster').forEach(function (master) {
+
+          hasCriticalAlerts = false;
+          alertsCount = (groupedByComponentName[master.get('componentName')] || []).map(function (alertDefinition) {
+
+            var criticalCount = alertDefinition.getWithDefault('summary.CRITICAL.count', 0);
+            var warningCount = alertDefinition.getWithDefault('summary.WARNING.count', 0);
+
+            if (criticalCount) {
+              hasCriticalAlerts = true;
+            }
+            return criticalCount + warningCount;
+
+          }).reduce(Em.sum, 0);
+
+          master.setProperties({
+            alertsCount: alertsCount,
+            hasCriticalAlerts: hasCriticalAlerts
+          });
+        });
       }
     });
-
+    if (!$.mocho) {
+      //for some reasons this causing error in unit test
+      App.store.commit();
+    }
     console.timeEnd('App.alertDefinitionSummaryMapper execution time');
 
   }

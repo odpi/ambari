@@ -17,183 +17,104 @@
  */
 
 var App = require('app');
-var configPropertyHelper = require('utils/configs/config_property_helper');
 
 require('models/configs/objects/service_config');
 
 var serviceConfig,
-  group,
-  configsData = [
-    Ember.Object.create({
-      category: 'c0',
-      overrides: [
-        {
-          error: true,
-          errorMessage: 'error'
-        },
-        {
-          error: true
-        },
-        {}
-      ]
-    }),
-    Ember.Object.create({
-      category: 'c1',
-      isValid: false,
-      isVisible: true
-    }),
-    Ember.Object.create({
-      category: 'c0',
-      isValid: true,
-      isVisible: true
-    }),
-    Ember.Object.create({
-      category: 'c1',
-      isValid: false,
-      isVisible: false
-    })
-  ],
-  configCategoriesData = [
-    Em.Object.create({
-      name: 'c0',
-      slaveErrorCount: 1
-    }),
-    Em.Object.create({
-      name: 'c1',
-      slaveErrorCount: 2
-    })
-  ],
-  components = [
-    {
-      name: 'NameNode',
-      master: true
-    },
-    {
-      name: 'SNameNode',
-      master: true
-    },
-    {
-      name: 'JobTracker',
-      master: true
-    },
-    {
-      name: 'HBase Master',
-      master: true
-    },
-    {
-      name: 'Oozie Master',
-      master: true
-    },
-    {
-      name: 'Hive Metastore',
-      master: true
-    },
-    {
-      name: 'WebHCat Server',
-      master: true
-    },
-    {
-      name: 'ZooKeeper Server',
-      master: true
-    },
-    {
-      name: 'Ganglia',
-      master: true
-    },
-    {
-      name: 'DataNode',
-      slave: true
-    },
-    {
-      name: 'TaskTracker',
-      slave: true
-    },
-    {
-      name: 'RegionServer',
-      slave: true
-    }
-  ],
-  masters = components.filterProperty('master'),
-  slaves = components.filterProperty('slave'),
-  groupNoErrorsData = [].concat(configsData.slice(2)),
-  groupErrorsData = [configsData[1]];
+    configs = [
+      App.ServiceConfigProperty.create({
+        'name': 'p1',
+        'isVisible': true,
+        'hiddenBySection': false,
+        'hiddenBySubSection': false,
+        'isRequiredByAgent': true,
+        'isValid': true,
+        'isValidOverride': true
+      }),
+      App.ServiceConfigProperty.create({
+        'name': 'p2',
+        'isVisible': false,
+        'hiddenBySection': false,
+        'hiddenBySubSection': false,
+        'isRequiredByAgent': true,
+        'isValid': true,
+        'isValidOverride': true
+      }),
+      App.ServiceConfigProperty.create({
+        'name': 'p3',
+        'isVisible': true,
+        'hiddenBySection': true,
+        'hiddenBySubSection': true,
+        'isRequiredByAgent': true,
+        'isValid': true,
+        'isValidOverride': true
+      }),
+      App.ServiceConfigProperty.create({
+        'name': 'p4',
+        'isVisible': true,
+        'hiddenBySection': false,
+        'hiddenBySubSection': false,
+        'isRequiredByAgent': true,
+        'isValid': false,
+        'isValidOverride': true
+      }),
+      App.ServiceConfigProperty.create({
+        'name': 'p5',
+        'isVisible': true,
+        'hiddenBySection': false,
+        'hiddenBySubSection': false,
+        'isRequiredByAgent': true,
+        'isValid': true,
+        'isValidOverride': false
+      }),
+      App.ServiceConfigProperty.create({
+        'name': 'p6',
+        'isVisible': true,
+        'hiddenBySection': false,
+        'hiddenBySubSection': false,
+        'isRequiredByAgent': false,
+        'isRequired': false,
+        'isValid': true,
+        'isValidOverride': false
+      }),
+      App.ServiceConfigProperty.create({
+        'name': 'p7',
+        'isVisible': true,
+        'hiddenBySection': false,
+        'hiddenBySubSection': false,
+        'isRequiredByAgent': false,
+        'isValid': true,
+        'isRequired': true,
+        'isValidOverride': false
+      })
+  ];
 
 describe('App.ServiceConfig', function () {
 
   beforeEach(function () {
-    serviceConfig = App.ServiceConfig.create();
+    serviceConfig = App.ServiceConfig.create({
+      configs: configs
+    });
   });
 
-  describe('#errorCount', function () {
-    it('should be 0', function () {
-      serviceConfig.setProperties({
-        configs: [],
-        configCategories: []
+  describe('#activeProperties', function() {
+    it('returns collection of properties that should be shown', function() {
+      expect(serviceConfig.get('activeProperties').mapProperty('name')).to.be.eql(['p1','p4','p5','p7']);
+    });
+  });
+
+  describe('#configsWithErrors', function() {
+    it('returns collection of properties with errors', function() {
+      expect(serviceConfig.get('configsWithErrors').mapProperty('name')).to.be.eql(['p4', 'p5', 'p7']);
+    });
+  });
+
+  describe('#errorCount', function() {
+    it('returns collection of properties with errors', function() {
+      serviceConfig.reopen({
+        configsWithErrors: [{}, {}]
       });
-      expect(serviceConfig.get('errorCount')).to.equal(0);
-    });
-    it('should sum counts of all errors', function () {
-      serviceConfig.setProperties({
-        configs: configsData,
-        configCategories: configCategoriesData
-      });
-      expect(serviceConfig.get('errorCount')).to.equal(6);
-      expect(serviceConfig.get('configCategories').findProperty('name', 'c0').get('nonSlaveErrorCount')).to.equal(2);
-      expect(serviceConfig.get('configCategories').findProperty('name', 'c1').get('nonSlaveErrorCount')).to.equal(1);
-    });
-    it('should include invalid properties with widgets', function() {
-      serviceConfig.setProperties({
-        configs: [
-          Em.Object.create({
-            isValid: false,
-            widget: Em.View,
-            isVisible: true,
-            category: 'some1'
-          }),
-          Em.Object.create({
-            isValid: false,
-            widget: Em.View,
-            isVisible: true,
-            category: 'some2'
-          }),
-          Em.Object.create({
-            isValid: false,
-            widget: null,
-            isVisible: true,
-            category: 'some2'
-          }),
-          Em.Object.create({
-            isValid: false,
-            widget: Em.View,
-            isVisible: true
-          })
-        ],
-        configCategories: [
-          Em.Object.create({ name: 'some1', slaveErrorCount: 0}),
-          Em.Object.create({ name: 'some2', slaveErrorCount: 0})
-        ]
-      });
-      expect(serviceConfig.get('errorCount')).to.equal(4);
+      expect(serviceConfig.get('errorCount')).to.equal(2);
     });
   });
-
-});
-
-describe('App.Group', function () {
-
-  beforeEach(function () {
-    group = App.Group.create();
-  });
-
-  describe('#errorCount', function () {
-    it('should be 0', function () {
-      group.set('properties', groupNoErrorsData);
-      expect(group.get('errorCount')).to.equal(0);
-    });
-    it('should be 1', function () {
-      group.set('properties', groupErrorsData);
-      expect(group.get('errorCount')).to.equal(1);
-    });
-  });
-
 });

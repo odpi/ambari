@@ -19,11 +19,23 @@
 var App = require('app');
 var model;
 
+function getModel() {
+  return App.SubSection.createRecord();
+}
+
 describe('App.SubSection', function () {
 
   beforeEach(function () {
-    model = App.SubSection.createRecord();
+    model = getModel();
   });
+
+  App.TestAliases.testAsComputedAnd(getModel(), 'showTabs', ['hasTabs', 'someSubSectionTabIsVisible']);
+
+  App.TestAliases.testAsComputedAnd(getModel(), 'addLeftVerticalSplitter', ['!isFirstColumn', 'leftVerticalSplitter']);
+
+  App.TestAliases.testAsComputedAnd(getModel(), 'showTopSplitter', ['!isFirstRow', '!border']);
+
+  App.TestAliases.testAsComputedAnd(getModel(), 'isSectionVisible', ['!isHiddenByFilter', '!isHiddenByConfig', 'someConfigIsVisible']);
 
   describe('#errorsCount', function () {
 
@@ -40,15 +52,13 @@ describe('App.SubSection', function () {
       expect(model.get('errorsCount')).to.equal(3);
     });
 
-    it('should use configs.@each.overrideErrorTrigger', function() {
+    it('should use configs.@each.isValidOverride', function() {
       // original value is valid
       var validOriginalSCP = model.get('configs').objectAt(0);
       // add override with not valid value
-      validOriginalSCP.set('overrides', [
-        App.ServiceConfigProperty.create({ isValid: false }),
-        App.ServiceConfigProperty.create({ isValid: true })
-      ]);
-      expect(model.get('errorsCount')).to.equal(4);
+      validOriginalSCP.set('isValidOverride', false);
+      validOriginalSCP.set('isValid', true);
+      expect(model.get('errorsCount')).to.equal(3);
     });
 
   });
@@ -62,17 +72,22 @@ describe('App.SubSection', function () {
           m: 'Can\'t be hidden if there is no configs'
         },
         {
-          configs: [{isHiddenByFilter: true}, {isHiddenByFilter: true}],
+          configs: [Em.Object.create({isHiddenByFilter: true, isVisible: true}), Em.Object.create({isHiddenByFilter: true, isVisible: true})],
           e: true,
           m: 'All configs are hidden'
         },
         {
-          configs: [{isHiddenByFilter: false}, {isHiddenByFilter: true}],
+          configs: [Em.Object.create({isHiddenByFilter: false, isVisible: true}), Em.Object.create({isHiddenByFilter: true, isVisible: true})],
           e: false,
           m: 'Some configs are hidden'
         },
         {
-          configs: [{isHiddenByFilter: false}, {isHiddenByFilter: false}],
+          configs: [Em.Object.create({isHiddenByFilter: false, isVisible: true}), Em.Object.create({isHiddenByFilter: true, isVisible: true})],
+          e: false,
+          m: 'Some configs are hidden'
+        },
+        {
+          configs: [Em.Object.create({isHiddenByFilter: false, isVisible: true}), Em.Object.create({isHiddenByFilter: false, isVisible: true})],
           e: false,
           m: 'No configs are hidden'
         }

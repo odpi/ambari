@@ -35,6 +35,7 @@ import org.apache.ambari.server.orm.entities.ResourceTypeEntity;
 import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntity;
 import org.apache.ambari.server.orm.entities.ServiceDesiredStateEntity;
 import org.apache.ambari.server.orm.entities.StackEntity;
+import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.state.HostComponentAdminState;
 import org.apache.ambari.server.state.State;
 
@@ -60,11 +61,11 @@ public class UpgradeCatalogHelper {
     ResourceTypeDAO resourceTypeDAO = injector.getInstance(ResourceTypeDAO.class);
 
     // create an admin resource to represent this cluster
-    ResourceTypeEntity resourceTypeEntity = resourceTypeDAO.findById(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
+    ResourceTypeEntity resourceTypeEntity = resourceTypeDAO.findById(ResourceType.CLUSTER.getId());
     if (resourceTypeEntity == null) {
       resourceTypeEntity = new ResourceTypeEntity();
-      resourceTypeEntity.setId(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
-      resourceTypeEntity.setName(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE_NAME);
+      resourceTypeEntity.setId(ResourceType.CLUSTER.getId());
+      resourceTypeEntity.setName(ResourceType.CLUSTER.name());
       resourceTypeEntity = resourceTypeDAO.merge(resourceTypeEntity);
     }
 
@@ -169,6 +170,9 @@ public class UpgradeCatalogHelper {
   protected void addComponent(Injector injector, ClusterEntity clusterEntity,
       ClusterServiceEntity clusterServiceEntity, HostEntity hostEntity,
       String componentName, StackEntity desiredStackEntity) {
+    ServiceComponentDesiredStateDAO serviceComponentDesiredStateDAO = injector.getInstance(
+        ServiceComponentDesiredStateDAO.class);
+
     ServiceComponentDesiredStateEntity componentDesiredStateEntity = new ServiceComponentDesiredStateEntity();
     componentDesiredStateEntity.setClusterServiceEntity(clusterServiceEntity);
     componentDesiredStateEntity.setComponentName(componentName);
@@ -176,6 +180,7 @@ public class UpgradeCatalogHelper {
     componentDesiredStateEntity.setDesiredStack(desiredStackEntity);
     componentDesiredStateEntity.setClusterServiceEntity(clusterServiceEntity);
     componentDesiredStateEntity.setClusterId(clusterServiceEntity.getClusterId());
+    serviceComponentDesiredStateDAO.create(componentDesiredStateEntity);
 
     HostComponentDesiredStateDAO hostComponentDesiredStateDAO = injector.getInstance(HostComponentDesiredStateDAO.class);
     HostComponentDesiredStateEntity hostComponentDesiredStateEntity = new HostComponentDesiredStateEntity();
@@ -207,7 +212,6 @@ public class UpgradeCatalogHelper {
         componentDesiredStateEntity);
 
     ClusterServiceDAO clusterServiceDAO = injector.getInstance(ClusterServiceDAO.class);
-    ServiceComponentDesiredStateDAO serviceComponentDesiredStateDAO = injector.getInstance(ServiceComponentDesiredStateDAO.class);
     HostDAO hostDAO = injector.getInstance(HostDAO.class);
     serviceComponentDesiredStateDAO.merge(componentDesiredStateEntity);
     hostDAO.merge(hostEntity);

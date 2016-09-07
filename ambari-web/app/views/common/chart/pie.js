@@ -34,9 +34,7 @@ App.ChartPieView = Em.View.extend({
     return Math.min(this.get('w'), this.get('h')) / 2 - this.get('strokeWidth');
   }.property('w', 'h'),
 
-  outerR:function () {
-    return this.get('r'); // - 10;
-  }.property('r'),
+  outerR: Em.computed.alias('r'),
 
   innerR:function () {
     return 0; // this.get('r') - 20;
@@ -51,9 +49,7 @@ App.ChartPieView = Em.View.extend({
     this.appendSvg();
   },
 
-  selector:function () {
-    return '#' + this.get('elementId');
-  }.property('elementId'),
+  selector: Em.computed.format('#{0}', 'elementId'),
 
   appendSvg:function () {
 
@@ -86,16 +82,15 @@ App.ChartPieView = Em.View.extend({
       .append("svg:g")
       .attr("transform", "translate(" + thisChart.get('w') / 2 + "," + thisChart.get('h') / 2 + ")"));
 
-    this.set('arcs', thisChart.get('svg').selectAll("path")
+    this.set('arcs', thisChart.get('svg').selectAll(".arc")
       .data(thisChart.donut(thisChart.get('data')))
-      .enter().append("svg:path")
+      .enter()
+      .append("svg:g").attr('class', 'arc')
+      .append('svg:path')
       .attr("fill", function (d, i) {
         return thisChart.palette.color(i);
       })
       .attr("d", thisChart.get('arc'))
-
     );
-
   }
-
 });

@@ -34,7 +34,9 @@ import ConfigParser
 import optparse
 import shlex
 import datetime
+import tempfile
 from AmbariConfig import AmbariConfig
+from ambari_agent.Constants import AGENT_TMP_DIR
 from ambari_commons import OSCheck, OSConst
 from ambari_commons.constants import AMBARI_SUDO_BINARY
 from ambari_commons.os_family_impl import OsFamilyImpl, OsFamilyFuncImpl
@@ -46,6 +48,7 @@ GROUP_ERASE_CMD = "groupdel {0}"
 PROC_KILL_CMD = "kill -9 {0}"
 ALT_DISP_CMD = "alternatives --display {0}"
 ALT_ERASE_CMD = "alternatives --remove {0} {1}"
+RUN_HOST_CHECKS_CMD = '/var/lib/ambari-agent/cache/custom_actions/scripts/check_host.py ACTIONEXECUTE {0} /var/lib/ambari-agent/cache/custom_actions {1} INFO {2}'
 
 REPO_PATH_RHEL = "/etc/yum.repos.d"
 REPO_PATH_SUSE = "/etc/zypp/repos.d/"
@@ -98,8 +101,6 @@ def get_erase_cmd():
 
 class HostCleanup:
 
-  SELECT_ALL_PERFORMED_MARKER = "/var/lib/ambari-agent/data/hdp-select-set-all.performed"
-
   def resolve_ambari_config(self):
     try:
       config = AmbariConfig()
@@ -145,8 +146,6 @@ class HostCleanup:
       if packageList and not PACKAGE_SECTION in SKIP_LIST:
         logger.info("Deleting packages: " + str(packageList) + "\n")
         self.do_erase_packages(packageList)
-        # Removing packages means that we have to rerun hdp-select
-        self.do_remove_hdp_select_marker()
       if userList and not USER_SECTION in SKIP_LIST:
         logger.info("\n" + "Deleting users: " + str(userList))
         self.do_delete_users(userList)
@@ -271,14 +270,6 @@ class HostCleanup:
       return remList
     else:  # root call, so we have final list
       self.do_erase_files_silent(remList)
-
-
-  def do_remove_hdp_select_marker(self):
-    """
-    Remove marker file for 'hdp-select set all' invocation
-    """
-    if os.path.isfile(self.SELECT_ALL_PERFORMED_MARKER):
-      os.unlink(self.SELECT_ALL_PERFORMED_MARKER)
 
 
   # Alternatives exist as a stack of symlinks under /var/lib/alternatives/$name
@@ -492,6 +483,19 @@ class HostCleanup:
     (stdoutdata, stderrdata) = process.communicate()
     return process.returncode, stdoutdata, stderrdata
 
+  def run_check_hosts(self):
+    config_json = '{"commandParams": {"check_execute_list": "*BEFORE_CLEANUP_HOST_CHECKS*"}}'
+    with tempfile.NamedTemporaryFile(delete=False) as config_json_file:
+      config_json_file.write(config_json)
+
+    with tempfile.NamedTemporaryFile(delete=False) as tmp_output_file:
+      tmp_output_file.write('{}')
+
+    run_checks_command = RUN_HOST_CHECKS_CMD.format(config_json_file.name, tmp_output_file.name, AGENT_TMP_DIR)
+    (returncode, stdoutdata, stderrdata) = self.run_os_command(run_checks_command)
+    if returncode != 0:
+      logger.warn('Failed to run host checks,\nstderr:\n ' + stderrdata + '\n\nstdout:\n' + stdoutdata)
+
 # Copy file and save with file.# (timestamp)
 def backup_file(filePath):
   if filePath is not None and os.path.exists(filePath):
@@ -534,7 +538,7 @@ def main():
   hostCheckResultPath = os.path.join(hostCheckFileDir, OUTPUT_FILE_NAME)
 
   parser = optparse.OptionParser()
-  parser.add_option("-v", "--verbose", dest="verbose", action="store_false",
+  parser.add_option("-v", "--verbose", dest="verbose", action="store_true",
                     default=False, help="output verbosity.")
   parser.add_option("-f", "--file", dest="inputfiles",
                     default=hostCheckFilesPaths,
@@ -584,7 +588,17 @@ def main():
         sys.exit(1)
 
   hostcheckfile, hostcheckfileca  = options.inputfiles.split(",")
-  
+
+  # Manage non UI install
+  if not os.path.exists(hostcheckfileca):
+    if options.silent:
+      print 'Host Check results not found. There is no {0}. Running host checks.'.format(hostcheckfileca)
+      h.run_check_hosts()
+    else:
+      run_check_hosts_input = get_YN_input('Host Check results not found. There is no {0}. Do you want to run host checks [y/n] (y)'.format(hostcheckfileca), True)
+      if run_check_hosts_input:
+        h.run_check_hosts()
+
   with open(TMP_HOST_CHECK_FILE_NAME, "wb") as tmp_f:
     with open(hostcheckfile, "rb") as f1:
       with open(hostcheckfileca, "rb") as f2:

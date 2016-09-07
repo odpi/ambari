@@ -19,7 +19,7 @@
 var App = require('app');
 var filters = require('views/common/filter_view');
 var sort = require('views/common/sort_view');
-var date = require('utils/date');
+var date = require('utils/date/date');
 
 App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
   templateName:require('templates/main/host'),
@@ -44,10 +44,6 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
    */
   requestError: null,
 
-  colspan: function () {
-    return 11 + +App.get('supports.stackUpgrade');
-  }.property("App.supports.stackUpgrade"),
-
   /**
    * List of hosts in cluster
    * @type {Array}
@@ -56,7 +52,6 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
 
   onRequestErrorHandler: function() {
     this.set('requestError', null);
-    this.get('controller').get('dataSource').setEach('isRequested', false);
     this.set('filteringComplete', true);
     this.propertyDidChange('pageContent');
   }.observes('requestError'),
@@ -64,17 +59,13 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
   /**
    * flag to toggle displaying selected hosts counter
    */
-  showSelectedFilter: function () {
-    return this.get('selectedHosts.length') > 0;
-  }.property('selectedHosts'),
+  showSelectedFilter: Em.computed.bool('selectedHosts.length'),
 
   /**
    * return filtered number of all content number information displayed on the page footer bar
    * @returns {String}
    */
-  filteredContentInfo: function () {
-    return this.t('hosts.filters.filteredHostsInfo').format(this.get('filteredCount'), this.get('totalCount'));
-  }.property('filteredCount', 'totalCount'),
+  filteredContentInfo: Em.computed.i18nFormat('hosts.filters.filteredHostsInfo', 'filteredCount', 'totalCount'),
 
   /**
    * request latest data filtered by new parameters
@@ -108,9 +99,7 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
    * Return pagination information displayed on the page
    * @type {String}
    */
-  paginationInfo: function () {
-    return this.t('tableView.filters.paginationInfo').format(this.get('startIndex'), this.get('endIndex'), this.get('filteredCount'));
-  }.property('startIndex', 'endIndex', 'filteredCount'),
+  paginationInfo: Em.computed.i18nFormat('tableView.filters.paginationInfo', 'startIndex', 'endIndex', 'filteredCount'),
 
   paginationLeftClass: function () {
     if (this.get("startIndex") > 1 && this.get('filteringComplete')) {
@@ -315,207 +304,7 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
     this.filterSelected();
   },
 
-  /**
-   * Returs all hostNames if amount is less than {minShown} or
-   * first elements of array (number of elements - {minShown}) converted to string
-   * @param {Array} hostNames - array of all listed hostNames
-   * @param {String} divider - string to separate hostNames
-   * @param {Number} minShown - min amount of hostName to be shown
-   * @returns {String} hostNames
-   * @method showHostNames
-   */
-  showHostNames: function(hostNames, divider, minShown) {
-    if (hostNames.length > minShown) {
-      return hostNames.slice(0, minShown).join(divider) + divider + Em.I18n.t("installer.step8.other").format(hostNames.length - minShown);
-    } else {
-      return hostNames.join(divider);
-    }
-  },
 
-  /**
-   * Confirmation Popup for bulk Operations
-   */
-  bulkOperationConfirm: function(operationData, selection) {
-    var hostsNames = [],
-      queryParams = [];
-    switch(selection) {
-      case 's':
-        hostsNames = this.get('selectedHosts');
-        if(hostsNames.length > 0){
-          queryParams.push({
-            key: 'Hosts/host_name',
-            value: hostsNames,
-            type: 'MULTIPLE'
-          });
-        }
-        break;
-      case 'f':
-        queryParams = this.get('controller').getQueryParameters(true).filter(function (obj) {
-          return !(obj.key == 'page_size' || obj.key == 'from');
-        });
-        break;
-    }
-
-    if (operationData.action === 'SET_RACK_INFO') {
-      this.getHostsForBulkOperations(queryParams, operationData, null);
-      return;
-    }
-
-    var loadingPopup = App.ModalPopup.show({
-      header: Em.I18n.t('jobs.loadingTasks'),
-      primary: false,
-      secondary: false,
-      bodyClass: Ember.View.extend({
-        template: Ember.Handlebars.compile('<div class="spinner"></div>')
-      })
-    });
-
-    this.getHostsForBulkOperations(queryParams, operationData, loadingPopup);
-  },
-
-  getHostsForBulkOperations: function (queryParams, operationData, loadingPopup) {
-    var params = App.router.get('updateController').computeParameters(queryParams);
-
-    App.ajax.send({
-      name: 'hosts.bulk.operations',
-      sender: this,
-      data: {
-        parameters: params,
-        operationData: operationData,
-        loadingPopup: loadingPopup
-      },
-      success: 'getHostsForBulkOperationSuccessCallback'
-    });
-  },
-
-  convertHostsObjects: function(hosts) {
-    var newHostArr = [];
-    hosts.forEach(function (host) {
-      newHostArr.push({
-        index:host.index,
-        id:host.id,
-        clusterId: host.cluster_id,
-        passiveState: host.passive_state,
-        hostName: host.host_name,
-        hostComponents: host.host_components
-      })
-    });
-    return newHostArr;
-  },
-
-  getHostsForBulkOperationSuccessCallback: function(json, opt, param) {
-    var self = this,
-    operationData = param.operationData,
-    hosts = this.convertHostsObjects(App.hostsMapper.map(json, true));
-    // no hosts - no actions
-    if (!hosts.length) {
-      console.log('No bulk operation if no hosts selected.');
-      return;
-    }
-    var hostNames = hosts.mapProperty('hostName');
-    var hostsToSkip = [];
-    if (operationData.action == "DECOMMISSION") {
-      var hostComponentStatusMap = {}; // "DATANODE_c6401.ambari.apache.org" => "STARTED"
-      var hostComponentIdMap = {}; // "DATANODE_c6401.ambari.apache.org" => "DATANODE"
-      if (json.items) {
-        json.items.forEach(function(host) {
-          if (host.host_components) {
-            host.host_components.forEach(function(component) {
-              hostComponentStatusMap[component.id] = component.HostRoles.state;
-              hostComponentIdMap[component.id] = component.HostRoles.component_name;
-            });
-          }
-        });
-      }
-      hostsToSkip = hosts.filter(function(host) {
-        var invalidStateComponents = host.hostComponents.filter(function(component) {
-          return hostComponentIdMap[component] == operationData.realComponentName && hostComponentStatusMap[component] == 'INSTALLED';
-        });
-        return invalidStateComponents.length > 0;
-      });
-    }
-    var hostNamesSkipped = hostsToSkip.mapProperty('hostName');
-    if (operationData.action === 'PASSIVE_STATE') {
-      hostNamesSkipped = [];
-      var outOfSyncHosts = App.StackVersion.find().findProperty('isCurrent').get('outOfSyncHosts');
-      for (var i = 0; i < outOfSyncHosts.length; i++) {
-        if (hostNames.contains(outOfSyncHosts[i])) {
-          hostNamesSkipped.push(outOfSyncHosts[i]);
-        }
-      }
-    }
-    var message;
-    if (operationData.componentNameFormatted) {
-      message = Em.I18n.t('hosts.bulkOperation.confirmation.hostComponents').format(operationData.message, operationData.componentNameFormatted, hostNames.length);
-    }
-    else {
-      message = Em.I18n.t('hosts.bulkOperation.confirmation.hosts').format(operationData.message, hostNames.length);
-    }
-
-    if (param.loadingPopup) {
-      param.loadingPopup.hide();
-    }
-
-    if (operationData.action === 'SET_RACK_INFO') {
-      self.get('controller').bulkOperation(operationData, hosts);
-      return;
-    }
-
-    App.ModalPopup.show({
-      header: Em.I18n.t('hosts.bulkOperation.confirmation.header'),
-      hostNames: hostNames.join("\n"),
-      visibleHosts: self.showHostNames(hostNames, "\n", 3),
-      hostNamesSkippedVisible: self.showHostNames(hostNamesSkipped, "\n", 3),
-      hostNamesSkipped: function() {
-        if (hostNamesSkipped.length) {
-          return hostNamesSkipped.join("\n");
-        }
-        return false;
-      }.property(),
-      expanded: false,
-      didInsertElement: function() {
-        this.set('expanded', hostNames.length <= 3);
-      },
-      onPrimary: function() {
-        self.get('controller').bulkOperation(operationData, hosts);
-        this._super();
-      },
-      bodyClass: Em.View.extend({
-        templateName: require('templates/main/host/bulk_operation_confirm_popup'),
-        message: message,
-        warningInfo: function() {
-          switch (operationData.action) {
-            case "DECOMMISSION":
-              return Em.I18n.t('hosts.bulkOperation.warningInfo.body');
-            case "PASSIVE_STATE":
-              return operationData.state === 'OFF' ? Em.I18n.t('hosts.passiveMode.popup.version.mismatch.multiple')
-              .format(App.StackVersion.find().findProperty('isCurrent').get('repositoryVersion.repositoryVersion')) : "";
-            default:
-              return ""
-          }
-        }.property(),
-        textareaVisible: false,
-        textTrigger: function() {
-          this.set('textareaVisible', !this.get('textareaVisible'));
-        },
-        showAll: function() {
-          this.set('parentView.visibleHosts', this.get('parentView.hostNames'));
-          this.set('parentView.hostNamesSkippedVisible', this.get('parentView.hostNamesSkipped'));
-          this.set('parentView.expanded', true);
-        },
-        putHostNamesToTextarea: function() {
-          var hostNames = this.get('parentView.hostNames');
-          if (this.get('textareaVisible')) {
-            var wrapper = $(".task-detail-log-maintext");
-            $('.task-detail-log-clipboard').html(hostNames).width(wrapper.width()).height(250);
-            Em.run.next(function() {
-              $('.task-detail-log-clipboard').select();
-            });
-          }
-        }.observes('textareaVisible')
-      })
-    });
-  },
 
   sortView: sort.serverWrapperView,
   nameSort: sort.fieldView.extend({
@@ -588,7 +377,7 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
         items = this.get('content.stackVersions').filterProperty('isVisible').map(function (stackVersion) {
           return {
             name: stackVersion.get('displayName'),
-            status: App.format.role(stackVersion.get('status'))
+            status: App.format.role(stackVersion.get('status'), false)
           };
         });
       App.showHostsTableListPopup(header, hostName, items);
@@ -634,9 +423,7 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
      * true if host has no components
      * @returns {Boolean}
      */
-    hasNoComponents: function() {
-      return !this.get('content.hostComponents.length');
-    }.property('content.hostComponents.length'),
+    hasNoComponents: Em.computed.empty('content.hostComponents'),
 
     /**
 
@@ -754,9 +541,7 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
      * Add "active" class for category span-wrapper if current category is selected
      * @type {String}
      */
-    itemClass: function() {
-      return this.get('isActive') ? 'active' : '';
-    }.property('isActive'),
+    itemClass: Em.computed.ifThenElse('isActive', 'active', ''),
 
     /**
      * Text shown on the right of category icon
@@ -783,9 +568,7 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
   /**
    * Category for <code>selected</code> property of each App.Host
    */
-  selectedCategory: function() {
-    return this.get('categories').findProperty('selected', true);
-  }.property('categories.@each.selected'),
+  selectedCategory: Em.computed.findBy('categories', 'selected', true),
 
   statusFilter: Em.View.extend({
     column: 0,
@@ -855,332 +638,10 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
   }),
 
   /**
-   * Filter view for name column
-   * Based on <code>filters</code> library
-   */
-  nameFilterView: filters.createTextView({
-    column: 1,
-    fieldType: 'filter-input-width',
-    onChangeValue: function(){
-      this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'string');
-    }
-  }),
-
-  /**
-   * Filter view for ip column
-   * Based on <code>filters</code> library
-   */
-  ipFilterView: filters.createTextView({
-    column: 2,
-    fieldType: 'filter-input-width',
-    onChangeValue: function(){
-      this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'string');
-    }
-  }),
-
-   /**
-   * Filter view for rack column
-   * Based on <code>filters</code> library
-   */
-  rackFilterView: filters.createTextView({
-    column: 12,
-    fieldType: 'filter-input-width rack-input',
-    onChangeValue: function(){
-      this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'string');
-    }
-  }),
-
-  /**
-   * Filter view for Cpu column
-   * Based on <code>filters</code> library
-   */
-  cpuFilterView: filters.createTextView({
-    fieldType: 'filter-input-width',
-    fieldId: 'cpu_filter',
-    column: 3,
-    onChangeValue: function(){
-      this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'number');
-    }
-  }),
-
-  /**
-   * Filter view for Ram column
-   * Based on <code>filters</code> library
-   */
-  ramFilterView: filters.createTextView({
-    fieldType: 'filter-input-width',
-    fieldId: 'ram_filter',
-    column: 4,
-    onChangeValue: function () {
-      this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'ambari-bandwidth');
-    }
-  }),
-
-  /**
-   * Filter view for LoadAverage column
-   * Based on <code>filters</code> library
-   */
-  loadAvgFilterView: filters.createTextView({
-    fieldType: 'filter-input-width',
-    fieldId: 'load_avg_filter',
-    column: 5,
-    onChangeValue: function(){
-      this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'number');
-    }
-  }),
-
-  /**
-   * Filter view for HostComponents column
-   * Based on <code>filters</code> library
-   */
-  componentsFilterView: filters.createComponentView({
-
-    column: 6,
-
-    /**
-     * Inner FilterView. Used just to render component. Value bind to <code>mainview.value</code> property
-     * Base methods was implemented in <code>filters.componentFieldView</code>
-     */
-    filterView: filters.componentFieldView.extend({
-      templateName: require('templates/main/host/component_filter'),
-
-      /**
-       * Master components
-       * @returns {Array}
-       */
-      masterComponents: function () {
-        var components = App.MasterComponent.find().rejectProperty('totalCount', 0);
-        components.setEach('checkedForHostFilter', false);
-        return components;
-      }.property('App.router.clusterController.isComponentsStateLoaded'),
-
-      /**
-       * Slave components
-       * @returns {Array}
-       */
-      slaveComponents: function () {
-        var components = App.SlaveComponent.find().rejectProperty('totalCount', 0);
-        components.setEach('checkedForHostFilter', false);
-        return components;
-      }.property('App.router.clusterController.isComponentsStateLoaded'),
-
-      /**
-       * Client components
-       * @returns {Array}
-       */
-      clientComponents: function () {
-        var components = App.ClientComponent.find().rejectProperty('totalCount', 0);
-        components.setEach('checkedForHostFilter', false);
-        return components;
-      }.property('App.router.clusterController.isComponentsStateLoaded'),
-
-      /**
-       * Checkbox for quick selecting/deselecting of master components
-       */
-      masterComponentsChecked:false,
-      toggleMasterComponents:function () {
-        this.get('masterComponents').setEach('checkedForHostFilter', this.get('masterComponentsChecked'));
-      }.observes('masterComponentsChecked'),
-
-      /**
-       * Checkbox for quick selecting/deselecting of slave components
-       */
-      slaveComponentsChecked:false,
-      toggleSlaveComponents:function () {
-        this.get('slaveComponents').setEach('checkedForHostFilter', this.get('slaveComponentsChecked'));
-      }.observes('slaveComponentsChecked'),
-
-      /**
-       * Checkbox for quick selecting/deselecting of client components
-       */
-      clientComponentsChecked: false,
-      toggleClientComponents: function() {
-        this.get('clientComponents').setEach('checkedForHostFilter', this.get('clientComponentsChecked'));
-      }.observes('clientComponentsChecked'),
-
-      /**
-       * Clear filter.
-       * Called by parent view, when user clicks on <code>x</code> button(clear button)
-       */
-      clearFilter:function() {
-        this.set('masterComponentsChecked', false);
-        this.set('slaveComponentsChecked', false);
-        this.set('clientComponentsChecked', false);
-
-        this.get('masterComponents').setEach('checkedForHostFilter', false);
-        this.get('slaveComponents').setEach('checkedForHostFilter', false);
-        this.get('clientComponents').setEach('checkedForHostFilter', false);
-
-        this._super();
-      },
-
-      /**
-       * Onclick handler for <code>Apply filter</code> button
-       */
-      applyFilter:function() {
-        this._super();
-        var self = this;
-        var chosenComponents = [];
-
-        this.get('masterComponents').filterProperty('checkedForHostFilter', true).forEach(function(item){
-          chosenComponents.push(item.get('id'));
-        });
-        this.get('slaveComponents').filterProperty('checkedForHostFilter', true).forEach(function(item){
-          chosenComponents.push(item.get('id'));
-        });
-        this.get('clientComponents').filterProperty('checkedForHostFilter', true).forEach(function(item){
-          chosenComponents.push(item.get('id'));
-        });
-        Em.run.next(function() {
-          self.set('value', chosenComponents);
-        });
-      },
-
-      /**
-       * Verify that checked checkboxes are equal to value stored in hidden field (components ids list)
-       */
-      checkComponents: function() {
-        var components = this.get('value');
-        var self = this;
-        if (components) {
-          components.forEach(function(componentId) {
-            if(!self.tryCheckComponent(self, 'masterComponents', componentId)) {
-              if(!self.tryCheckComponent(self, 'slaveComponents', componentId)) {
-                self.tryCheckComponent(self, 'clientComponents', componentId);
-              }
-            }
-          });
-        }
-      }.observes('value'),
-
-      tryCheckComponent: function(self, category, componentId) {
-        var c = self.get(category).findProperty('id', componentId);
-        if (c) {
-          if (!c.get('checkedForHostFilter')) {
-            c.set('checkedForHostFilter', true);
-            return true;
-          }
-        }
-        return false;
-      }
-
-    }),
-    onChangeValue: function(){
-      this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'multiple');
-    }
-  }),
-
-  versionsFilterView: filters.wrapperView.extend({
-    column: 11,
-    filterView: filters.componentFieldView.extend({
-      templateName: require('templates/main/host/version_filter'),
-      selectedVersion: null,
-      selectedStatus: null,
-      value: [],
-
-      versionSelectView: filters.createSelectView({
-        classNames: ['notActive'],
-        fieldType: 'filter-input-width',
-        filterPropertyName: 'repository_versions/RepositoryVersions/display_name',
-        content: function () {
-          return  [
-            {
-              value: '',
-              label: Em.I18n.t('common.all')
-            }
-          ].concat(this.get('controller.allHostStackVersions').filterProperty('isVisible', true).mapProperty('displayName').uniq().map(function (version) {
-            return {
-              value: version,
-              label: version
-            }
-          }));
-        }.property('App.router.clusterController.isLoaded', 'controller.allHostStackVersions.length'),
-        onChangeValue: function () {
-          this.set('parentView.selectedVersion', this.get('value'));
-        }
-      }),
-      statusSelectView: filters.createSelectView({
-        classNames: ['notActive'],
-        fieldType: 'filter-input-width',
-        filterPropertyName: 'HostStackVersions/state',
-        content: function () {
-          return [
-            {
-              value: '',
-              label: Em.I18n.t('common.all')
-            }
-          ].concat(App.HostStackVersion.statusDefinition.map(function (status) {
-            return {
-              value: status,
-              label: App.HostStackVersion.formatStatus(status)
-            }
-          }));
-        }.property('App.router.clusterController.isLoaded'),
-        onChangeValue: function () {
-          this.set('parentView.selectedStatus', this.get('value'));
-        }
-      }),
-      /**
-       * Onclick handler for <code>Apply filter</code> button
-       */
-      applyFilter: function () {
-        this._super();
-        var self = this;
-        var filterProperties = [];
-        if (this.get('selectedVersion')) {
-          filterProperties.push({
-            property: 'repository_versions/RepositoryVersions/display_name',
-            value: this.get('selectedVersion')
-          });
-        }
-        if (this.get('selectedStatus')) {
-          filterProperties.push({
-            property: 'HostStackVersions/state',
-            value: this.get('selectedStatus')
-          });
-        }
-        self.set('value', filterProperties);
-      },
-      /**
-       * Clear filter to initial state
-       */
-      clearFilter: function () {
-        this.set('value', []);
-        this.get('childViews').forEach(function (view) {
-          if (typeof view.clearFilter === "function") view.clearFilter();
-        });
-      }
-    }),
-    setValue: function (value) {
-      var versionSelectView = this.get('childViews')[0];
-
-      //restore selected options in Select views
-      versionSelectView.get('childViews').forEach(function (view) {
-        var filter = value.findProperty('property', view.get('filterPropertyName'));
-        if (filter && view.get('content').findProperty('value', filter.value)) {
-          view.set('selected', view.get('content').findProperty('value', filter.value));
-        }
-      }, this);
-      this._super(value);
-    },
-    onChangeValue: function () {
-      this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'sub-resource');
-    },
-    clearFilter: function () {
-      this._super();
-      this.get('childViews').forEach(function (view) {
-        if (typeof view.clearFilter === "function") view.clearFilter();
-      });
-    }
-  }),
-
-  /**
    * associations between host property and column index
    * @type {Array}
    */
-  colPropAssoc: function () {
-    return this.get('controller.colPropAssoc');
-  }.property('controller.colPropAssoc'),
+  colPropAssoc: Em.computed.alias('controller.colPropAssoc'),
 
   /**
    * Run <code>clearFilter</code> in the each child filterView
@@ -1189,12 +650,6 @@ App.MainHostView = App.TableView.extend(App.TableServerViewMixin, {
     // clean filters stored in-memory and local storage
     this.set('filterConditions', []);
     this.clearFilterConditionsFromLocalStorage();
-    // clean UI
-    this.get('_childViews').forEach(function(childView) {
-      if (childView['clearFilter']) {
-        childView.clearFilter();
-      }
-    });
     // force refresh
     this.refresh();
   }

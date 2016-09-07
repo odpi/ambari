@@ -36,6 +36,7 @@ App.ModalPopup = Ember.View.extend({
   disableThird: false,
   primaryClass: 'btn-success',
   secondaryClass: '',
+  thirdClass: '',
   onPrimary: function () {
     this.hide();
   },
@@ -64,27 +65,65 @@ App.ModalPopup = Ember.View.extend({
   showCloseButton: true,
 
   didInsertElement: function () {
-    if (this.autoHeight) {
-      var block = this.$().find('#modal > .modal-body').first();
-      if(block.offset()) {
-        block.css('max-height', $(window).height() - block.offset().top  - this.marginBottom + $(window).scrollTop()); // fix popup height
-      }
+    this.$().find('#modal')
+      .on('enter-key-pressed', this.enterKeyPressed.bind(this))
+      .on('escape-key-pressed', this.escapeKeyPressed.bind(this));
+    this.fitZIndex();
+    var firstInputElement = this.$('#modal').find(':input').not(':disabled, .no-autofocus').first();
+    this.focusElement(firstInputElement);
+    this.subscribeResize();
+  },
+
+  subscribeResize: function() {
+    if (this.get('autoHeight') && !$.mocho) {
+      this.fitHeight();
+      $(window).on('resize', this.fitHeight.bind(this));
     }
-    // If popup is opened from another popup it should be displayed above
+  },
+
+  willDestroyElement: function() {
+    this.$().find('#modal').off('enter-key-pressed').off('escape-key-pressed');
+    if (this.get('autoHeight') && !$.mocho) {
+      $(window).off('resize', this.fitHeight);
+    }
+  },
+
+  escapeKeyPressed: function (event) {
+    var closeButton = this.$().find('.modal-header > .close').last();
+    if (closeButton.length > 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeButton.click();
+      return false;
+    }
+  },
+
+  enterKeyPressed: function (event) {
+    var primaryButton = this.$().find('.modal-footer > .btn-success').last();
+    if ((!$("*:focus").is("textarea")) && primaryButton.length > 0 && primaryButton.attr('disabled') !== 'disabled') {
+      event.preventDefault();
+      event.stopPropagation();
+      primaryButton.click();
+      return false;
+    }
+  },
+
+  /**
+   * If popup is opened from another popup it should be displayed above
+   * @method fitZIndex
+   */
+  fitZIndex: function () {
     var existedPopups = $('.modal-backdrop');
-    if (existedPopups) {
+    if (existedPopups && !$.mocho) {
       var maxZindex = 1;
       existedPopups.each(function(index, popup) {
         if ($(popup).css('z-index') > maxZindex) {
           maxZindex = $(popup).css('z-index');
-      }
+        }
       });
       this.$().find('.modal-backdrop').css('z-index', maxZindex * 2);
       this.$().find('.modal').css('z-index', maxZindex * 2 + 1);
     }
-
-    var firstInputElement = this.$('#modal').find(':input').not(':disabled').first();
-    this.focusElement(firstInputElement);
   },
 
   focusElement: function(elem) {
@@ -92,11 +131,12 @@ App.ModalPopup = Ember.View.extend({
   },
 
   fitHeight: function () {
+    if (this.get('state') === 'destroyed') return;
     var popup = this.$().find('#modal');
     var block = this.$().find('#modal > .modal-body');
     var wh = $(window).height();
 
-    var top = wh * .05;
+    var top = wh * 0.05;
     popup.css({
       'top': top + 'px',
       'marginTop': 0

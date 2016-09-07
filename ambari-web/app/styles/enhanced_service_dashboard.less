@@ -27,9 +27,9 @@
     width: 98%;
     padding: 43px;
     border: 1px solid @border-color;
-    border-radius: 0px;
-    -webkit-border-radius: 0px;
-    -moz-border-radius: 0px;
+    border-radius: 0;
+    -webkit-border-radius: 0;
+    -moz-border-radius: 0;
     background-image: none;
     .icon-plus {
       font-size: 70px;
@@ -58,6 +58,9 @@
     }
     .chart-container .alert {
       margin-bottom: 5px;
+    }
+    .export-graph-list {
+      right: -5px;
     }
   }
 }
@@ -134,16 +137,15 @@
         width: 90%;
         height: 100px;
         border: 1px solid #eee;
-        background: url(/img/spinner.gif) no-repeat center center;
       }
       .chart-container{
-        margin: -4px 8px 0px 8px;
+        margin: -4px 8px 0 8px;
         .chart-y-axis{
           margin-top: 10px;
         }
         .chart-legend {
           top: 110px;
-          left: 0px;
+          left: 0;
           padding: 3px;
           min-width: 100%;
           text-align: left;
@@ -202,58 +204,68 @@
 
 #widget_layout {
   .widget {
-    .thumbnail .corner-icon {
-      display: none;
-      .icon-remove-sign{
-        color: #000000;
-        text-shadow: #fff 0px 0px 15px;
+    .thumbnail {
+      .corner-icon {
+        display: none;
+        .icon-remove-sign{
+          color: #000000;
+          text-shadow: #fff 0 0 15px;
+          position: absolute;
+          left: -7px;
+          top: -7px;
+        }
+      }
+      .widget-icons {
         position: absolute;
-        left: -7px;
-        top: -7px;
-      }
-      .icon-edit,.icon-copy{
-        color: #555555;
-        font-weight: bold;
-        text-shadow: #ffffff -8px 8px 10px;
-        background-color: rgba(255,255,255,0.6);
-        position: absolute;
-        padding: 5px 5px;
-      }
-      .icon-copy {
-        right: 25px;
-      }
-      .icon-edit {
         right: 5px;
+        top: 6px;
+        .corner-icon {
+          i {
+            position: relative;
+            color: #555555;
+            font-weight: bold;
+            text-shadow: #fff -8px 8px 8px, #fff 8px 8px 8px, #fff -8px -8px 8px, #fff 8px -8px 8px;
+            background-color: rgba(255,255,255,0.6);
+            padding: 5px 5px 5px 2px;
+          }
+          &.hidden i {
+            display: none;
+          }
+        }
       }
-    }
-    .thumbnail:hover {
-      cursor: move;
-      .corner-icon{
-        display: block;
+      .export-graph-list {
+        right: -6px;
+        margin-top: -2px;
+      }
+      &:hover {
+        cursor: move;
+        .corner-icon{
+          display: block;
+          text-decoration: none;
+          z-index: 9;
+        }
+        .caption{
+          margin-left: -10px;
+        }
+      }
+      & .hidden-description{
+        display: none;
+        color: #555555;
+        z-index: 7;
+        font-size: 12px;
+        font-weight: bold;
+        line-height: 18px;
+        text-align: center;
         text-decoration: none;
-        z-index: 9;
+        position: absolute;
+        top: 40px;
+        padding: 8px 5px;
+        width: 89%;
+        height: 62%;
+        overflow: scroll;
+        white-space: pre-line;
+        background: rgba(255,255,255, 0.7);
       }
-      .caption{
-        margin-left: -10px;
-      }
-    }
-    .thumbnail .hidden-description{
-      display: none;
-      color: #555555;
-      z-index: 7;
-      font-size: 12px;
-      font-weight: bold;
-      line-height: 18px;
-      text-align: center;
-      text-decoration: none;
-      position: absolute;
-      top: 40px;
-      padding: 8px 5px;
-      width: 89%;
-      height: 62%;
-      overflow: scroll;
-      white-space: pre-line;
-      background: rgba(255,255,255, 0.7);
     }
   }
   .thumbnail .chart-legend {
@@ -267,10 +279,15 @@
       overflow-y: scroll;
     }
   }
+  .screensaver {
+    .spinner {
+      display: none;
+    }
+  }
 }
 
 .chart-legend .description-line {
-  padding: 0px 3px 8px 8px;
+  padding: 0 3px 8px 8px;
   line-height: 16px;
   max-height: 45px;
   font-weight: bold;
@@ -414,7 +431,7 @@
       .metric-field {
         height: 85%;
         background-color: #f5f5f5;
-        overflow: scroll;
+        overflow: auto;
         border: 1px solid @border-color;
       }
       .metric-instance {
@@ -429,7 +446,7 @@
         a {
           position: absolute;
           right: 3px;
-          top: 0px;
+          top: 0;
           text-decoration: none;
           display: none;
           .icon-remove {
@@ -468,9 +485,9 @@
           -webkit-box-shadow: none;
           -moz-box-shadow: none;
           box-shadow: none;
-          border-radius: 0px;
-          -webkit-border-radius: 0px;
-          -moz-border-radius: 0px;
+          border-radius: 0;
+          -webkit-border-radius: 0;
+          -moz-border-radius: 0;
           -webkit-transition: none;
           -moz-transition: none;
           -o-transition: none;
@@ -517,7 +534,7 @@
         }
         label.checkbox {
           line-height: 20px;
-          margin-bottom: 0px;
+          margin-bottom: 0;
           margin-top: 5px;
         }
         .description-text-area {
@@ -545,7 +562,7 @@
   .select-options-dropdown {
     width: 240px;
     max-height: 123px;
-    padding: 0px;
+    padding: 0;
     border-bottom: 200px transparent solid;
     border-right: 150px transparent solid;
     border-left: none;
@@ -556,13 +573,13 @@
   }
   li.metric-select {
     padding: 5px;
-    padding-bottom: 0px;
+    padding-bottom: 0;
     border: 1px #ccc solid;
     border-bottom: none;
   }
   li.aggregator-select {
     padding: 5px;
-    padding-bottom: 0px;
+    padding-bottom: 0;
     border: 1px #ccc solid;
     border-bottom: none;
     border-top: none;
@@ -618,9 +635,9 @@
       min-width: 300px;
       width: 300px;
       border: 1px solid rgba(0, 0, 0, 0.2);
-      -webkit-border-radius: 0px;
-      -moz-border-radius: 0px;
-      border-radius: 0px;
+      -webkit-border-radius: 0;
+      -moz-border-radius: 0;
+      border-radius: 0;
       -webkit-box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
       -moz-box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
       box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
@@ -634,7 +651,7 @@
     max-height: 600px;
     position: fixed;
     .modal-body {
-      padding-top: 0px;
+      padding-top: 0;
       min-height: 290px;
       max-height: 460px;
     }
@@ -706,7 +723,7 @@
           }
           .is-shared-icon {
             display: inline-block;
-            margin-bottom: 0px;
+            margin-bottom: 0;
             margin-right: 5px;
             color: #888;
           }
@@ -715,7 +732,7 @@
             display: block;
             color: #808080;
             overflow-x: hidden;
-            overflow-y: scroll;
+            overflow-y: auto;
             height: 40px;
             white-space: pre-line;
           }
@@ -738,7 +755,7 @@
           }
           .dropdown-menu {
             min-width: 110px;
-            left: 0px;
+            left: 0;
           }
         }
       }

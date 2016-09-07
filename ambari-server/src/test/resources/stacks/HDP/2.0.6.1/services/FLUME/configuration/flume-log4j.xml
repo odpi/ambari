@@ -19,7 +19,6 @@
  * limitations under the License.
  */
 -->
-
 <configuration supports_final="false">
   <property>
     <name>content</name>
@@ -27,5 +26,6 @@
     <value>
 # Flume log4j config
     </value>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

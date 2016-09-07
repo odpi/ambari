@@ -18,16 +18,15 @@
 
 package org.apache.ambari.server.api.services;
 
-import org.apache.ambari.server.api.resources.ResourceInstance;
-import org.apache.ambari.server.api.services.parsers.BodyParseException;
-import org.apache.ambari.server.api.services.parsers.RequestBodyParser;
-import org.apache.ambari.server.api.services.serializers.ResultSerializer;
-import org.easymock.Capture;
-import org.junit.Test;
-
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriInfo;
+import static org.easymock.EasyMock.capture;
+import static org.easymock.EasyMock.createMock;
+import static org.easymock.EasyMock.createNiceMock;
+import static org.easymock.EasyMock.createStrictMock;
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.reset;
+import static org.easymock.EasyMock.verify;
+import static org.junit.Assert.assertEquals;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -36,15 +35,28 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.easymock.EasyMock.*;
-import static org.easymock.EasyMock.createNiceMock;
-import static org.easymock.EasyMock.createStrictMock;
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.UriInfo;
 
-import static org.junit.Assert.assertEquals;
+import org.apache.ambari.server.api.resources.ResourceInstance;
+import org.apache.ambari.server.api.services.parsers.BodyParseException;
+import org.apache.ambari.server.api.services.parsers.RequestBodyParser;
+import org.apache.ambari.server.api.services.serializers.ResultSerializer;
+import org.apache.ambari.server.audit.request.RequestAuditLogger;
+import org.easymock.Capture;
+import org.easymock.EasyMock;
+import org.easymock.EasyMockRunner;
+import org.easymock.Mock;
+import org.easymock.MockType;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
 /**
  * Base class for service unit tests.
  */
+@RunWith(EasyMockRunner.class)
 public abstract class BaseServiceTest {
 
   protected ResourceInstance resourceInstance = createNiceMock(ResourceInstance.class);
@@ -88,6 +100,14 @@ public abstract class BaseServiceTest {
     return serializer;
   }
 
+  @Mock(type = MockType.NICE)
+  public RequestAuditLogger requestAuditLogger;
+
+  @Before
+  public void before() throws Exception {
+    BaseService.init(requestAuditLogger);
+  }
+
   @Test
   public void testService() throws Exception {
     List<ServiceTestInvocation> listTestInvocations = getTestInvocations();
@@ -121,6 +141,7 @@ public abstract class BaseServiceTest {
   }
 
   protected void assertCreateRequest(ServiceTestInvocation testMethod) {
+    addExpectForInitialRequest(testMethod);
     expect(requestFactory.createRequest(httpHeaders, requestBody, uriInfo,
         testMethod.getRequestType(), resourceInstance)).andReturn(request);
   }
@@ -128,6 +149,8 @@ public abstract class BaseServiceTest {
 
 
   private void testMethod_bodyParseException(ServiceTestInvocation testMethod) throws Exception {
+    addExpectForInitialRequest(testMethod);
+
     Capture<Result> resultCapture = new Capture<Result>();
     BodyParseException e = new BodyParseException("TEST MSG");
     expect(bodyParser.parse(testMethod.getBody())).andThrow(e);
@@ -171,6 +194,13 @@ public abstract class BaseServiceTest {
   private void verifyAndResetMocks() {
     verify(resourceInstance, requestFactory, request, result, requestBody, bodyParser, status, serializer);
     reset(resourceInstance, requestFactory, request, result, requestBody, bodyParser, status, serializer);
+  }
+
+  private void addExpectForInitialRequest(ServiceTestInvocation testMethod) {
+    RequestBody rb = new RequestBody();
+    rb.setBody(testMethod.getBody());
+    expect(requestFactory.createRequest(EasyMock.eq(httpHeaders), EasyMock.anyObject(RequestBody.class), EasyMock.eq(uriInfo),
+      EasyMock.eq(testMethod.getRequestType()), EasyMock.eq(resourceInstance))).andReturn(request);
   }
 
   public static class ServiceTestInvocation {

@@ -26,6 +26,7 @@ import org.apache.ambari.server.controller.internal.URLStreamProvider;
 import org.apache.ambari.server.controller.metrics.timeline.MetricsRequestHelper;
 import org.apache.ambari.server.controller.spi.TemporalInfo;
 import org.apache.ambari.server.controller.utilities.StreamProvider;
+import org.apache.hadoop.metrics2.sink.timeline.Precision;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetric;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetrics;
 import org.apache.http.client.utils.URIBuilder;
@@ -39,6 +40,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
 import java.util.TreeMap;
 
 @Singleton
@@ -83,24 +85,24 @@ public class TimelineMetricCacheEntryFactory implements UpdatingCacheEntryFactor
 
     TimelineMetrics timelineMetrics = null;
     try {
-      timelineMetrics = requestHelperForGets.fetchTimelineMetrics(metricCacheKey.getSpec());
+      URIBuilder uriBuilder = new URIBuilder(metricCacheKey.getSpec());
+      timelineMetrics = requestHelperForGets.fetchTimelineMetrics(uriBuilder,
+        metricCacheKey.getTemporalInfo().getStartTimeMillis(),
+        metricCacheKey.getTemporalInfo().getEndTimeMillis());
     } catch (IOException io) {
       LOG.debug("Caught IOException on fetching metrics. " + io.getMessage());
+      throw io;
     }
 
     TimelineMetricsCacheValue value = null;
 
     if (timelineMetrics != null && !timelineMetrics.getMetrics().isEmpty()) {
-      Map<String, TimelineMetric> cacheValue =
-        new HashMap<String, TimelineMetric>(timelineMetrics.getMetrics().size());
-      for (TimelineMetric metric : timelineMetrics.getMetrics()) {
-        cacheValue.put(metric.getMetricName(), metric);
-      }
-
       value = new TimelineMetricsCacheValue(
         metricCacheKey.getTemporalInfo().getStartTime(),
         metricCacheKey.getTemporalInfo().getEndTime(),
-        cacheValue // Null or empty should prompt a refresh
+        timelineMetrics, // Null or empty should prompt a refresh
+        Precision.getPrecision(metricCacheKey.getTemporalInfo().getStartTimeMillis(),
+          metricCacheKey.getTemporalInfo().getEndTimeMillis()) //Initial Precision
       );
 
       LOG.debug("Created cache entry: " + value);
@@ -129,50 +131,68 @@ public class TimelineMetricCacheEntryFactory implements UpdatingCacheEntryFactor
     Long existingSeriesEndTime = existingMetrics.getEndTime();
 
     TemporalInfo newTemporalInfo = metricCacheKey.getTemporalInfo();
-    Long requestedStartTime = newTemporalInfo.getStartTime();
-    Long requestedEndTime = newTemporalInfo.getEndTime();
+    Long requestedStartTime = newTemporalInfo.getStartTimeMillis();
+    Long requestedEndTime = newTemporalInfo.getEndTimeMillis();
 
     // Calculate new start and end times
     URIBuilder uriBuilder = new URIBuilder(metricCacheKey.getSpec());
-    Long newStartTime = getRefreshRequestStartTime(existingSeriesStartTime,
-      existingSeriesEndTime, requestedStartTime);
-    Long newEndTime = getRefreshRequestEndTime(existingSeriesStartTime,
-      existingSeriesEndTime, requestedEndTime);
+
+    Precision requestedPrecision = Precision.getPrecision(requestedStartTime, requestedEndTime);
+    Precision currentPrecision = existingMetrics.getPrecision();
+
+    Long newStartTime = null;
+    Long newEndTime = null;
+    if(!requestedPrecision.equals(currentPrecision)) {
+      // Ignore cache entry. Get the entire data from the AMS and update the cache.
+      LOG.debug("Precision changed from " + currentPrecision + " to " + requestedPrecision);
+      newStartTime = requestedStartTime;
+      newEndTime = requestedEndTime;
+    } else {
+      //Get only the metric values for the delta period from the cache.
+      LOG.debug("No change in precision " + currentPrecision);
+      newStartTime = getRefreshRequestStartTime(existingSeriesStartTime,
+          existingSeriesEndTime, requestedStartTime);
+      newEndTime = getRefreshRequestEndTime(existingSeriesStartTime,
+          existingSeriesEndTime, requestedEndTime);
+    }
 
     // Cover complete overlap scenario
-    // time axis: |-------- exSt ----- reqSt ------ exEnd ----- extEnd ---------|
+    // time axis: |-------- exSt ----- reqSt ------ reqEnd ----- exEnd ---------|
     if (newEndTime > newStartTime &&
-       !(newStartTime.equals(existingSeriesStartTime) &&
-       newEndTime.equals(existingSeriesEndTime))) {
+       !((newStartTime.equals(existingSeriesStartTime) &&
+       newEndTime.equals(existingSeriesEndTime)) && requestedPrecision.equals(currentPrecision)) ) {
 
       LOG.debug("Existing cached timeseries startTime = " +
-        new Date(getMillisecondsTime(existingSeriesStartTime)) + ", endTime = " +
-        new Date(getMillisecondsTime(existingSeriesEndTime)));
+          new Date(getMillisecondsTime(existingSeriesStartTime)) + ", endTime = " +
+          new Date(getMillisecondsTime(existingSeriesEndTime)));
 
       LOG.debug("Requested timeseries startTime = " +
-        new Date(getMillisecondsTime(newStartTime)) + ", endTime = " +
-        new Date(getMillisecondsTime(newEndTime)));
+          new Date(getMillisecondsTime(newStartTime)) + ", endTime = " +
+          new Date(getMillisecondsTime(newEndTime)));
 
       // Update spec with new start and end time
       uriBuilder.setParameter("startTime", String.valueOf(newStartTime));
       uriBuilder.setParameter("endTime", String.valueOf(newEndTime));
+      uriBuilder.setParameter("precision",requestedPrecision.toString());
 
       try {
-        TimelineMetrics newTimeSeries = requestHelperForUpdates.fetchTimelineMetrics(uriBuilder.toString());
+        TimelineMetrics newTimeSeries = requestHelperForUpdates.fetchTimelineMetrics(uriBuilder, newStartTime, newEndTime);
 
         // Update existing time series with new values
         updateTimelineMetricsInCache(newTimeSeries, existingMetrics,
           getMillisecondsTime(requestedStartTime),
-          getMillisecondsTime(requestedEndTime));
+          getMillisecondsTime(requestedEndTime), !currentPrecision.equals(requestedPrecision));
 
         // Replace old boundary values
         existingMetrics.setStartTime(requestedStartTime);
         existingMetrics.setEndTime(requestedEndTime);
+        existingMetrics.setPrecision(requestedPrecision);
 
       } catch (IOException io) {
         if (LOG.isDebugEnabled()) {
           LOG.debug("Exception retrieving metrics.", io);
         }
+        throw io;
       }
     } else {
       LOG.debug("Skip updating cache with new startTime = " +
@@ -186,52 +206,64 @@ public class TimelineMetricCacheEntryFactory implements UpdatingCacheEntryFactor
    */
   protected void updateTimelineMetricsInCache(TimelineMetrics newMetrics,
       TimelineMetricsCacheValue timelineMetricsCacheValue,
-      Long requestedStartTime, Long requestedEndTime) {
+      Long requestedStartTime, Long requestedEndTime, boolean removeAll) {
 
-    Map<String, TimelineMetric> existingTimelineMetricMap = timelineMetricsCacheValue.getTimelineMetrics();
+    TimelineMetrics existingTimelineMetrics = timelineMetricsCacheValue.getTimelineMetrics();
 
-    // NOTE: Metrics names so far are unique, the Map optimization avoids
-    // multiple iterations of the List
-    for (TimelineMetric timelineMetric : newMetrics.getMetrics()) {
-      if (LOG.isTraceEnabled()) {
-        TreeMap<Long, Double> sortedMetrics = new TreeMap<Long, Double>(timelineMetric.getMetricValues());
+    // Remove values that do not fit before adding new data
+    updateExistingMetricValues(existingTimelineMetrics, requestedStartTime,
+      requestedEndTime, removeAll);
 
-        LOG.trace("New metric: " + timelineMetric.getMetricName() +
-          " # " + timelineMetric.getMetricValues().size() + ", startTime = " +
-          sortedMetrics.firstKey() + ", endTime = " + sortedMetrics.lastKey());
-      }
+    if (newMetrics != null && !newMetrics.getMetrics().isEmpty()) {
+      for (TimelineMetric timelineMetric : newMetrics.getMetrics()) {
+        if (LOG.isTraceEnabled()) {
+          TreeMap<Long, Double> sortedMetrics = new TreeMap<Long, Double>(timelineMetric.getMetricValues());
 
+          LOG.trace("New metric: " + timelineMetric.getMetricName() +
+            " # " + timelineMetric.getMetricValues().size() + ", startTime = " +
+            sortedMetrics.firstKey() + ", endTime = " + sortedMetrics.lastKey());
+        }
 
-      TimelineMetric existingMetric = existingTimelineMetricMap.get(timelineMetric.getMetricName());
+        TimelineMetric existingMetric = null;
 
-      if (existingMetric != null) {
-        Map<Long, Double> existingMetricValues = existingMetric.getMetricValues();
-        LOG.trace("Existing metric: " + timelineMetric.getMetricName() +
-          " # " + existingMetricValues.size());
-
-        Iterator<Map.Entry<Long, Double>> valueIterator = existingMetricValues.entrySet().iterator();
-
-        // Remove old values
-        // Assumption: All return value are millis
-        while (valueIterator.hasNext()) {
-          Map.Entry<Long, Double> metricEntry = valueIterator.next();
-          if (metricEntry.getKey() < requestedStartTime
-              || metricEntry.getKey() > requestedEndTime) {
-            valueIterator.remove();
+        for (TimelineMetric metric : existingTimelineMetrics.getMetrics()) {
+          if (metric.equalsExceptTime(timelineMetric)) {
+            existingMetric = metric;
           }
         }
 
-        // Add new ones
-        existingMetricValues.putAll(timelineMetric.getMetricValues());
+        if (existingMetric != null) {
+          // Add new ones
+          existingMetric.getMetricValues().putAll(timelineMetric.getMetricValues());
 
-        if (LOG.isTraceEnabled()) {
-          TreeMap<Long, Double> sortedMetrics = new TreeMap<Long, Double>(existingMetricValues);
-          LOG.trace("Merged metric: " + timelineMetric.getMetricName() + ", " +
-            "Final size: " + existingMetricValues.size() + ", startTime = " +
-            sortedMetrics.firstKey() + ", endTime = " + sortedMetrics.lastKey());
+          if (LOG.isTraceEnabled()) {
+            TreeMap<Long, Double> sortedMetrics = new TreeMap<Long, Double>(existingMetric.getMetricValues());
+            LOG.trace("Merged metric: " + timelineMetric.getMetricName() + ", " +
+              "Final size: " + existingMetric.getMetricValues().size() + ", startTime = " +
+              sortedMetrics.firstKey() + ", endTime = " + sortedMetrics.lastKey());
+          }
+        } else {
+          existingTimelineMetrics.getMetrics().add(timelineMetric);
         }
+      }
+    }
+  }
+
+  // Remove out of band data from the cache
+  private void updateExistingMetricValues(TimelineMetrics existingMetrics,
+      Long requestedStartTime, Long requestedEndTime, boolean removeAll) {
+
+    for (TimelineMetric existingMetric : existingMetrics.getMetrics()) {
+      if (removeAll) {
+        existingMetric.setMetricValues(new TreeMap<Long, Double>());
       } else {
-        existingTimelineMetricMap.put(timelineMetric.getMetricName(), timelineMetric);
+        TreeMap<Long, Double> existingMetricValues = existingMetric.getMetricValues();
+        LOG.trace("Existing metric: " + existingMetric.getMetricName() +
+          " # " + existingMetricValues.size());
+
+        // Retain only the values that are within the [requestStartTime, requestedEndTime] window
+        existingMetricValues.headMap(requestedStartTime,false).clear();
+        existingMetricValues.tailMap(requestedEndTime, false).clear();
       }
     }
   }

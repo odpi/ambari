@@ -31,6 +31,12 @@ App.ServiceConfigView = Em.View.extend({
   filter: '',
 
   /**
+   * Determines that active tab is set during view initialize.
+   * @type {boolean}
+   */
+  initialActiveTabIsSet: false,
+
+  /**
    * Bound from parent view in the template
    * @type {object[]}
    */
@@ -56,9 +62,7 @@ App.ServiceConfigView = Em.View.extend({
    * Determines if user is on the service configs page
    * @type {boolean}
    */
-  isOnTheServicePage: function () {
-    return this.get('controller.name') === 'mainServiceInfoConfigsController';
-  }.property('controller.name'),
+  isOnTheServicePage: Em.computed.equal('controller.name', 'mainServiceInfoConfigsController'),
 
   classNameBindings: ['isOnTheServicePage:serviceConfigs'],
 
@@ -83,7 +87,7 @@ App.ServiceConfigView = Em.View.extend({
    * @method updateFilterCounters
    */
   updateFilterCounters: function() {
-    if (this.get('controller.selectedService.configs')) {
+    if (this.get('controller.selectedService.configs') && this.get('state') !== 'destroyed') {
       var categories = this.get('controller.selectedService.configCategories').mapProperty('name');
       var configsToShow = this.get('controller.selectedService.configs').filter(function(config) {
         return config.get('isHiddenByFilter') == false && categories.contains(config.get('category')) && config.get('isVisible');
@@ -104,17 +108,12 @@ App.ServiceConfigView = Em.View.extend({
    */
   supportsConfigLayout: function() {
     var supportedControllers = ['wizardStep7Controller', 'mainServiceInfoConfigsController', 'mainHostServiceConfigsController'];
-    if (!App.get('isClusterSupportsEnhancedConfigs')) {
-      return false;
-    }
     if (App.Tab.find().someProperty('serviceName', this.get('controller.selectedService.serviceName')) && supportedControllers.contains(this.get('controller.name'))) {
       return !Em.isEmpty(App.Tab.find().filterProperty('serviceName', this.get('controller.selectedService.serviceName')).filterProperty('isAdvanced', false));
     } else {
       return false;
     }
   }.property('controller.name', 'controller.selectedService'),
-
-  showConfigHistoryFeature: false,
 
   toggleRestartMessageView: function () {
     this.$('.service-body').toggle('blind', 200);
@@ -135,7 +134,9 @@ App.ServiceConfigView = Em.View.extend({
   },
 
   willDestroyElement: function() {
-    this.get('tabs').setEach('isActive', false);
+    //Force configs remove in order to speed up rendering
+    this.$().detach().remove();
+    this._super();
   },
 
   /**
@@ -150,7 +151,8 @@ App.ServiceConfigView = Em.View.extend({
 
     if (controller.get('selectedConfigGroup')) {
       controller.get('selectedService.configCategories').filterProperty('siteFileName').forEach(function (config) {
-        config.set('customCanAddProperty', config.get('canAddProperty'));
+        var supportsAddingForbidden = App.config.shouldSupportAddingForbidden(controller.get('selectedService').serviceName, config.siteFileName); //true if the UI should not display the Custom ... section
+        config.set('customCanAddProperty', !supportsAddingForbidden);
       });
     }
 
@@ -158,6 +160,7 @@ App.ServiceConfigView = Em.View.extend({
 
   setActiveTab: function (event) {
     if (event.context.get('isHiddenByFilter')) return false;
+    this.set('initialActiveTabIsSet', true);
     this.get('tabs').forEach(function (tab) {
       tab.set('isActive', false);
     });
@@ -172,19 +175,25 @@ App.ServiceConfigView = Em.View.extend({
    * @returns {Ember.A}
    */
   tabs: function() {
-    if (!App.get('isClusterSupportsEnhancedConfigs')) {
-      return Em.A([]);
-    }
     var tabs = App.Tab.find().filterProperty('serviceName', this.get('controller.selectedService.serviceName'));
-    tabs.setEach('isActive', false);
     var advancedTab = tabs.findProperty('isAdvanced', true);
     if (advancedTab) {
-      advancedTab.set('isRendered', false);
+      advancedTab.set('isRendered', advancedTab.get('isActive'));
     }
     this.processTabs(tabs);
-    this.pickActiveTab(tabs);
     return tabs;
-  }.property('controller.selectedServiceNameTrigger'),
+  }.property('controller.selectedService.serviceName'),
+
+  /**
+   * Set active tab when view attached and configs are linked to tabs.
+   */
+  initialActiveTabObserver: function() {
+    var tabs = this.get('tabs').filterProperty('isAdvanced', false);
+    if (tabs.everyProperty('isConfigsPrepared', true) && !this.get('initialActiveTabIsSet')) {
+      this.pickActiveTab(this.get('tabs'));
+      this.set('initialActiveTabIsSet', true);
+    }
+  }.observes('tabs.@each.isConfigsPrepared'),
 
   /**
    * Pick the first non hidden tab and make it active when there is no active tab
@@ -250,7 +259,7 @@ App.ServiceConfigView = Em.View.extend({
    * @method filterEnhancedConfigs
    */
   filterEnhancedConfigs: function () {
-    if (!this.get('controller.selectedService')) return true;
+    if (!this.get('controller.selectedService') || this.get('state') === 'destroyed') return true;
     var self = this;
 
     var serviceConfigs = this.get('controller.selectedService.configs').filterProperty('isVisible', true);

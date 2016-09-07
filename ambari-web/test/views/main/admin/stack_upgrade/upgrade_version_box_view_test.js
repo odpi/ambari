@@ -25,15 +25,24 @@ describe('App.UpgradeVersionBoxView', function () {
   var view;
 
   beforeEach(function () {
+    sinon.stub(App.db, 'setFilterConditions', Em.K);
+    sinon.stub(App.db, 'getFilterConditions', function () {return [];});
     view = App.UpgradeVersionBoxView.create({
+      initFilters: Em.K,
       controller: Em.Object.create({
-        upgrade: Em.K
+        upgrade: Em.K,
+        currentVersion: Em.Object.create()
       }),
       content: Em.Object.create(),
       parentView: Em.Object.create({
         repoVersions: []
       })
     });
+  });
+
+  afterEach(function () {
+    App.db.setFilterConditions.restore();
+    App.db.getFilterConditions.restore();
   });
 
   describe("#isUpgrading", function () {
@@ -71,21 +80,32 @@ describe('App.UpgradeVersionBoxView', function () {
   });
 
   describe("#installProgress", function () {
+
     beforeEach(function () {
-      sinon.stub(App.db, 'get').returns(1);
+      this.mockDB = sinon.stub(App.db, 'get');
       this.mock = sinon.stub(App.router, 'get');
+      App.set('testMode', false);
     });
     afterEach(function () {
-      App.db.get.restore();
+      this.mockDB.restore();
       this.mock.restore();
+    });
+
+    it("request id is not set", function () {
+      this.mock.returns([]);
+      this.mockDB.returns(undefined);
+      view.propertyDidChange('installProgress');
+      expect(view.get('installProgress')).to.equal(0);
     });
     it("request absent", function () {
       this.mock.returns([]);
+      this.mockDB.returns([1]);
       view.propertyDidChange('installProgress');
       expect(view.get('installProgress')).to.equal(0);
     });
     it("request present", function () {
-      this.mock.returns([Em.Object.create({progress: 100})]);
+      this.mockDB.returns([1]);
+      this.mock.returns([Em.Object.create({progress: 100, id: 1})]);
       view.propertyDidChange('installProgress');
       expect(view.get('installProgress')).to.equal(100);
     });
@@ -173,6 +193,7 @@ describe('App.UpgradeVersionBoxView', function () {
     });
     it("link parent element is disabled", function () {
       jQueryMock.returns({
+        height: Em.K,
         hasClass: Em.K,
         parent: function () {
           return {
@@ -263,6 +284,7 @@ describe('App.UpgradeVersionBoxView', function () {
       view.set('content', Em.Object.create({
         p1: []
       }));
+      view.set('p1', []);
       view.showHosts({contexts: [
         {'property': 'p1'}
       ]});
@@ -273,8 +295,9 @@ describe('App.UpgradeVersionBoxView', function () {
         p1: ['host1'],
         displayName: 'version'
       }));
+      view.set('p1', ['host1']);
       var popup = view.showHosts({contexts: [
-        {id: 1, 'property': 'p1'}
+        {value: 1, 'property': 'p1'}
       ]});
       expect(App.ModalPopup.show.calledOnce).to.be.true;
       popup.onPrimary();
@@ -302,6 +325,7 @@ describe('App.UpgradeVersionBoxView', function () {
     it("version and state are valid", function () {
       view.filterHostsByStack('version', 'state');
       expect(mock.set.calledWith('showFilterConditionsFirstLoad', true)).to.be.true;
+      expect(mock.set.calledWith('filterChangeHappened', true)).to.be.true;
       expect(mock.filterByStack.calledWith('version', 'state')).to.be.true;
       expect(App.router.transitionTo.calledWith('hosts.index')).to.be.true;
     });
@@ -351,13 +375,14 @@ describe('App.UpgradeVersionBoxView', function () {
           ]
         },
         setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(false);
+          this.isAccessibleMock.withArgs('CLUSTER.UPGRADE_DOWNGRADE_STACK').returns(false);
+          this.initMock.returns(false);
         },
         expected: {
           status: 'INIT',
           isButton: true,
           buttons: [],
-          isDisabled: true
+          isDisabled: false
         },
         title: 'INIT state, no admin access, no requests in progress'
       },
@@ -372,7 +397,8 @@ describe('App.UpgradeVersionBoxView', function () {
           ]
         },
         setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(false);
+          this.isAccessibleMock.withArgs('CLUSTER.UPGRADE_DOWNGRADE_STACK').returns(false);
+          this.initMock.returns(true);
         },
         expected: {
           status: 'INIT',
@@ -393,18 +419,31 @@ describe('App.UpgradeVersionBoxView', function () {
             Em.Object.create({
               status: 'INSTALLING'
             })
-          ]
+          ],
+          'controller.currentVersion': {
+            repository_version: '2.2.0'
+          },
+          'content.repositoryVersion': '2.2.1',
+          'controller.upgradeVersion': 'HDP-2.2.0',
+          'content.displayName': 'HDP-2.2.1'
         },
         setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(false);
+          this.isAccessibleMock.withArgs('CLUSTER.UPGRADE_DOWNGRADE_STACK').returns(false);
+          this.initMock.returns(true);
         },
         expected: {
           status: 'INSTALL_FAILED',
-          isButton: true,
-          buttons: [],
+          isButtonGroup: true,
+          buttons: [{
+            text: Em.I18n.t('admin.stackVersions.version.reinstall'),
+            action: 'installRepoVersionConfirmation',
+            isDisabled: true
+          }],
+          text: Em.I18n.t('admin.stackVersions.version.performUpgrade'),
+          action: 'confirmUpgrade',
           isDisabled: true
         },
-        title: 'install failed, no admin access, request in progress, another installation running'
+        title: 'INSTALL_FAILED state, no admin access, request in progress, another installation running'
       },
       {
         inputData: {
@@ -417,46 +456,31 @@ describe('App.UpgradeVersionBoxView', function () {
             Em.Object.create({
               status: 'INSTALLING'
             })
-          ]
-        },
-        setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(false);
-        },
-        expected: {
-          status: 'INSTALL_FAILED',
-          isButton: true,
-          buttons: [],
-          isDisabled: true
-        },
-        title: 'install failed, no admin access, no requests in progress, another installation running'
-      },
-      {
-        inputData: {
+          ],
           'controller.currentVersion': {
             repository_version: '2.2.0'
           },
           'content.repositoryVersion': '2.2.1',
-          'content.status': 'INSTALL_FAILED',
-          'controller.requestInProgress': false,
-          'parentView.repoVersions': [],
-          'isUpgradeAvailable': true
+          'controller.upgradeVersion': 'HDP-2.2.0',
+          'content.displayName': 'HDP-2.2.1'
         },
         setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(true);
+          this.isAccessibleMock.withArgs('CLUSTER.UPGRADE_DOWNGRADE_STACK').returns(false);
+          this.initMock.returns(true);
         },
         expected: {
           status: 'INSTALL_FAILED',
           isButtonGroup: true,
-          buttons: [
-            {
-              text: Em.I18n.t('admin.stackVersions.version.reinstall'),
-              action: 'installRepoVersionConfirmation',
-              isDisabled: false
-            }
-          ],
-          isDisabled: false
+          buttons: [{
+            text: Em.I18n.t('admin.stackVersions.version.reinstall'),
+            action: 'installRepoVersionConfirmation',
+            isDisabled: true
+          }],
+          text: Em.I18n.t('admin.stackVersions.version.performUpgrade'),
+          action: 'confirmUpgrade',
+          isDisabled: true
         },
-        title: 'install failed version should be enabled to Upgrade'
+        title: 'INSTALL_FAILED state, no admin access, no requests in progress, another installation running'
       },
       {
         inputData: {
@@ -466,18 +490,32 @@ describe('App.UpgradeVersionBoxView', function () {
             Em.Object.create({
               status: 'OUT_OF_SYNC'
             })
-          ]
+          ],
+          'controller.currentVersion': {
+            repository_version: '2.2.0'
+          },
+          'content.repositoryVersion': '2.2.1',
+          'controller.upgradeVersion': 'HDP-2.2.0',
+          'content.displayName': 'HDP-2.2.1'
         },
         setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(true);
+          this.isAccessibleMock.withArgs('CLUSTER.UPGRADE_DOWNGRADE_STACK').returns(true);
+          this.initMock.returns(true);
+          this.isDisabledMock.returns(false);
         },
         expected: {
           status: 'OUT_OF_SYNC',
-          isButton: true,
-          buttons: [],
+          isButtonGroup: true,
+          buttons: [{
+            text: Em.I18n.t('admin.stackVersions.version.performUpgrade'),
+            action: 'confirmUpgrade',
+            isDisabled: false
+          }],
+          text: Em.I18n.t('admin.stackVersions.version.reinstall'),
+          action: 'installRepoVersionConfirmation',
           isDisabled: false
         },
-        title: 'version out of sync, admin access, no requests in progress, no installation'
+        title: 'OUT_OF_SYNC state, admin access, no requests in progress, no installation'
       },
       {
         inputData: {
@@ -487,18 +525,30 @@ describe('App.UpgradeVersionBoxView', function () {
             Em.Object.create({
               status: 'OUT_OF_SYNC'
             })
-          ]
+          ],
+          'controller.currentVersion': {
+            repository_version: '2.2.0'
+          },
+          'content.repositoryVersion': '2.2.1',
+          'controller.upgradeVersion': 'HDP-2.2.0',
+          'content.displayName': 'HDP-2.2.1'
         },
         setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(true);
+          this.isAccessibleMock.withArgs('CLUSTER.UPGRADE_DOWNGRADE_STACK').returns(true);
         },
         expected: {
           status: 'OUT_OF_SYNC',
-          isButton: true,
-          buttons: [],
+          isButtonGroup: true,
+          buttons: [{
+            text: Em.I18n.t('admin.stackVersions.version.performUpgrade'),
+            action: 'confirmUpgrade',
+            isDisabled: true
+          }],
+          text: Em.I18n.t('admin.stackVersions.version.reinstall'),
+          action: 'installRepoVersionConfirmation',
           isDisabled: true
         },
-        title: 'version out of sync, admin access, request in progress, no installation'
+        title: 'OUT_OF_SYNC state, admin access, request in progress, no installation'
       },
       {
         inputData: {
@@ -539,7 +589,8 @@ describe('App.UpgradeVersionBoxView', function () {
           'content.displayName': 'HDP-2.2.1'
         },
         setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(true);
+          this.isAccessibleMock.withArgs('CLUSTER.UPGRADE_DOWNGRADE_STACK').returns(true);
+          this.initMock.returns(true);
         },
         expected: {
           status: 'INSTALLED',
@@ -575,7 +626,7 @@ describe('App.UpgradeVersionBoxView', function () {
           'content.displayName': 'HDP-2.2.0'
         },
         setup: function () {
-          this.isAccessibleMock.withArgs('ADMIN').returns(true);
+          this.isAccessibleMock.withArgs('CLUSTER.UPGRADE_DOWNGRADE_STACK').returns(true);
         },
         expected: {
           status: 'INSTALLED',
@@ -672,6 +723,26 @@ describe('App.UpgradeVersionBoxView', function () {
       },
       {
         inputData: {
+          'content.status': 'UPGRADING',
+          'isUpgrading': true,
+          'controller.isDowngrade': false,
+          'controller.upgradeVersion': 'HDP-2.2.1',
+          'content.displayName': 'HDP-2.2.1'
+        },
+        setup: function () {
+          this.getMock.withArgs('upgradeState').returns('ABORTED');
+        },
+        expected: {
+          status: 'UPGRADING',
+          isLink: true,
+          action: 'openUpgradeDialog',
+          iconClass: 'icon-pause',
+          text: Em.I18n.t('admin.stackVersions.version.upgrade.pause')
+        },
+        title: 'upgrading, upgrade aborted'
+      },
+      {
+        inputData: {
           'content.status': 'UPGRADE_FAILED',
           'isUpgrading': true,
           'controller.isDowngrade': false,
@@ -739,6 +810,26 @@ describe('App.UpgradeVersionBoxView', function () {
           'content.displayName': 'HDP-2.2.1'
         },
         setup: function () {
+          this.getMock.withArgs('upgradeState').returns('ABORTED');
+        },
+        expected: {
+          status: 'UPGRADED',
+          isLink: true,
+          action: 'openUpgradeDialog',
+          iconClass: 'icon-pause',
+          text: Em.I18n.t('admin.stackVersions.version.downgrade.pause')
+        },
+        title: 'downgrading, upgrade aborted'
+      },
+      {
+        inputData: {
+          'content.status': 'UPGRADED',
+          'isUpgrading': true,
+          'controller.isDowngrade': true,
+          'controller.upgradeVersion': 'HDP-2.2.1',
+          'content.displayName': 'HDP-2.2.1'
+        },
+        setup: function () {
           this.getMock.withArgs('upgradeState').returns('HOLDING_TIMEDOUT');
         },
         expected: {
@@ -759,16 +850,16 @@ describe('App.UpgradeVersionBoxView', function () {
           'parentView.repoVersions': []
         },
         setup: function () {
-          this.getMock.withArgs('upgradeState').returns('ABORTED');
+          this.getMock.withArgs('upgradeSuspended').returns('true');
         },
         expected: {
           status: 'UPGRADING',
           isButton: true,
-          action: 'confirmRetryUpgrade',
-          text: Em.I18n.t('common.reUpgrade'),
+          action: 'resumeUpgrade',
+          text: Em.I18n.t('admin.stackUpgrade.dialog.resume'),
           isDisabled: false
         },
-        title: 'upgrade aborted'
+        title: 'upgrade suspended'
       },
       {
         inputData: {
@@ -779,26 +870,30 @@ describe('App.UpgradeVersionBoxView', function () {
           'parentView.repoVersions': []
         },
         setup: function () {
-          this.getMock.withArgs('upgradeState').returns('ABORTED');
+          this.getMock.withArgs('upgradeSuspended').returns('true');
         },
         expected: {
           status: 'UPGRADE_FAILED',
           isButton: true,
-          action: 'confirmRetryDowngrade',
-          text: Em.I18n.t('common.reDowngrade'),
+          action: 'resumeUpgrade',
+          text: Em.I18n.t('admin.stackUpgrade.dialog.resume.downgrade'),
           isDisabled: true
         },
-        title: 'downgrade aborted, request in progress'
+        title: 'downgrade suspended, request in progress'
       }
     ];
 
     beforeEach(function () {
       this.getMock = sinon.stub(App, 'get');
-      this.isAccessibleMock = sinon.stub(App, 'isAccessible');
+      this.isAccessibleMock = sinon.stub(App, 'isAuthorized');
+      this.initMock = sinon.stub(view, 'isDisabledOnInit');
+      this.isDisabledMock = sinon.stub(view, 'isDisabledOnInstalled').returns(true);
     });
     afterEach(function () {
       this.getMock.restore();
       this.isAccessibleMock.restore();
+      this.initMock.restore();
+      this.isDisabledMock.restore();
     });
 
     cases.forEach(function (item) {
@@ -857,66 +952,151 @@ describe('App.UpgradeVersionBoxView', function () {
     });
   });
 
-  describe("#checkUpgradeAvailability()", function () {
-    beforeEach(function () {
-      sinon.stub(view, 'runUpgradeCheck', Em.K);
-    });
-    afterEach(function () {
-      view.runUpgradeCheck.restore();
+  describe("#isDisabledOnInit()", function () {
+    var testCases = [
+      {
+        requestInProgress: true,
+        upgradeIsRunning: true,
+        upgradeSuspended: true,
+        status: 'INSTALLED',
+        expected: true
+      },
+      {
+        requestInProgress: false,
+        upgradeIsRunning: true,
+        upgradeSuspended: false,
+        status: 'INSTALLED',
+        expected: true
+      },
+      {
+        requestInProgress: false,
+        upgradeIsRunning: false,
+        upgradeSuspended: false,
+        status: 'INSTALLING',
+        expected: true
+      },
+      {
+        requestInProgress: false,
+        upgradeIsRunning: true,
+        upgradeSuspended: true,
+        status: 'INSTALLED',
+        expected: false
+      },
+      {
+        requestInProgress: false,
+        upgradeIsRunning: false,
+        upgradeSuspended: false,
+        status: 'INSTALLED',
+        expected: false
+      }
+    ];
+
+    beforeEach(function() {
+      this.mock = sinon.stub(App, 'get');
     });
 
-    it("status is INSTALLED", function () {
-      view.set('content.status', 'INSTALLED');
-      view.checkUpgradeAvailability();
-      expect(view.runUpgradeCheck.called).to.be.false;
+    afterEach(function() {
+      this.mock.restore();
     });
-    it("status is INSTALL_FAILED", function () {
-      view.set('content.status', 'INSTALL_FAILED');
-      view.checkUpgradeAvailability();
-      expect(view.runUpgradeCheck.calledTwice).to.be.true;
+
+    testCases.forEach(function(test) {
+      it("requestInProgress: " + test.requestInProgress +
+         "upgradeIsRunning: " + test.upgradeIsRunning +
+         "upgradeSuspended: " + test.upgradeSuspended +
+         "status" + test.status, function() {
+        this.mock.withArgs('upgradeSuspended').returns(test.upgradeSuspended);
+        this.mock.withArgs('upgradeIsRunning').returns(test.upgradeIsRunning);
+        view.set('parentView.repoVersions', [Em.Object.create({
+          status: test.status
+        })]);
+        view.set('controller.requestInProgress', test.requestInProgress);
+        expect(view.isDisabledOnInit()).to.be.equal(test.expected);
+      });
     });
   });
 
-  describe("#runUpgradeCheck()", function () {
-    beforeEach(function () {
-      sinon.stub(App.ajax, 'send', Em.K);
-    });
-    afterEach(function () {
-      App.ajax.send.restore();
+  describe("#isDisabledOnInstalled()", function () {
+
+    beforeEach(function() {
+      this.authorizedMock = sinon.stub(App, 'isAuthorized');
     });
 
-    it("upgradeCheckInProgress is true", function () {
-      view.set('upgradeCheckInProgress', true);
-      view.runUpgradeCheck();
-      expect(App.ajax.send.called).to.be.false;
-      expect(view.get('upgradeCheckInProgress')).to.be.true;
+    afterEach(function() {
+      this.authorizedMock.restore();
     });
-    it("upgradeCheckInProgress is false", function () {
-      view.set('upgradeCheckInProgress', false);
-      view.runUpgradeCheck();
-      expect(App.ajax.send.calledOnce).to.be.true;
-      expect(view.get('upgradeCheckInProgress')).to.be.true;
-    });
-  });
 
-  describe("#runUpgradeCheckSuccess()", function () {
-    it("check failed", function () {
-      view.runUpgradeCheckSuccess({items: [{UpgradeChecks: {status: 'FAIL'}}]});
-      expect(view.get('isUpgradeAvailable')).to.be.false;
-      expect(view.get('upgradeCheckInProgress')).to.be.false;
-    });
-    it("check passed", function () {
-      view.runUpgradeCheckSuccess({items: [{UpgradeChecks: {status: 'PASS'}}]});
-      expect(view.get('isUpgradeAvailable')).to.be.true;
-      expect(view.get('upgradeCheckInProgress')).to.be.false;
-    });
-  });
+    var testCases = [
+      {
+        isAuthorized: false,
+        requestInProgress: false,
+        status: 'INSTALLED',
+        isDowngrade: false,
+        repositoryName: 'HDP-2.2',
+        upgradeVersion: 'HDP-2.3',
+        expected: true
+      },
+      {
+        isAuthorized: true,
+        requestInProgress: true,
+        status: 'INSTALLED',
+        isDowngrade: false,
+        repositoryName: 'HDP-2.2',
+        upgradeVersion: 'HDP-2.3',
+        expected: true
+      },
+      {
+        isAuthorized: true,
+        requestInProgress: false,
+        status: 'INSTALLING',
+        isDowngrade: false,
+        repositoryName: 'HDP-2.2',
+        upgradeVersion: 'HDP-2.3',
+        expected: true
+      },
+      {
+        isAuthorized: true,
+        requestInProgress: false,
+        status: 'INSTALLED',
+        isDowngrade: true,
+        repositoryName: 'HDP-2.2',
+        upgradeVersion: 'HDP-2.2',
+        expected: true
+      },
+      {
+        isAuthorized: true,
+        requestInProgress: false,
+        status: 'INSTALLED',
+        isDowngrade: true,
+        repositoryName: 'HDP-2.2',
+        upgradeVersion: 'HDP-2.3',
+        expected: false
+      },
+      {
+        isAuthorized: true,
+        requestInProgress: false,
+        status: 'INSTALLED',
+        isDowngrade: false,
+        repositoryName: 'HDP-2.2',
+        upgradeVersion: 'HDP-2.2',
+        expected: false
+      }
+    ];
 
-  describe("#runUpgradeCheckError()", function () {
-    it("check failed", function () {
-      view.runUpgradeCheckError();
-      expect(view.get('isUpgradeAvailable')).to.be.false;
-      expect(view.get('upgradeCheckInProgress')).to.be.false;
+    testCases.forEach(function(test) {
+      it( "isAuthorized: " + test.isAuthorized +
+          "requestInProgress: " + test.requestInProgress +
+          "status: " + test.status +
+          "isDowngrade: " + test.isDowngrade +
+          "repositoryName: " + test.repositoryName +
+          "upgradeVersion: " + test.upgradeVersion, function() {
+        this.authorizedMock.returns(test.isAuthorized);
+        view.set('controller.requestInProgress', test.requestInProgress);
+        view.set('parentView.repoVersions', [Em.Object.create({status: test.status})]);
+        view.set('controller.isDowngrade', test.isDowngrade);
+        view.set('controller.currentVersion.repository_name', test.repositoryName);
+        view.set('controller.upgradeVersion', test.upgradeVersion);
+        expect(view.isDisabledOnInstalled()).to.be.equal(test.expected);
+      });
     });
   });
 });

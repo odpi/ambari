@@ -34,7 +34,7 @@ class TestHBaseClient(RMFTestCase):
                    classname = "HbaseClient",
                    command = "configure",
                    config_file="secured.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
@@ -44,10 +44,14 @@ class TestHBaseClient(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/hbase/conf',
       owner = 'hbase',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
+    )
+    self.assertResourceCalled('Directory', '/tmp',
+      create_parents = True,
+      mode = 0777
     )
     self.assertResourceCalled('Directory', '/hadoop',
-                              recursive = True,
+                              create_parents = True,
                               cd_access = 'a',
                               )
     self.assertResourceCalled('Execute', ('chmod', '1777', u'/hadoop'),
@@ -90,6 +94,17 @@ class TestHBaseClient(RMFTestCase):
         owner = 'hbase',
         group = 'hadoop'
     )
+    self.assertResourceCalled('Directory', '/etc/security/limits.d',
+      owner = 'root',
+      group = 'root',
+      create_parents = True,
+    )
+    self.assertResourceCalled('File', '/etc/security/limits.d/hbase.conf',
+      content = Template('hbase.conf.j2'),
+      owner = 'root',
+      group = 'root',
+      mode = 0644,
+    )
     self.assertResourceCalled('TemplateConfig', '/etc/hbase/conf/hadoop-metrics2-hbase.properties',
       owner = 'hbase',
       template_tag = 'GANGLIA-RS',
@@ -116,7 +131,7 @@ class TestHBaseClient(RMFTestCase):
                    classname = "HbaseClient",
                    command = "configure",
                    config_file="default.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Directory', '/etc/hbase',
@@ -125,10 +140,14 @@ class TestHBaseClient(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/hbase/conf',
       owner = 'hbase',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
+    )
+    self.assertResourceCalled('Directory', '/tmp',
+      create_parents = True,
+      mode = 0777
     )
     self.assertResourceCalled('Directory', '/hadoop',
-                              recursive = True,
+                              create_parents = True,
                               cd_access = 'a',
                               )
     self.assertResourceCalled('Execute', ('chmod', '1777', u'/hadoop'),
@@ -167,9 +186,20 @@ class TestHBaseClient(RMFTestCase):
       group = 'hadoop',
     )
     self.assertResourceCalled('File', '/etc/hbase/conf/hbase-env.sh',
-        content = InlineTemplate(self.getConfig()['configurations']['hbase-env']['content']),
-        owner = 'hbase',
-        group = 'hadoop',
+      content = InlineTemplate(self.getConfig()['configurations']['hbase-env']['content']),
+      owner = 'hbase',
+      group = 'hadoop',
+    )
+    self.assertResourceCalled('Directory', '/etc/security/limits.d',
+      owner = 'root',
+      group = 'root',
+      create_parents = True,
+    )
+    self.assertResourceCalled('File', '/etc/security/limits.d/hbase.conf',
+      content = Template('hbase.conf.j2'),
+      owner = 'root',
+      group = 'root',
+      mode = 0644,
     )
     self.assertResourceCalled('TemplateConfig', '/etc/hbase/conf/hadoop-metrics2-hbase.properties',
       owner = 'hbase',
@@ -198,13 +228,13 @@ class TestHBaseClient(RMFTestCase):
                    classname = "HbaseClient",
                    command = "restart",
                    config_file="client-upgrade.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES,
                    mocks_dict = mocks_dict)
 
-    self.assertResourceCalled("Execute", ('hdp-select', 'set', 'hbase-client', '2.2.1.0-2067'), sudo=True)
-    self.assertResourceCalled('Execute', ('hdp-select', 'set', 'phoenix-client', '2.2.1.0-2067'), sudo=True)
-    self.assertResourceCalled("Execute", ('hdp-select', 'set', 'hadoop-client', '2.2.1.0-2067'), sudo=True)
+    self.assertResourceCalled("Execute", ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'hbase-client', '2.2.1.0-2067'), sudo=True)
+    self.assertResourceCalled('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'phoenix-client', '2.2.1.0-2067'), sudo=True)
+    self.assertResourceCalled("Execute", ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'hadoop-client', '2.2.1.0-2067'), sudo=True)
     self.assertEquals(1, mocks_dict['call'].call_count)
 
 
@@ -223,27 +253,27 @@ class TestHBaseClient(RMFTestCase):
                        classname = "HbaseClient",
                        command = "restart",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES,
-                       call_mocks = [(0, None), (0, None), (0, None), (0, None)],
+                       call_mocks = [(0, None, ''), (0, None, ''), (0, None, ''), (0, None, '')],
                        mocks_dict = mocks_dict)
 
-    self.assertResourceCalled('Execute', ('hdp-select', 'set', 'hbase-client', version), sudo=True)
-    self.assertResourceCalled('Execute', ('hdp-select', 'set', 'phoenix-client', version), sudo=True)
-    self.assertResourceCalled('Execute', ('hdp-select', 'set', 'hadoop-client', version), sudo=True)
+    self.assertResourceCalledIgnoreEarlier('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'hbase-client', version), sudo=True)
+    self.assertResourceCalledIgnoreEarlier('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'phoenix-client', version), sudo=True)
+    self.assertResourceCalledIgnoreEarlier('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'hadoop-client', version), sudo=True)
 
     self.assertEquals(3, mocks_dict['call'].call_count)
     self.assertEquals(6, mocks_dict['checked_call'].call_count)
     self.assertEquals(
-      ('conf-select', 'set-conf-dir', '--package', 'hbase', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'set-conf-dir', '--package', 'hbase', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['checked_call'].call_args_list[1][0][0])
     self.assertEquals(
-      ('conf-select', 'create-conf-dir', '--package', 'hbase', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'create-conf-dir', '--package', 'hbase', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['call'].call_args_list[0][0][0])
     self.assertEquals(
-      ('conf-select', 'set-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'set-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['checked_call'].call_args_list[4][0][0])
     self.assertEquals(
-      ('conf-select', 'create-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'create-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['call'].call_args_list[1][0][0])
 

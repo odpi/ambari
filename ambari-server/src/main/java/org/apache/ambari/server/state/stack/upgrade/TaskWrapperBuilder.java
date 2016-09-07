@@ -22,9 +22,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.ambari.server.stack.HostsType;
+import org.apache.ambari.server.utils.StageUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,15 +45,28 @@ public class TaskWrapperBuilder {
    * @param component the component name for the tasks
    * @param hostsType the collection of sets along with their status
    * @param tasks collection of tasks
+   * @param params additional parameters
    */
-  public static List<TaskWrapper> getTaskList(String service, String component, HostsType hostsType, List<Task> tasks) {
+  public static List<TaskWrapper> getTaskList(String service, String component, HostsType hostsType, List<Task> tasks, Map<String, String> params) {
+    // Ok if Ambari Server is not part of the cluster hosts since this is only used in the calculation of how many batches
+    // to create.
+    String ambariServerHostname = StageUtils.getHostName();
+
     List<TaskWrapper> collection = new ArrayList<TaskWrapper>();
     for (Task t : tasks) {
+      if (t.getType().equals(Task.Type.CONFIGURE) || t.getType().equals(Task.Type.MANUAL)) {
+        // only add the CONFIGURE/MANUAL task if there are actual hosts for the service/component
+        if (null != hostsType.hosts && !hostsType.hosts.isEmpty()) {
+          collection.add(new TaskWrapper(service, component, Collections.singleton(ambariServerHostname), params, t));
+        }
+        continue;
+      }
+
       if (t.getType().equals(Task.Type.EXECUTE)) {
         ExecuteTask et = (ExecuteTask) t;
         if (et.hosts == ExecuteHostType.MASTER) {
           if (hostsType.master != null) {
-            collection.add(new TaskWrapper(service, component, Collections.singleton(hostsType.master), t));
+            collection.add(new TaskWrapper(service, component, Collections.singleton(hostsType.master), params, t));
             continue;
           } else {
             LOG.error(MessageFormat.format("Found an Execute task for {0} and {1} meant to run on a master but could not find any masters to run on. Skipping this task.", service, component));
@@ -61,16 +76,30 @@ public class TaskWrapperBuilder {
         // Pick a random host.
         if (et.hosts == ExecuteHostType.ANY) {
           if (hostsType.hosts != null && !hostsType.hosts.isEmpty()) {
-            collection.add(new TaskWrapper(service, component, Collections.singleton(hostsType.hosts.iterator().next()), t));
+            collection.add(new TaskWrapper(service, component, Collections.singleton(hostsType.hosts.iterator().next()), params, t));
             continue;
           } else {
-            LOG.error(MessageFormat.format("Found an Execute task for {0} and {1} meant to run on a any host but could not find host to run on. Skipping this task.", service, component));
+            LOG.error(MessageFormat.format("Found an Execute task for {0} and {1} meant to run on any host but could not find host to run on. Skipping this task.", service, component));
             continue;
           }
         }
+
+        // Pick the first host sorted alphabetically (case insensitive).
+        if (et.hosts == ExecuteHostType.FIRST) {
+          if (hostsType.hosts != null && !hostsType.hosts.isEmpty()) {
+            List<String> sortedHosts = new ArrayList<>(hostsType.hosts);
+            Collections.sort(sortedHosts, String.CASE_INSENSITIVE_ORDER);
+            collection.add(new TaskWrapper(service, component, Collections.singleton(sortedHosts.get(0)), params, t));
+            continue;
+          } else {
+            LOG.error(MessageFormat.format("Found an Execute task for {0} and {1} meant to run on the first host sorted alphabetically but could not find host to run on. Skipping this task.", service, component));
+            continue;
+          }
+        }
+        // Otherwise, meant to run on ALL hosts.
       }
 
-      collection.add(new TaskWrapper(service, component, hostsType.hosts, t));
+      collection.add(new TaskWrapper(service, component, hostsType.hosts, params, t));
     }
 
     return collection;

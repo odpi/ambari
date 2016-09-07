@@ -23,6 +23,7 @@ import java.net.MalformedURLException;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -35,9 +36,11 @@ import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.MaintenanceState;
 import org.apache.ambari.server.state.ServiceComponent;
 import org.apache.ambari.server.state.ServiceComponentHost;
+import org.apache.ambari.server.state.UpgradeState;
 import org.apache.ambari.server.utils.HTTPUtils;
 import org.apache.ambari.server.utils.HostAndPort;
 import org.apache.ambari.server.utils.StageUtils;
+import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,7 +65,7 @@ public class MasterHostResolver {
   /**
    * Union of status for several services.
    */
-  enum Status {
+  protected enum Status {
     ACTIVE,
     STANDBY
   }
@@ -143,7 +146,14 @@ public class MasterHostResolver {
               hostsType.master = pair.containsKey(Status.ACTIVE) ? pair.get(Status.ACTIVE) :  null;
               hostsType.secondary = pair.containsKey(Status.STANDBY) ? pair.get(Status.STANDBY) :  null;
             } else {
-              hostsType.master = componentHosts.iterator().next();
+              // !!! we KNOW we have 2 componentHosts if we're here.
+              Iterator<String> iterator = componentHosts.iterator();
+              hostsType.master = iterator.next();
+              hostsType.secondary = iterator.next();
+
+              LOG.warn("Could not determine the active/standby states from NameNodes {}. " +
+                  "Using {} as active and {} as standby.",
+                  StringUtils.join(componentHosts, ','), hostsType.master, hostsType.secondary);
             }
           }
           break;
@@ -206,7 +216,9 @@ public class MasterHostResolver {
         // possible
         if (maintenanceState != MaintenanceState.OFF) {
           unhealthyHosts.add(sch);
-        } else if (null == m_version || null == sch.getVersion() || !sch.getVersion().equals(m_version)) {
+        } else if (null == m_version || null == sch.getVersion() ||
+            !sch.getVersion().equals(m_version) ||
+            sch.getUpgradeState() == UpgradeState.FAILED) {
           upgradeHosts.add(hostName);
         }
       }
@@ -222,17 +234,40 @@ public class MasterHostResolver {
     }
   }
 
+  /**
+   * Determine if HDFS is present and it has NameNode High Availability.
+   * @return true if has NameNode HA, otherwise, false.
+   */
+  public boolean isNameNodeHA() throws AmbariException {
+    Map<String, org.apache.ambari.server.state.Service> services = m_cluster.getServices();
+    if (services != null && services.containsKey("HDFS")) {
+
+      Set<String> secondaryNameNodeHosts = m_cluster.getHosts("HDFS", "SECONDARY_NAMENODE");
+      Set<String> nameNodeHosts = m_cluster.getHosts("HDFS", "NAMENODE");
+
+      if (secondaryNameNodeHosts.size() == 1 && nameNodeHosts.size() == 1) {
+        return false;
+      }
+      if (nameNodeHosts.size() > 1) {
+        return true;
+      }
+
+      throw new AmbariException("Unable to determine if cluster has NameNode HA.");
+    }
+    return false;
+  }
 
   /**
    * Get mapping of the HDFS Namenodes from the state ("active" or "standby") to the hostname.
    * @return Returns a map from the state ("active" or "standby" to the hostname with that state if exactly
    * one active and one standby host were found, otherwise, return null.
+   * The hostnames are returned in lowercase.
    */
   private Map<Status, String> getNameNodePair() {
     Map<Status, String> stateToHost = new HashMap<Status, String>();
     Cluster cluster = getCluster();
 
-    String nameService = m_configHelper.getValueFromDesiredConfigurations(cluster, ConfigHelper.HDFS_SITE, "dfs.nameservices");
+    String nameService = m_configHelper.getValueFromDesiredConfigurations(cluster, ConfigHelper.HDFS_SITE, "dfs.internal.nameservices");
     if (nameService == null || nameService.isEmpty()) {
       return null;
     }
@@ -266,7 +301,9 @@ public class MasterHostResolver {
 
         if (null != state && (state.equalsIgnoreCase(Status.ACTIVE.toString()) || state.equalsIgnoreCase(Status.STANDBY.toString()))) {
           Status status = Status.valueOf(state.toUpperCase());
-          stateToHost.put(status, hp.host);
+          stateToHost.put(status, hp.host.toLowerCase());
+        } else {
+          LOG.error(String.format("Could not retrieve state for NameNode %s from property %s by querying JMX.", hp.host, key));
         }
       } catch (MalformedURLException e) {
         LOG.error(e.getMessage());
@@ -279,6 +316,12 @@ public class MasterHostResolver {
     return null;
   }
 
+  /**
+   * Resolve the name of the Resource Manager master and convert the hostname to lowercase.
+   * @param cluster Cluster
+   * @param hostType RM hosts
+   * @throws MalformedURLException
+   */
   private void resolveResourceManagers(Cluster cluster, HostsType hostType) throws MalformedURLException {
     LinkedHashSet<String> orderedHosts = new LinkedHashSet<String>(hostType.hosts);
 
@@ -295,18 +338,24 @@ public class MasterHostResolver {
 
       if (null != value) {
         if (null == hostType.master) {
-          hostType.master = hostname;
+          hostType.master = hostname.toLowerCase();
         }
 
         // Quick and dirty to make sure the master is last in the list
-        orderedHosts.remove(hostname);
-        orderedHosts.add(hostname);
+        orderedHosts.remove(hostname.toLowerCase());
+        orderedHosts.add(hostname.toLowerCase());
       }
 
     }
     hostType.hosts = orderedHosts;
   }
 
+  /**
+   * Resolve the HBASE master and convert the hostname to lowercase.
+   * @param cluster Cluster
+   * @param hostsType HBASE master host.
+   * @throws AmbariException
+   */
   private void resolveHBaseMasters(Cluster cluster, HostsType hostsType) throws AmbariException {
     String hbaseMasterInfoPortProperty = "hbase.master.info.port";
     String hbaseMasterInfoPortValue = m_configHelper.getValueFromDesiredConfigurations(cluster, ConfigHelper.HBASE_SITE, hbaseMasterInfoPortProperty);
@@ -323,22 +372,31 @@ public class MasterHostResolver {
       if (null != value) {
         Boolean bool = Boolean.valueOf(value);
         if (bool.booleanValue()) {
-          hostsType.master = hostname;
+          hostsType.master = hostname.toLowerCase();
         } else {
-          hostsType.secondary = hostname;
+          hostsType.secondary = hostname.toLowerCase();
         }
       }
-
     }
   }
 
-  private String queryJmxBeanValue(String hostname, int port, String beanName, String attributeName,
-                                   boolean asQuery) {
+  protected String queryJmxBeanValue(String hostname, int port, String beanName, String attributeName,
+                                  boolean asQuery) {
     return queryJmxBeanValue(hostname, port, beanName, attributeName, asQuery, false);
   }
 
-  private String queryJmxBeanValue(String hostname, int port, String beanName, String attributeName,
-      boolean asQuery, boolean encrypted) {
+  /**
+   * Query the JMX attribute at http(s)://$server:$port/jmx?qry=$query or http(s)://$server:$port/jmx?get=$bean::$attribute
+   * @param hostname host name
+   * @param port port number
+   * @param beanName if asQuery is false, then search for this bean name
+   * @param attributeName if asQuery is false, then search for this attribute name
+   * @param asQuery whether to search bean or query
+   * @param encrypted true if using https instead of http.
+   * @return The jmx value.
+   */
+  protected String queryJmxBeanValue(String hostname, int port, String beanName, String attributeName,
+                                  boolean asQuery, boolean encrypted) {
 
     String protocol = encrypted ? "https://" : "http://";
     String endPoint = protocol + (asQuery ?
@@ -360,9 +418,9 @@ public class MasterHostResolver {
       return jmxBeans.get("beans").get(0).get(attributeName);
     } catch (Exception e) {
       if (LOG.isDebugEnabled()) {
-        LOG.info("Could not load JMX from {}/{} from {}", beanName, attributeName, hostname, e);
+        LOG.debug("Could not load JMX from {}/{} from {}", beanName, attributeName, hostname, e);
       } else {
-        LOG.info("Could not load JMX from {}/{} from {}", beanName, attributeName, hostname);
+        LOG.debug("Could not load JMX from {}/{} from {}", beanName, attributeName, hostname);
       }
     }
 

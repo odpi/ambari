@@ -20,16 +20,12 @@ var App = require('app');
 require('views/common/quick_view_link_view');
 require('models/host_component');
 require('models/stack_service_component');
-var modelSetup = require('test/init_model_test');
+App.auth = ["AMBARI.ADD_DELETE_CLUSTERS", "AMBARI.ASSIGN_ROLES", "AMBARI.EDIT_STACK_REPOS", "AMBARI.MANAGE_GROUPS", "AMBARI.MANAGE_STACK_VERSIONS", "AMBARI.MANAGE_USERS", "AMBARI.MANAGE_VIEWS", "AMBARI.RENAME_CLUSTER", "SERVICE.SET_SERVICE_USERS_GROUPS", "CLUSTER.TOGGLE_ALERTS", "CLUSTER.TOGGLE_KERBEROS", "CLUSTER.UPGRADE_DOWNGRADE_STACK", "CLUSTER.VIEW_ALERTS", "CLUSTER.VIEW_CONFIGS", "CLUSTER.VIEW_METRICS", "CLUSTER.VIEW_STACK_DETAILS", "CLUSTER.VIEW_STATUS_INFO", "HOST.ADD_DELETE_COMPONENTS", "HOST.ADD_DELETE_HOSTS", "HOST.TOGGLE_MAINTENANCE", "HOST.VIEW_CONFIGS", "HOST.VIEW_METRICS", "HOST.VIEW_STATUS_INFO", "SERVICE.ADD_DELETE_SERVICES", "SERVICE.COMPARE_CONFIGS", "SERVICE.DECOMMISSION_RECOMMISSION", "SERVICE.ENABLE_HA", "SERVICE.MANAGE_CONFIG_GROUPS", "SERVICE.MODIFY_CONFIGS", "SERVICE.MOVE", "SERVICE.RUN_CUSTOM_COMMAND", "SERVICE.RUN_SERVICE_CHECK", "SERVICE.START_STOP", "SERVICE.TOGGLE_ALERTS", "SERVICE.TOGGLE_MAINTENANCE", "SERVICE.VIEW_ALERTS", "SERVICE.VIEW_CONFIGS", "SERVICE.VIEW_METRICS", "SERVICE.VIEW_STATUS_INFO", "VIEW.USE"];
 
 describe('App', function () {
 
   describe('#stackVersionURL', function () {
 
-    App.QuickViewLinks.reopen({
-      loadTags: function () {
-      }
-    });
     App.set('defaultStackVersion', "HDP-1.2.2");
     App.set('currentStackVersion', "HDP-1.2.2");
 
@@ -106,12 +102,22 @@ describe('App', function () {
     ];
 
     testCases.forEach(function (test) {
-      it(test.title, function () {
-        sinon.stub(App.Service, 'find', function () {
-          return test.service;
+      describe(test.title, function () {
+
+        beforeEach(function () {
+          sinon.stub(App.Service, 'find', function () {
+            return test.service;
+          });
         });
-        expect(App.get('falconServerURL')).to.equal(test.result);
-        App.Service.find.restore();
+
+        afterEach(function () {
+          App.Service.find.restore();
+        });
+
+        it('App.falconServerURL is ' + test.result, function () {
+          expect(App.get('falconServerURL')).to.equal(test.result);
+        });
+
       });
     });
   });
@@ -153,29 +159,21 @@ describe('App', function () {
   describe('#isHaEnabled when HDFS is installed:', function () {
 
     beforeEach(function () {
-      sinon.stub(App.Service, 'find', function () {
-        return [
-          {
-            id: 'HDFS',
-            serviceName: 'HDFS'
-          }
-        ];
-      });
+      sinon.stub(App.Service, 'find').returns(Em.Object.create({'isLoaded': true}));
+      this.mock = sinon.stub(App.HostComponent, 'find');
     });
-
     afterEach(function () {
       App.Service.find.restore();
+      this.mock.restore();
     });
 
     it('if hadoop stack version higher than 2 then isHaEnabled should be true', function () {
+      this.mock.returns([]);
       App.propertyDidChange('isHaEnabled');
       expect(App.get('isHaEnabled')).to.equal(true);
     });
     it('if cluster has SECONDARY_NAMENODE then isHaEnabled should be false', function () {
-      App.store.load(App.HostComponent, {
-        id: 'SECONDARY_NAMENODE',
-        component_name: 'SECONDARY_NAMENODE'
-      });
+      this.mock.returns([Em.Object.create({componentName: 'SECONDARY_NAMENODE'})]);
       App.propertyDidChange('isHaEnabled');
       expect(App.get('isHaEnabled')).to.equal(false);
     });
@@ -184,16 +182,8 @@ describe('App', function () {
   describe('#isHaEnabled when HDFS is not installed:', function () {
 
     beforeEach(function () {
-      sinon.stub(App.Service, 'find', function () {
-        return [
-          {
-            id: 'ZOOKEEPER',
-            serviceName: 'ZOOKEEPER'
-          }
-        ];
-      });
+      sinon.stub(App.Service, 'find').returns(Em.Object.create({'isLoaded': false}));
     });
-
     afterEach(function () {
       App.Service.find.restore();
     });
@@ -238,19 +228,42 @@ describe('App', function () {
       })
     ];
 
-    it('distribute services by categories', function () {
+    beforeEach(function () {
       sinon.stub(App.StackService, 'find', function () {
         return stackServices;
       });
+    });
 
-      expect(App.get('services.all')).to.eql(['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7']);
-      expect(App.get('services.clientOnly')).to.eql(['S1']);
-      expect(App.get('services.hasClient')).to.eql(['S2']);
-      expect(App.get('services.hasMaster')).to.eql(['S3']);
-      expect(App.get('services.hasSlave')).to.eql(['S4']);
-      expect(App.get('services.noConfigTypes')).to.eql(['S5']);
-      expect(App.get('services.monitoring')).to.eql(['S6']);
+    afterEach(function () {
       App.StackService.find.restore();
+    });
+
+    it('App.services.all', function () {
+      expect(App.get('services.all')).to.eql(['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7']);
+    });
+
+    it('App.services.clientOnly', function () {
+      expect(App.get('services.clientOnly')).to.eql(['S1']);
+    });
+
+    it('App.services.hasClient', function () {
+      expect(App.get('services.hasClient')).to.eql(['S2']);
+    });
+
+    it('App.services.hasMaster', function () {
+      expect(App.get('services.hasMaster')).to.eql(['S3']);
+    });
+
+    it('App.services.hasSlave', function () {
+      expect(App.get('services.hasSlave')).to.eql(['S4']);
+    });
+
+    it('App.services.noConfigTypes', function () {
+      expect(App.get('services.noConfigTypes')).to.eql(['S5']);
+    });
+
+    it('App.services.monitoring', function () {
+      expect(App.get('services.monitoring')).to.eql(['S6']);
     });
   });
 
@@ -398,137 +411,6 @@ describe('App', function () {
     })
   });
 
-  describe("#isAccessible()", function() {
-    it("Upgrade running, element should be blocked", function() {
-      App.set('upgradeState', "IN_PROGRESS");
-      App.set('isAdmin', true);
-      expect(App.isAccessible('ADMIN')).to.be.false;
-    });
-    it("Upgrade running, upgrade element should not be blocked", function() {
-      App.set('upgradeState', "IN_PROGRESS");
-      App.set('isAdmin', true);
-      expect(App.isAccessible('upgrade_ADMIN')).to.be.true;
-    });
-    it("Upgrade running, upgrade element should not be blocked", function() {
-      App.set('upgradeState', "IN_PROGRESS");
-      App.set('isAdmin', true);
-      App.set('supports.opsDuringRollingUpgrade', true);
-      expect(App.isAccessible('ADMIN')).to.be.true;
-      App.set('supports.opsDuringRollingUpgrade', false);
-    });
-    it("ADMIN type, isAdmin true", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isAdmin', true);
-      expect(App.isAccessible('ADMIN')).to.be.true;
-    });
-    it("ADMIN type, isAdmin false", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isAdmin', false);
-      expect(App.isAccessible('ADMIN')).to.be.false;
-    });
-    it("MANAGER type, isOperator false", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isAdmin', true);
-      App.set('isOperator', false);
-      expect(App.isAccessible('MANAGER')).to.be.true;
-    });
-    it("MANAGER type, isAdmin false", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isAdmin', false);
-      App.set('isOperator', true);
-      expect(App.isAccessible('MANAGER')).to.be.true;
-    });
-    it("MANAGER type, isAdmin and isOperator false", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isAdmin', false);
-      App.set('isOperator', false);
-      expect(App.isAccessible('MANAGER')).to.be.false;
-    });
-    it("OPERATOR type, isOperator false", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isOperator', false);
-      expect(App.isAccessible('OPERATOR')).to.be.false;
-    });
-    it("OPERATOR type, isOperator false", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isOperator', true);
-      expect(App.isAccessible('OPERATOR')).to.be.true;
-    });
-    it("ONLY_ADMIN type, isAdmin false", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isAdmin', false);
-      expect(App.isAccessible('ONLY_ADMIN')).to.be.false;
-    });
-    it("ONLY_ADMIN type, isAdmin true, isOperator false", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isAdmin', true);
-      App.set('isOperator', false);
-      expect(App.isAccessible('ONLY_ADMIN')).to.be.true;
-    });
-    it("ONLY_ADMIN type, isAdmin true, isOperator true", function() {
-      App.set('upgradeState', "INIT");
-      App.set('isAdmin', true);
-      App.set('isOperator', true);
-      expect(App.isAccessible('ONLY_ADMIN')).to.be.false;
-    });
-    it("unknown type", function() {
-      App.set('upgradeState', "INIT");
-      expect(App.isAccessible('')).to.be.false;
-    });
-  });
-
-  describe('#isHadoop20Stack', function () {
-
-    Em.A([
-      {
-        currentStackVersion: 'HDP-2.2',
-        e: false
-      },
-        {
-          currentStackVersion: 'HDP-2.1',
-          e: false
-        },
-        {
-          currentStackVersion: 'HDP-2.0',
-          e: true
-        },
-        {
-          currentStackVersion: 'HDP-2.0.0',
-          e: true
-        },
-        {
-          currentStackVersion: 'HDP-2.0.6',
-          e: true
-        },
-        {
-          currentStackVersion: 'HDPLocal-2.2',
-          e: false
-        },
-        {
-          currentStackVersion: 'HDPLocal-2.1',
-          e: false
-        },
-        {
-          currentStackVersion: 'HDPLocal-2.0',
-          e: true
-        },
-        {
-          currentStackVersion: 'HDPLocal-2.0.0',
-          e: true
-        },
-        {
-          currentStackVersion: 'HDPLocal-2.0.6',
-          e: true
-        }
-    ]).forEach(function (test) {
-        it('for ' + test.currentStackVersion + ' isHadoop20Stack = ' + test.e.toString(), function () {
-          App.set('currentStackVersion', test.currentStackVersion);
-          expect(App.get('isHadoop20Stack')).to.equal(test.e);
-        });
-      });
-
-  });
-
   describe('#upgradeIsRunning', function () {
 
     Em.A([
@@ -556,30 +438,80 @@ describe('App', function () {
 
   });
 
+  describe('#upgradeSuspended', function () {
+    var cases = [
+      {
+        upgradeState: 'INIT',
+        isSuspended: false,
+        upgradeSuspended: false
+      },
+      {
+        upgradeState: 'ABORTED',
+        isSuspended: false,
+        upgradeSuspended: false
+      },
+      {
+        upgradeState: 'ABORTED',
+        isSuspended: true,
+        upgradeSuspended: true
+      }
+    ];
+
+    beforeEach(function() {
+      this.mock = sinon.stub(App.router, 'get');
+    });
+    afterEach(function() {
+      this.mock.restore();
+    });
+
+    cases.forEach(function (test) {
+      it(test.upgradeState + ", isSuspended=" + test.isSuspended, function () {
+        App.set('upgradeState', test.upgradeState);
+        this.mock.returns(test.isSuspended);
+        App.propertyDidChange('upgradeSuspended');
+        expect(App.get('upgradeSuspended')).to.equal(test.upgradeSuspended);
+      });
+    });
+  });
+
   describe('#upgradeAborted', function () {
 
     var cases = [
       {
         upgradeState: 'INIT',
+        isSuspended: false,
         upgradeAborted: false
       },
       {
         upgradeState: 'ABORTED',
+        isSuspended: true,
+        upgradeAborted: false
+      },
+      {
+        upgradeState: 'ABORTED',
+        isSuspended: false,
         upgradeAborted: true
       }
     ];
 
-    cases.forEach(function (item) {
-      it(item.upgradeState, function () {
-        App.set('upgradeState', item.upgradeState);
-        expect(App.get('upgradeAborted')).to.equal(item.upgradeAborted);
-      });
+    beforeEach(function() {
+      this.mock = sinon.stub(App.router, 'get');
+    });
+    afterEach(function() {
+      this.mock.restore();
     });
 
+    cases.forEach(function (test) {
+      it(test.upgradeState + ", isSuspended=" + test.isSuspended, function () {
+        App.set('upgradeState', test.upgradeState);
+        this.mock.returns(test.isSuspended);
+        App.propertyDidChange('upgradeAborted');
+        expect(App.get('upgradeAborted')).to.equal(test.upgradeAborted);
+      });
+    });
   });
 
   describe('#wizardIsNotFinished', function () {
-
     var cases = [
       {
         upgradeState: 'INIT',
@@ -606,10 +538,52 @@ describe('App', function () {
     cases.forEach(function (item) {
       it(item.upgradeState, function () {
         App.set('upgradeState', item.upgradeState);
+        App.propertyDidChange('wizardIsNotFinished');
         expect(App.get('wizardIsNotFinished')).to.equal(item.wizardIsNotFinished);
       });
     });
-
   });
 
+  describe("#upgradeHolding", function () {
+    var cases = [
+      {
+        upgradeState: 'INIT',
+        upgradeAborted: false,
+        upgradeHolding: false
+      },
+      {
+        upgradeState: 'HOLDING',
+        upgradeAborted: false,
+        upgradeHolding: true
+      },
+      {
+        upgradeState: 'HOLDING_FAILED',
+        upgradeAborted: false,
+        upgradeHolding: true
+      },
+      {
+        upgradeState: 'INIT',
+        upgradeAborted: true,
+        upgradeHolding: true
+      }
+    ];
+
+    beforeEach(function() {
+      this.mock = sinon.stub(App.router, 'get');
+    });
+    afterEach(function() {
+      this.mock.restore();
+    });
+
+    cases.forEach(function (test) {
+      it(test.upgradeState + ", upgradeAborted=" + test.upgradeAborted, function () {
+        App.reopen({
+          upgradeAborted: test.upgradeAborted,
+          upgradeState: test.upgradeState
+        });
+        App.propertyDidChange('upgradeHolding');
+        expect(App.get('upgradeHolding')).to.equal(test.upgradeHolding);
+      });
+    });
+  });
 });

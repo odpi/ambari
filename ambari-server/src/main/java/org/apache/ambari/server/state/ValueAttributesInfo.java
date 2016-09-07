@@ -38,10 +38,15 @@ public class ValueAttributesInfo {
   private String delete;
   private Boolean visible;
   private Boolean overridable;
+  private String copy;
 
   @XmlElement(name = "empty-value-valid")
   @JsonProperty("empty_value_valid")
   private Boolean emptyValueValid;
+
+  @XmlElement(name = "ui-only-property")
+  @JsonProperty("ui_only_property")
+  private Boolean uiOnlyProperty;
 
   @XmlElement(name = "read-only")
   @JsonProperty("read_only")
@@ -63,12 +68,23 @@ public class ValueAttributesInfo {
   @XmlElements(@XmlElement(name = "entry"))
   private Collection<ValueEntryInfo> entries;
 
+  @XmlElement(name = "hidden")
+  private String hidden;
+
   @XmlElement(name = "entries_editable")
   private Boolean entriesEditable;
 
   @XmlElement(name = "selection-cardinality")
   @JsonProperty("selection_cardinality")
   private String selectionCardinality;
+
+  @XmlElement(name = "property-file-name")
+  @JsonProperty("property-file-name")
+  private String propertyFileName;
+
+  @XmlElement(name = "property-file-type")
+  @JsonProperty("property-file-type")
+  private String propertyFileType;
 
   public ValueAttributesInfo() {
 
@@ -114,6 +130,14 @@ public class ValueAttributesInfo {
     this.entries = entries;
   }
 
+  public String getHidden() {
+    return hidden;
+  }
+
+  public void setHidden(String hidden) {
+    this.hidden = hidden;
+  }
+
   public Boolean getEntriesEditable() {
     return entriesEditable;
   }
@@ -128,6 +152,22 @@ public class ValueAttributesInfo {
 
   public void setSelectionCardinality(String selectionCardinality) {
     this.selectionCardinality = selectionCardinality;
+  }
+
+  public String getPropertyFileName() {
+    return propertyFileName;
+  }
+
+  public void setPropertyFileName(String propertyFileName) {
+    this.propertyFileName = propertyFileName;
+  }
+
+  public String getPropertyFileType() {
+    return propertyFileType;
+  }
+
+  public void setPropertyFileType(String propertyFileType) {
+    this.propertyFileType = propertyFileType;
   }
 
   public String getIncrementStep() {
@@ -194,6 +234,22 @@ public class ValueAttributesInfo {
     this.showPropertyName = isPropertyNameVisible;
   }
 
+  public Boolean getUiOnlyProperty() {
+    return uiOnlyProperty;
+  }
+
+  public void setUiOnlyProperty(Boolean isUiOnlyProperty) {
+    this.uiOnlyProperty = isUiOnlyProperty;
+  }
+
+  public String getCopy() {
+    return copy;
+  }
+
+  public void setCopy(String copy) {
+    this.copy = copy;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -214,11 +270,21 @@ public class ValueAttributesInfo {
       return false;
     if (overridable != null ? !overridable.equals(that.overridable) : that.overridable != null)
       return false;
+    if (hidden != null ? !hidden.equals(that.overridable) : that.hidden != null)
+      return false;
     if (showPropertyName != null ? !showPropertyName.equals(that.showPropertyName) : that.showPropertyName != null)
+      return false;
+    if (uiOnlyProperty != null ? !uiOnlyProperty.equals(that.uiOnlyProperty) : that.uiOnlyProperty != null)
+      return false;
+    if (copy != null ? !copy.equals(that.copy) : that.copy != null)
       return false;
     if (maximum != null ? !maximum.equals(that.maximum) : that.maximum != null) return false;
     if (minimum != null ? !minimum.equals(that.minimum) : that.minimum != null) return false;
     if (selectionCardinality != null ? !selectionCardinality.equals(that.selectionCardinality) : that.selectionCardinality != null)
+      return false;
+    if (propertyFileName != null ? !propertyFileName.equals(that.propertyFileName) : that.propertyFileName != null)
+      return false;
+    if (propertyFileType != null ? !propertyFileType.equals(that.propertyFileType) : that.propertyFileType != null)
       return false;
     if (type != null ? !type.equals(that.type) : that.type != null) return false;
     if (unit != null ? !unit.equals(that.unit) : that.unit != null) return false;
@@ -231,6 +297,7 @@ public class ValueAttributesInfo {
   @Override
   public int hashCode() {
     int result = type != null ? type.hashCode() : 0;
+    result = 31 * result + (hidden != null ? hidden.hashCode() : 0);
     result = 31 * result + (maximum != null ? maximum.hashCode() : 0);
     result = 31 * result + (minimum != null ? minimum.hashCode() : 0);
     result = 31 * result + (unit != null ? unit.hashCode() : 0);
@@ -238,6 +305,8 @@ public class ValueAttributesInfo {
     result = 31 * result + (entries != null ? entries.hashCode() : 0);
     result = 31 * result + (entriesEditable != null ? entriesEditable.hashCode() : 0);
     result = 31 * result + (selectionCardinality != null ? selectionCardinality.hashCode() : 0);
+    result = 31 * result + (propertyFileName != null ? propertyFileName.hashCode() : 0);
+    result = 31 * result + (propertyFileType != null ? propertyFileType.hashCode() : 0);
     result = 31 * result + (incrementStep != null ? incrementStep.hashCode() : 0);
     result = 31 * result + (emptyValueValid != null ? emptyValueValid.hashCode() : 0);
     result = 31 * result + (visible != null ? visible.hashCode() : 0);
@@ -245,6 +314,8 @@ public class ValueAttributesInfo {
     result = 31 * result + (editableOnlyAtInstall != null ? editableOnlyAtInstall.hashCode() : 0);
     result = 31 * result + (overridable != null ? overridable.hashCode() : 0);
     result = 31 * result + (showPropertyName != null ? showPropertyName.hashCode() : 0);
+    result = 31 * result + (uiOnlyProperty != null ? uiOnlyProperty.hashCode() : 0);
+    result = 31 * result + (copy != null ? copy.hashCode() : 0);
     return result;
   }
 
@@ -263,9 +334,13 @@ public class ValueAttributesInfo {
       ", editableOnlyAtInstall='" + editableOnlyAtInstall + '\'' +
       ", overridable='" + overridable + '\'' +
       ", showPropertyName='" + showPropertyName + '\'' +
+      ", uiOnlyProperty='" + uiOnlyProperty + '\'' +
       ", incrementStep='" + incrementStep + '\'' +
       ", entriesEditable=" + entriesEditable +
       ", selectionCardinality='" + selectionCardinality + '\'' +
+      ", propertyFileName='" + propertyFileName + '\'' +
+      ", propertyFileType='" + propertyFileType + '\'' +
+      ", copy='" + copy + '\'' +
       '}';
   }
 }

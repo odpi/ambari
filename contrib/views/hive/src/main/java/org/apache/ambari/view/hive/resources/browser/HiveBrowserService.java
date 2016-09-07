@@ -22,7 +22,7 @@ import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.ViewResourceHandler;
 import org.apache.ambari.view.hive.client.ColumnDescription;
 import org.apache.ambari.view.hive.client.Cursor;
-import org.apache.ambari.view.hive.client.IConnectionFactory;
+import org.apache.ambari.view.hive.client.UserLocalConnection;
 import org.apache.ambari.view.hive.resources.jobs.ResultsPaginationController;
 import org.apache.ambari.view.hive.utils.BadRequestFormattedException;
 import org.apache.ambari.view.hive.utils.ServiceFormattedException;
@@ -56,7 +56,7 @@ public class HiveBrowserService {
 
   private static final long EXPIRING_TIME = 10*60*1000;  // 10 minutes
   private static Map<String, Cursor> resultsCache;
-  private IConnectionFactory connectionFactory;
+  private UserLocalConnection connectionLocal = new UserLocalConnection();
 
   public static Map<String, Cursor> getResultsCache() {
     if (resultsCache == null) {
@@ -65,12 +65,6 @@ public class HiveBrowserService {
       resultsCache = Collections.synchronizedMap(resultsCacheExpiringMap);
     }
     return resultsCache;
-  }
-
-  private IConnectionFactory getConnectionFactory() {
-    if (connectionFactory == null)
-      connectionFactory = new SharedObjectsFactory(context);
-    return new SharedObjectsFactory(context);
   }
 
   /**
@@ -90,8 +84,8 @@ public class HiveBrowserService {
     String curl = null;
     try {
       JSONObject response = new JSONObject();
-      TSessionHandle session = getConnectionFactory().getHiveConnection().getOrCreateSessionByTag("DDL");
-      List<String> tables = getConnectionFactory().getHiveConnection().ddl().getDBList(session, like);
+      TSessionHandle session = connectionLocal.get(context).getOrCreateSessionByTag("DDL");
+      List<String> tables = connectionLocal.get(context).ddl().getDBList(session, like);
       response.put("databases", tables);
       return Response.ok(response).build();
     } catch (WebApplicationException ex) {
@@ -127,8 +121,8 @@ public class HiveBrowserService {
                   new Callable<Cursor>() {
                     @Override
                     public Cursor call() throws Exception {
-                      TSessionHandle session = getConnectionFactory().getHiveConnection().getOrCreateSessionByTag("DDL");
-                      return getConnectionFactory().getHiveConnection().ddl().getDBListCursor(session, finalLike);
+                      TSessionHandle session = connectionLocal.get(context).getOrCreateSessionByTag("DDL");
+                      return connectionLocal.get(context).ddl().getDBListCursor(session, finalLike);
                     }
                   }).build();
     } catch (WebApplicationException ex) {
@@ -158,8 +152,8 @@ public class HiveBrowserService {
     String curl = null;
     try {
       JSONObject response = new JSONObject();
-      TSessionHandle session = getConnectionFactory().getHiveConnection().getOrCreateSessionByTag("DDL");
-      List<String> tables = getConnectionFactory().getHiveConnection().ddl().getTableList(session, db, like);
+      TSessionHandle session = connectionLocal.get(context).getOrCreateSessionByTag("DDL");
+      List<String> tables = connectionLocal.get(context).ddl().getTableList(session, db, like);
       response.put("tables", tables);
       response.put("database", db);
       return Response.ok(response).build();
@@ -197,8 +191,8 @@ public class HiveBrowserService {
                   new Callable<Cursor>() {
                     @Override
                     public Cursor call() throws Exception {
-                      TSessionHandle session = getConnectionFactory().getHiveConnection().getOrCreateSessionByTag("DDL");
-                      Cursor cursor = getConnectionFactory().getHiveConnection().ddl().getTableListCursor(session, db, finalLike);
+                      TSessionHandle session = connectionLocal.get(context).getOrCreateSessionByTag("DDL");
+                      Cursor cursor = connectionLocal.get(context).ddl().getTableListCursor(session, db, finalLike);
                       cursor.selectColumns(requestedColumns);
                       return cursor;
                     }
@@ -227,8 +221,8 @@ public class HiveBrowserService {
     String curl = null;
     try {
       JSONObject response = new JSONObject();
-      TSessionHandle session = getConnectionFactory().getHiveConnection().getOrCreateSessionByTag("DDL");
-      List<ColumnDescription> columnDescriptions = getConnectionFactory().getHiveConnection().ddl()
+      TSessionHandle session = connectionLocal.get(context).getOrCreateSessionByTag("DDL");
+      List<ColumnDescription> columnDescriptions = connectionLocal.get(context).ddl()
           .getTableDescription(session, db, table, like, extendedTableDescription);
       response.put("columns", columnDescriptions);
       response.put("database", db);
@@ -264,8 +258,8 @@ public class HiveBrowserService {
               new Callable<Cursor>() {
                 @Override
                 public Cursor call() throws Exception {
-                  TSessionHandle session = getConnectionFactory().getHiveConnection().getOrCreateSessionByTag("DDL");
-                  Cursor cursor = getConnectionFactory().getHiveConnection().ddl().
+                  TSessionHandle session = connectionLocal.get(context).getOrCreateSessionByTag("DDL");
+                  Cursor cursor = connectionLocal.get(context).ddl().
                       getTableDescriptionCursor(session, db, table, like);
                   cursor.selectColumns(requestedColumns);
                   return cursor;

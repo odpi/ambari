@@ -58,6 +58,7 @@ import org.apache.ambari.server.orm.entities.AlertGroupEntity;
 import org.apache.ambari.server.orm.entities.AlertTargetEntity;
 import org.apache.ambari.server.orm.entities.ClusterEntity;
 import org.apache.ambari.server.orm.entities.ClusterServiceEntity;
+import org.apache.ambari.server.orm.entities.ClusterStateEntity;
 import org.apache.ambari.server.orm.entities.HostEntity;
 import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
 import org.apache.ambari.server.orm.entities.HostStateEntity;
@@ -71,6 +72,7 @@ import org.apache.ambari.server.orm.entities.ResourceTypeEntity;
 import org.apache.ambari.server.orm.entities.StackEntity;
 import org.apache.ambari.server.orm.entities.StageEntity;
 import org.apache.ambari.server.orm.entities.UserEntity;
+import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Host;
@@ -143,8 +145,8 @@ public class OrmTestHelper {
     StackEntity stackEntity = stackDAO.find("HDP", "2.2.0");
 
     ResourceTypeEntity resourceTypeEntity =  new ResourceTypeEntity();
-    resourceTypeEntity.setId(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
-    resourceTypeEntity.setName(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE_NAME);
+    resourceTypeEntity.setId(ResourceType.CLUSTER.getId());
+    resourceTypeEntity.setName(ResourceType.CLUSTER.name());
 
     ResourceEntity resourceEntity = new ResourceEntity();
     resourceEntity.setResourceType(resourceTypeEntity);
@@ -325,8 +327,8 @@ public class OrmTestHelper {
     ResourceTypeDAO resourceTypeDAO = injector.getInstance(ResourceTypeDAO.class);
 
     ResourceTypeEntity resourceTypeEntity =  new ResourceTypeEntity();
-    resourceTypeEntity.setId(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
-    resourceTypeEntity.setName(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE_NAME);
+    resourceTypeEntity.setId(ResourceType.CLUSTER.getId());
+    resourceTypeEntity.setName(ResourceType.CLUSTER.name());
     resourceTypeEntity = resourceTypeDAO.merge(resourceTypeEntity);
 
     ResourceEntity resourceEntity = new ResourceEntity();
@@ -345,6 +347,11 @@ public class OrmTestHelper {
     clusterEntity.setDesiredStack(stackEntity);
 
     clusterDAO.create(clusterEntity);
+
+    ClusterStateEntity clusterStateEntity = new ClusterStateEntity();
+    clusterStateEntity.setCurrentStack(stackEntity);
+    clusterStateEntity.setClusterEntity(clusterEntity);
+    getEntityManager().persist(clusterStateEntity);
 
     clusterEntity = clusterDAO.findByName(clusterEntity.getClusterName());
     assertNotNull(clusterEntity);
@@ -375,7 +382,7 @@ public class OrmTestHelper {
     cluster.setDesiredStackVersion(stackId);
     getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
     cluster.createClusterVersion(stackId,
-        stackId.getStackVersion(), "admin", RepositoryVersionState.UPGRADING);
+        stackId.getStackVersion(), "admin", RepositoryVersionState.INSTALLING);
     return cluster;
   }
 
@@ -414,7 +421,6 @@ public class OrmTestHelper {
       ServiceComponentHostFactory schFactory, String hostName) throws Exception {
     String serviceName = "HDFS";
     Service service = serviceFactory.createNew(cluster, serviceName);
-    cluster.addService(service);
     service.persist();
     service = cluster.getService(serviceName);
     assertNotNull(service);
@@ -460,7 +466,6 @@ public class OrmTestHelper {
       ServiceComponentHostFactory schFactory, String hostName) throws Exception {
     String serviceName = "YARN";
     Service service = serviceFactory.createNew(cluster, serviceName);
-    cluster.addService(service);
     service.persist();
     service = cluster.getService(serviceName);
     assertNotNull(service);
@@ -614,7 +619,7 @@ public class OrmTestHelper {
     if (repositoryVersion == null) {
       try {
         repositoryVersion = repositoryVersionDAO.create(stackEntity, version,
-            String.valueOf(System.currentTimeMillis()), "pack", "");
+            String.valueOf(System.currentTimeMillis()), "");
       } catch (Exception ex) {
         Assert.fail(MessageFormat.format("Unable to create Repo Version for Stack {0} and version {1}",
             stackEntity.getStackName() + "-" + stackEntity.getStackVersion(), version));

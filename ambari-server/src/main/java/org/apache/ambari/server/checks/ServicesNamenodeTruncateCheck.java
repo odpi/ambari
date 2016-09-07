@@ -18,21 +18,22 @@
 package org.apache.ambari.server.checks;
 
 import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.ServiceNotFoundException;
 import org.apache.ambari.server.controller.PrereqCheckRequest;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
 import org.apache.ambari.server.state.stack.PrerequisiteCheck;
-import org.apache.ambari.server.utils.VersionUtils;
 
 import com.google.inject.Singleton;
+
+import java.util.Arrays;
+import java.util.Map;
 
 /**
  * Checks that namenode high availability is enabled.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.NAMENODE_HA, order = 1.1f)
+@UpgradeCheck(group = UpgradeCheckGroup.NAMENODE_HA, order = 16.2f)
 public class ServicesNamenodeTruncateCheck extends AbstractCheckDescriptor {
 
   /**
@@ -44,14 +45,7 @@ public class ServicesNamenodeTruncateCheck extends AbstractCheckDescriptor {
 
   @Override
   public boolean isApplicable(PrereqCheckRequest request) throws AmbariException {
-    if (!super.isApplicable(request)) {
-      return false;
-    }
-
-    final Cluster cluster = clustersProvider.get().getCluster(request.getClusterName());
-    try {
-      cluster.getService("HDFS");
-    } catch (ServiceNotFoundException ex) {
+    if (!super.isApplicable(request, Arrays.asList("HDFS"), true)) {
       return false;
     }
 
@@ -74,16 +68,8 @@ public class ServicesNamenodeTruncateCheck extends AbstractCheckDescriptor {
     if (Boolean.valueOf(truncateEnabled)) {
       prerequisiteCheck.getFailedOn().add("HDFS");
       PrereqCheckStatus checkStatus = PrereqCheckStatus.FAIL;
-      if ("HDP".equals(request.getSourceStackId().getStackName())) {
-        if (VersionUtils.compareVersions(request.getSourceStackId().getStackVersion(), "2.3.0.0") >= 0
-            && VersionUtils.compareVersions(request.getTargetStackId().getStackVersion(), "2.3.0.0") >= 0
-            && VersionUtils.compareVersions(request.getSourceStackId().getStackVersion(), request.getTargetStackId().getStackVersion()) < 0) {
-          checkStatus = PrereqCheckStatus.PASS;
-        }
-      }
       prerequisiteCheck.setStatus(checkStatus);
       prerequisiteCheck.setFailReason(getFailReason(prerequisiteCheck, request));
-
     }
   }
 }

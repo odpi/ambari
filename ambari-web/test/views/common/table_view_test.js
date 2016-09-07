@@ -24,23 +24,33 @@ require('mixins');
 require('mixins/common/userPref');
 require('views/common/table_view');
 
+function getView() {
+  return App.TableView.create();
+}
+
 describe('App.TableView', function () {
 
   var view;
 
   beforeEach(function() {
     App.db.cleanUp();
+    sinon.stub(App.db, 'setFilterConditions', Em.K);
   });
 
   afterEach(function() {
     App.db.cleanUp();
+    App.db.setFilterConditions.restore();
   });
+
+  App.TestAliases.testAsComputedAlias(getView(), 'filteredCount', 'filteredContent.length', 'number');
+
+  App.TestAliases.testAsComputedAlias(getView(), 'totalCount', 'content.length', 'number');
 
   describe('#init', function() {
 
     it('should set filterConditions on instance', function() {
       var tableView = App.TableView.create();
-      expect(tableView.get('filterConditions') === App.TableView.prototype.filterConditions).to.be.false;
+      expect(tableView.get('filterConditions')).to.be.not.equal(App.TableView.prototype.filterConditions);
     });
 
   });

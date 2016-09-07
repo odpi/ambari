@@ -72,7 +72,7 @@ public class ThemeModule extends BaseModule<ThemeModule, ThemeInfo> implements V
       } catch (IOException e) {
         LOG.error("Unable to parse theme file ", e);
         setValid(false);
-        setErrors("Unable to parse theme file " + themeFile);
+        addError("Unable to parse theme file " + themeFile);
       }
     }
   }
@@ -82,7 +82,8 @@ public class ThemeModule extends BaseModule<ThemeModule, ThemeInfo> implements V
   }
 
   @Override
-  public void resolve(ThemeModule parent, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices) throws AmbariException {
+  public void resolve(ThemeModule parent, Map<String, StackModule> allStacks,
+		  Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions) throws AmbariException {
     ThemeInfo parentModuleInfo = parent.getModuleInfo();
 
     if (parent.getModuleInfo() != null && !moduleInfo.isDeleted()) {
@@ -122,13 +123,13 @@ public class ThemeModule extends BaseModule<ThemeModule, ThemeInfo> implements V
   }
 
   @Override
-  public void setErrors(String error) {
+  public void addError(String error) {
     errors.add(error);
   }
 
   @Override
-  public void setErrors(Collection<String> error) {
-    errors.addAll(error);
+  public void addErrors(Collection<String> errors) {
+    errors.addAll(errors);
   }
 
   @Override

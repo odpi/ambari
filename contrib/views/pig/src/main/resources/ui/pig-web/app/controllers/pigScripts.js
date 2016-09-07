@@ -24,37 +24,14 @@ App.PigScriptsController = Em.ArrayController.extend(App.Pagination,{
   needs:['pig'],
   actions:{
     createScript:function () {
-      var newScript = this.store.createRecord('script');
-      return this.send('openModal', 'createScript', newScript);
+      return this.send('openModal', 'createScript', this.store.createRecord('script'));
     },
     confirmcreate:function (script,filePath) {
-      var _this = this;
-      var bnd = Em.run.bind;
-
       if (filePath) {
-        try {
-          var file = this.store.createRecord('file',{
-            id:filePath,
-            fileContent:''
-          });
-        } catch (e) {
-          return this.createScriptError(script,e);
-        }
-        return file.save()
-          .then(function(file){
-              script.set('pigScript',file);
-              script.save().then(bnd(_this,_this.createScriptSuccess),bnd(_this,_this.createScriptError,script));
-            },
-            function () {
-              file.deleteRecord();
-              _this.store.find('file', filePath).then(function(file) {
-                _this.send('showAlert', {message:Em.I18n.t('scripts.alert.file_exist_error'),status:'success'});
-                script.set('pigScript',file);
-                script.save().then(bnd(_this,_this.createScriptSuccess),bnd(_this,_this.createScriptError,script));
-              },bnd(_this,_this.createScriptError,script));
-          });
+        return Em.RSVP.Promise.all([Em.RSVP.resolve(script), this.getOrCreateFile(filePath,script)])
+          .then(this.setFileAndSave.bind(this), Em.run.bind(this,'createScriptError', script));
       } else {
-          script.save().then(bnd(this,this.createScriptSuccess),bnd(this,this.createScriptError,script));
+        script.save().then(this.createScriptSuccess.bind(this), Em.run.bind(this,'createScriptError',script));
       }
     },
     deletescript:function (script) {
@@ -65,17 +42,64 @@ App.PigScriptsController = Em.ArrayController.extend(App.Pagination,{
     }
   },
 
-  createScriptSuccess:function (script,s) {
-    this.send('showAlert', { message:Em.I18n.t('scripts.alert.script_created',{title:script.get('title')}), status:'success' });
-    this.transitionToRoute('script.edit',script);
+  getOrCreateFile: function (path,script) {
+    var store = this.get('store');
+    var createNewFilePath = function(path,title){
+       var cleanedTitle = title.replace("[^a-zA-Z0-9 ]+", "").replace(" ", "_").toLowerCase();
+       var formattedDate = moment().format("YYYY-MM-DD_hh-mm-ss_SSSS");
+       var finalScriptName = cleanedTitle + "-" + formattedDate + ".pig";
+      return path + "/" + finalScriptName;
+    };
+    return new Em.RSVP.Promise(function (resolve, reject) {
+      store.find('file',path).then(function (file) {
+          resolve(file);
+        }, function (error) {
+          if (error.status === 404) {
+            store.recordForId('file', path).unloadRecord();
+            var newPath = createNewFilePath(path,script.get('title'));
+            var newFile = store.createRecord('file',{
+              id:newPath,
+              fileContent:''
+            });
+
+            newFile.save().then(function (file) {
+              resolve(file);
+            }, function (error) {
+              reject(error);
+            });
+          } else {
+            reject(error);
+          }
+        });
+    });
   },
-  createScriptError:function (script,error) {
-    var trace = null;
-    trace = (error.responseJSON)?error.responseJSON.trace:error.message;
 
+
+
+  setFileAndSave: function (data) {
+    var script = data.objectAt(0),
+        file = data.objectAt(1);
+
+    var pr = script.set('pigScript',file).save();
+
+    return pr.then(this.createScriptSuccess.bind(this),Em.run.bind(this,'createScriptError',script));
+  },
+
+  createScriptSuccess:function (script) {
+    this.transitionToRoute('script.edit',script);
+    this.send('showAlert', {
+      'message': Em.I18n.t('scripts.alert.script_created', { 'title' : script.get('title') } ),
+      'status': 'success'
+    });
+  },
+
+  createScriptError: function (script, error) {
     script.deleteRecord();
-
-    this.send('showAlert', {message:Em.I18n.t('scripts.alert.create_failed'),status:'error',trace:trace});
+    this.send('showAlert', {
+      'message': Em.I18n.t('scripts.alert.create_failed'),
+      'status': 'error',
+      'trace': (error.responseJSON) ? error.responseJSON.trace : error.message
+    });
   },
 
   jobs:function () {

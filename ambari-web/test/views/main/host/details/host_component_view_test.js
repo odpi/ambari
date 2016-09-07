@@ -22,34 +22,25 @@ require('views/main/host/details/host_component_view');
 
 var hostComponentView;
 
+function getView() {
+  return App.HostComponentView.create({
+    startBlinking: function(){},
+    doBlinking: function(){},
+    getDesiredAdminState: function(){return $.ajax({});},
+    content: Em.Object.create({
+      componentName: 'component'
+    }),
+    hostComponent: Em.Object.create()
+  });
+}
+
 describe('App.HostComponentView', function() {
 
   beforeEach(function() {
-    sinon.stub(App.router, 'get', function (k) {
-      if (k === 'mainHostDetailsController.content') return Em.Object.create({
-        hostComponents: [
-          {
-            componentName: 'component'
-          }
-        ]
-      });
-      return Em.get(App.router, k);
-    });
-    hostComponentView = App.HostComponentView.create({
-      componentCounter: 1,
-      startBlinking: function(){},
-      doBlinking: function(){},
-      getDesiredAdminState: function(){return $.ajax({});},
-      content: Em.Object.create({
-        componentName: 'component'
-      }),
-      hostComponent: Em.Object.create()
-    });
+    hostComponentView = getView();
   });
 
-  afterEach(function () {
-    App.router.get.restore();
-  });
+  App.TestAliases.testAsComputedNotEqual(getView(), 'isRestartComponentDisabled', 'workStatus', App.HostComponentStatus.started);
 
   describe('#disabled', function() {
 
@@ -95,198 +86,73 @@ describe('App.HostComponentView', function() {
 
   });
 
-  describe('#isUpgradeFailed', function() {
+  App.TestAliases.testAsComputedEqual(getView(), 'isUpgradeFailed', 'workStatus', App.HostComponentStatus.upgrade_failed);
 
-    var tests = ['UPGRADE_FAILED'];
-    var testE = true;
-    var defaultE = false;
+  App.TestAliases.testAsComputedEqual(getView(), 'isInstallFailed', 'workStatus', App.HostComponentStatus.install_failed);
 
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isUpgradeFailed')).to.equal(e);
-      });
-    });
+  App.TestAliases.testAsComputedEqual(getView(), 'isStop', 'workStatus', App.HostComponentStatus.stopped);
 
-  });
+  App.TestAliases.testAsComputedEqual(getView(), 'isInstalling', 'workStatus', App.HostComponentStatus.installing);
 
-  describe('#isInstallFailed', function() {
+  App.TestAliases.testAsComputedEqual(getView(), 'isInit', 'workStatus', App.HostComponentStatus.init);
 
-    var tests = ['INSTALL_FAILED'];
-    var testE = true;
-    var defaultE = false;
+  App.TestAliases.testAsComputedExistsIn(getView(), 'isInProgress', 'workStatus', [App.HostComponentStatus.stopping, App.HostComponentStatus.starting]);
 
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isInstallFailed')).to.equal(e);
-      });
-    });
+  App.TestAliases.testAsComputedExistsIn(getView(), 'withoutActions', 'workStatus', [App.HostComponentStatus.starting, App.HostComponentStatus.stopping, App.HostComponentStatus.unknown, App.HostComponentStatus.disabled]);
 
-  });
+  App.TestAliases.testAsComputedExistsIn(getView(), 'isStart', 'workStatus', [App.HostComponentStatus.started, App.HostComponentStatus.starting]);
 
-  describe('#isStart', function() {
+  App.TestAliases.testAsComputedIfThenElse(getView(), 'noActionAvailable', 'withoutActions', 'hidden', '');
 
-    var tests = ['STARTED','STARTING'];
-    var testE = true;
-    var defaultE = false;
-
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isStart')).to.equal(e);
-      });
-    });
-
-  });
-
-  describe('#isStop', function() {
-
-    var tests = ['INSTALLED'];
-    var testE = true;
-    var defaultE = false;
-
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isStop')).to.equal(e);
-      });
-    });
-
-  });
-
-  describe('#isInstalling', function() {
-
-    var tests = ['INSTALLING'];
-    var testE = true;
-    var defaultE = false;
-
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isInstalling')).to.equal(e);
-      });
-    });
-
-  });
-
-  describe('#isInit', function() {
-
-    var tests = ['INIT'];
-    var testE = true;
-    var defaultE = false;
-
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isInit')).to.equal(e);
-      });
-    });
-
-  });
-
-  describe('#noActionAvailable', function() {
-
-    var tests = ['STARTING', 'STOPPING', 'UNKNOWN', 'DISABLED'];
-    var testE = 'hidden';
-    var defaultE = '';
-
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('noActionAvailable')).to.equal(e);
-      });
-    });
-
-  });
-
-  describe('#isActive', function() {
-
-    var tests = Em.A([
-      {passiveState: 'OFF', e: true},
-      {passiveState: 'ON', e: false},
-      {passiveState: 'IMPLIED', e: false}
-    ]);
-
-    tests.forEach(function(test) {
-      it(test.workStatus, function() {
-        hostComponentView.get('content').set('passiveState', test.passiveState);
-        expect(hostComponentView.get('isActive')).to.equal(test.e);
-      });
-    });
-
-  });
-
-  describe('#isRestartComponentDisabled', function() {
-
-    var tests = ['STARTED'];
-    var testE = false;
-    var defaultE = true;
-
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isRestartComponentDisabled')).to.equal(e);
-      });
-    });
-
-  });
+  App.TestAliases.testAsComputedEqual(getView(), 'isActive', 'content.passiveState', 'OFF');
 
   describe('#isDeleteComponentDisabled', function() {
-
+    var configs=[
+    {
+      properties: {
+        'hive_database': 'Existing MYSQL Database'
+      },
+      tag: 'version2',
+      type: 'hive-env'
+    }
+    ];
     beforeEach(function() {
-      sinon.stub(App.StackServiceComponent, 'find', function(component) {
-        var min = component == 'comp0' ? 0 : 1;
-        return Em.Object.create({minToInstall: min});
-      });
+      this.mock = sinon.stub(App.StackServiceComponent, 'find');
+      sinon.stub(App.HostComponent, 'getCount').returns(1);
     });
     afterEach(function() {
-      App.StackServiceComponent.find.restore();
-    });
-
-    var tests = ['INSTALLED', 'UNKNOWN', 'INSTALL_FAILED', 'UPGRADE_FAILED', 'INIT'];
-    var testE = false;
-    var defaultE = true;
-
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        App.store.load(App.StackServiceComponent, {
-          id: 1,
-          component_name: 'comp0'
-        });
-        hostComponentView.get('hostComponent').set('componentName', 'comp0');
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isDeleteComponentDisabled')).to.equal(e);
-      });
+      this.mock.restore();
+      App.HostComponent.getCount.restore();
     });
 
     it('delete is disabled because min cardinality 1', function() {
-      App.store.load(App.StackServiceComponent, {
-        id: 2,
-        component_name: 'comp1'
-      });
-      hostComponentView.get('hostComponent').set('componentName', 'comp1');
-      hostComponentView.get('hostComponent').set('workStatus', 'INSTALLED');
-      expect(hostComponentView.get('isDeleteComponentDisabled')).to.equal(true);
+      this.mock.returns(Em.Object.create({minToInstall: 1}));
+      hostComponentView.get('hostComponent').set('componentName', 'C1');
+      hostComponentView.propertyDidChange('isDeleteComponentDisabled');
+      expect(hostComponentView.get('isDeleteComponentDisabled')).to.be.true;
     });
 
-    it('delete is enabled because min cardinality 0', function() {
-      App.store.load(App.StackServiceComponent, {
-        id: 2,
-        component_name: 'comp0'
-      });
-      hostComponentView.get('hostComponent').set('componentName', 'comp0');
-      hostComponentView.get('hostComponent').set('workStatus', 'INSTALLED');
-      expect(hostComponentView.get('isDeleteComponentDisabled')).to.equal(false);
+    it('delete is disabled because min cardinality 0 and status INSTALLED', function() {
+      this.mock.returns(Em.Object.create({minToInstall: 0}));
+      hostComponentView.get('hostComponent').set('workStatus', 'INIT');
+      hostComponentView.propertyDidChange('isDeleteComponentDisabled');
+      expect(hostComponentView.get('isDeleteComponentDisabled')).to.be.false;
+    });
+
+    it('delete is enabled because min cardinality 0 and status STARTED', function() {
+      this.mock.returns(Em.Object.create({minToInstall: 0}));
+      hostComponentView.get('hostComponent').set('workStatus', 'STARTED');
+      hostComponentView.propertyDidChange('isDeleteComponentDisabled');
+      expect(hostComponentView.get('isDeleteComponentDisabled')).to.be.true;
+    });
+    
+    it('delete is enabled because mysql server is stopped and hive is using external database', function() {
+      App.db.setConfigs(configs);
+      this.mock.returns(Em.Object.create({minToInstall: 0}));
+      hostComponentView.get('hostComponent').set('componentName', 'MYSQL_SERVER');
+      hostComponentView.get('hostComponent').set('workStatus', 'STOPPED');
+      hostComponentView.propertyDidChange('isDeleteComponentDisabled');
+      expect(hostComponentView.get('isDeleteComponentDisabled')).to.be.true;
     });
   });
 
@@ -403,22 +269,6 @@ describe('App.HostComponentView', function() {
 
   });
 
-  describe('#isInProgress', function() {
-
-    var tests = ['STOPPING', 'STARTING'];
-    var testE = true;
-    var defaultE = false;
-
-    App.HostComponentStatus.getStatusesList().forEach(function(status) {
-      it(status, function() {
-        hostComponentView.get('hostComponent').set('workStatus', status);
-        var e = tests.contains(status) ? testE : defaultE;
-        expect(hostComponentView.get('isInProgress')).to.equal(e);
-      });
-    });
-
-  });
-
   describe('#statusIconClass', function() {
     var tests = Em.A([
       {s: 'health-status-started', e: App.healthIconClassGreen},
@@ -455,8 +305,20 @@ describe('App.HostComponentView', function() {
         return Em.Object.create({
           componentName: 'SLAVE_COMPONENT',
           isSlave: true,
-          customCommands: ['CUSTOM']
+          customCommands: ['SLAVE_CUSTOM_COMMAND']
         });
+      });
+     sinon.stub(App.HostComponentActionMap, 'getMap', function () {
+        return {
+          SLAVE_CUSTOM_COMMAND: {
+            customCommand: 'SLAVE_CUSTOM_COMMAND',
+            cssClass: 'icon-play-circle',
+            label: 'Custom Command',
+            context: 'Custom Command',
+            isHidden: false,
+            disabled: false
+          }
+        }
       });
     });
 
@@ -467,125 +329,7 @@ describe('App.HostComponentView', function() {
 
     after(function() {
       App.StackServiceComponent.find.restore();
-    });
-  });
-
-  describe('#masterCustomCommands', function() {
-    var content = [
-      {
-        componentName: 'MASTER_COMPONENT',
-        hostName: '01'
-      }
-    ];
-
-    beforeEach(function () {
-      sinon.stub(App.HostComponentActionMap, 'getMap', function () {
-        return {
-          REFRESHQUEUES: {
-            action: 'refreshYarnQueues',
-            customCommand: 'REFRESHQUEUES',
-            context : Em.I18n.t('services.service.actions.run.yarnRefreshQueues.context'),
-            label: Em.I18n.t('services.service.actions.run.yarnRefreshQueues.menu'),
-            cssClass: 'icon-refresh',
-            disabled: false
-          }
-        }
-      });
-    });
-
-
-    //two components, one running, active one is stopped
-    it('Should not get custom commands for master component if component not running', function() {
-      sinon.stub(App.StackServiceComponent, 'find', function() {
-        return Em.Object.create({
-          componentName: 'MASTER_COMPONENT',
-          isSlave: false,
-          isMaster: true,
-          isStart: false,
-          customCommands: ['DECOMMISSION', 'REFRESHQUEUES']
-        });
-      });
-
-      hostComponentView.set('componentCounter', 2);
-
-      sinon.stub(hostComponentView, 'runningComponentCounter', function () {
-        return 1;
-      });
-
-      hostComponentView.set('content', content);
-      expect(hostComponentView.get('customCommands')).to.have.length(0);
-    });
-
-    //two components, none running
-    it('Should get custom commands for master component when all components are stopped', function() {
-      sinon.stub(App.StackServiceComponent, 'find', function() {
-        return Em.Object.create({
-          componentName: 'MASTER_COMPONENT',
-          isSlave: false,
-          isMaster: true,
-          isStart: false,
-          customCommands: ['DECOMMISSION', 'REFRESHQUEUES']
-        });
-      });
-
-      hostComponentView.set('componentCounter', 2);
-
-      sinon.stub(hostComponentView, 'runningComponentCounter', function () {
-        return 0;
-      });
-
-      hostComponentView.set('content', content);
-      expect(hostComponentView.get('customCommands')).to.have.length(1);
-    });
-
-    //two components, two running, only commission and decommission custom commands
-    it('Should not show COMMISSION and DECOMMISSION on master', function() {
-      sinon.stub(App.StackServiceComponent, 'find', function() {
-        return Em.Object.create({
-          componentName: 'MASTER_COMPONENT',
-          isSlave: false,
-          isMaster: true,
-          isStart: false,
-          customCommands: ['DECOMMISSION', 'RECOMMISSION']
-        });
-      });
-
-      hostComponentView.set('componentCounter', 2);
-
-      sinon.stub(hostComponentView, 'runningComponentCounter', function () {
-        return 2;
-      });
-
-      hostComponentView.set('content', content);
-      expect(hostComponentView.get('customCommands')).to.have.length(0);
-    });
-
-    //one component, one running, cardinality 1
-    it('Should show custom command for cardinality 1', function() {
-      sinon.stub(App.StackServiceComponent, 'find', function() {
-        return Em.Object.create({
-          isSlave: false,
-          cardinality: '1',
-          isMaster: true,
-          isStart: true,
-          customCommands: ['DECOMMISSION', 'REFRESHQUEUES']
-        });
-      });
-
-      hostComponentView.set('componentCounter', 1);
-
-      sinon.stub(hostComponentView, 'runningComponentCounter', function () {
-        return 1;
-      });
-
-      hostComponentView.set('content', content);
-      expect(hostComponentView.get('customCommands')).to.have.length(1);
-    });
-
-    afterEach(function() {
       App.HostComponentActionMap.getMap.restore();
-      App.StackServiceComponent.find.restore();
-      hostComponentView.runningComponentCounter.restore();
     });
   });
 
@@ -617,41 +361,157 @@ describe('App.HostComponentView', function() {
 
     var tests = Em.A([
       {
-        msg: 'Non-slave component not present in `App.HostComponentActionMap.getMap()` should have a default valid label',
-        isSlave: false,
+        msg: 'Component not present in `App.HostComponentActionMap.getMap()` should have a default valid label',
         command: 'CUSTOM',
-        e: Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format('CUSTOM')
+        e: Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format('Custom')
       },
       {
-        msg: 'Non-slave component present in `App.HostComponentActionMap.getMap()` with no label should have a default valid label',
-        isSlave: false,
+        msg: 'Component present in `App.HostComponentActionMap.getMap()` with no label should have a default valid label',
         command: 'MASTER_CUSTOM_COMMAND',
-        e: Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format('MASTER_CUSTOM_COMMAND')
+        e: Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format('Master Custom Command')
       },
       {
-        msg: 'Non-slave component present in `App.HostComponentActionMap.getMap()` with label should have a custom valid label',
-        isSlave: false,
+        msg: 'Component present in `App.HostComponentActionMap.getMap()` with label should have a custom valid label',
         command: 'REFRESHQUEUES',
         e: Em.I18n.t('services.service.actions.run.yarnRefreshQueues.menu')
-      },
-      {
-        msg: 'Slave component not present in `App.HostComponentActionMap.getMap()` should have a default valid label',
-        isSlave: true,
-        command: 'CUSTOM',
-        e: Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format('CUSTOM')
-      },
-      {
-        msg: 'Slave component present in `App.HostComponentActionMap.getMap()` should have a default valid label',
-        isSlave: true,
-        command: 'REFRESHQUEUES',
-        e: Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format('REFRESHQUEUES')
       }
     ]);
 
     tests.forEach(function(test) {
       it(test.msg, function() {
-        expect(hostComponentView.getCustomCommandLabel(test.command, test.isSlave)).to.equal(test.e);
+        expect(hostComponentView.getCustomCommandLabel(test.command)).to.equal(test.e);
       })
     });
   });
+
+  describe("#isDeletableComponent", function() {
+    beforeEach(function(){
+      sinon.stub(App, 'get').returns(['C1']);
+    });
+    afterEach(function(){
+      App.get.restore();
+    });
+    it("component deletable", function() {
+      hostComponentView.set('content.componentName', 'C1');
+      hostComponentView.propertyDidChange('isDeletableComponent');
+      expect(hostComponentView.get('isDeletableComponent')).to.be.true;
+    });
+    it("component is not deletable", function() {
+      hostComponentView.set('content.componentName', 'C2');
+      hostComponentView.propertyDidChange('isDeletableComponent');
+      expect(hostComponentView.get('isDeletableComponent')).to.be.false;
+    });
+  });
+
+  describe("#isMoveComponentDisabled", function() {
+    beforeEach(function(){
+      sinon.stub(App.HostComponent, 'find').returns([
+        Em.Object.create({componentName: 'C1', hostName: 'host1'}),
+        Em.Object.create({componentName: 'C1', hostName: 'host2'}),
+        Em.Object.create({componentName: 'C2', hostName: 'host1'})
+      ]);
+    });
+    afterEach(function(){
+      App.HostComponent.find.restore();
+    });
+    it("component is not movable", function() {
+      App.set('allHostNames', ['host1', 'host2']);
+      hostComponentView.set('content.componentName', 'C1');
+      hostComponentView.propertyDidChange('isMoveComponentDisabled');
+      expect(hostComponentView.get('isMoveComponentDisabled')).to.be.true;
+    });
+    it("component movable", function() {
+      App.set('allHostNames', ['host1', 'host2']);
+      hostComponentView.set('content.componentName', 'C2');
+      hostComponentView.propertyDidChange('isMoveComponentDisabled');
+      expect(hostComponentView.get('isMoveComponentDisabled')).to.be.false;
+    });
+  });
+
+  describe("#runningComponentCounter()", function() {
+    beforeEach(function(){
+      sinon.stub(App.HostComponent, 'find').returns([
+        Em.Object.create({componentName: 'C1', workStatus: 'STARTED'}),
+        Em.Object.create({componentName: 'C2', workStatus: 'INSTALLED'})
+      ]);
+    });
+    afterEach(function(){
+      App.HostComponent.find.restore();
+    });
+    it("running components present", function() {
+      hostComponentView.set('content.componentName', 'C1');
+      expect(hostComponentView.runningComponentCounter()).to.equal(1);
+    });
+    it("running components absent", function() {
+      hostComponentView.set('content.componentName', 'C2');
+      expect(hostComponentView.runningComponentCounter()).to.equal(0);
+    });
+  });
+
+  describe("#isReassignable", function() {
+    beforeEach(function(){
+      sinon.stub(App, 'get').returns(['C1']);
+      this.mock = sinon.stub(App.router, 'get');
+    });
+    afterEach(function(){
+      App.get.restore();
+      this.mock.restore();
+    });
+    it("component reassignable and count is 2", function() {
+      this.mock.returns({TOTAL: 2});
+      hostComponentView.set('content.componentName', 'C1');
+      hostComponentView.propertyDidChange('isReassignable');
+      expect(hostComponentView.get('isReassignable')).to.be.true;
+    });
+    it("component reassignable and count is 1", function() {
+      this.mock.returns({TOTAL: 1});
+      hostComponentView.set('content.componentName', 'C1');
+      hostComponentView.propertyDidChange('isReassignable');
+      expect(hostComponentView.get('isReassignable')).to.be.false;
+    });
+    it("component is not reassignable", function() {
+      hostComponentView.set('content.componentName', 'C2');
+      hostComponentView.propertyDidChange('isReassignable');
+      expect(hostComponentView.get('isReassignable')).to.be.false;
+    });
+  });
+
+  describe("#isRestartableComponent", function() {
+    beforeEach(function(){
+      sinon.stub(App, 'get').returns(['C1']);
+    });
+    afterEach(function(){
+      App.get.restore();
+    });
+    it("component deletable", function() {
+      hostComponentView.set('content.componentName', 'C1');
+      hostComponentView.propertyDidChange('isRestartableComponent');
+      expect(hostComponentView.get('isRestartableComponent')).to.be.true;
+    });
+    it("component is not deletable", function() {
+      hostComponentView.set('content.componentName', 'C2');
+      hostComponentView.propertyDidChange('isRestartableComponent');
+      expect(hostComponentView.get('isRestartableComponent')).to.be.false;
+    });
+  });
+
+  describe("#isRefreshConfigsAllowed", function() {
+    beforeEach(function(){
+      sinon.stub(App, 'get').returns(['C1']);
+    });
+    afterEach(function(){
+      App.get.restore();
+    });
+    it("component deletable", function() {
+      hostComponentView.set('content.componentName', 'C1');
+      hostComponentView.propertyDidChange('isRefreshConfigsAllowed');
+      expect(hostComponentView.get('isRefreshConfigsAllowed')).to.be.true;
+    });
+    it("component is not deletable", function() {
+      hostComponentView.set('content.componentName', 'C2');
+      hostComponentView.propertyDidChange('isRefreshConfigsAllowed');
+      expect(hostComponentView.get('isRefreshConfigsAllowed')).to.be.false;
+    });
+  });
+
 });

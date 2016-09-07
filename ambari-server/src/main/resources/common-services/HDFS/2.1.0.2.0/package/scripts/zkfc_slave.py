@@ -16,24 +16,36 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
-
-from resource_management import *
-from resource_management.libraries.functions.check_process_status import check_process_status
-from resource_management.libraries.functions.security_commons import build_expectations, \
-  cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties, \
-  FILE_TYPE_XML
-import utils  # this is needed to avoid a circular dependency since utils.py calls this class
+# this is needed to avoid a circular dependency since utils.py calls this class
+import utils
 from hdfs import hdfs
-from ambari_commons.os_family_impl import OsFamilyImpl
+
 from ambari_commons import OSConst
+from ambari_commons.os_family_impl import OsFamilyImpl
+from resource_management.core.logger import Logger
+from resource_management.core.exceptions import Fail
+from resource_management.core.resources.system import Directory
+from resource_management.core.resources.service import Service
+from resource_management.core import shell
+from resource_management.libraries.functions.check_process_status import check_process_status
+from resource_management.libraries.functions.security_commons import build_expectations
+from resource_management.libraries.functions.security_commons import cached_kinit_executor
+from resource_management.libraries.functions.security_commons import get_params_from_filesystem
+from resource_management.libraries.functions.security_commons import validate_security_config_properties
+from resource_management.libraries.functions.security_commons import FILE_TYPE_XML
+from resource_management.libraries.script import Script
 
 class ZkfcSlave(Script):
   def install(self, env):
     import params
     env.set_params(params)
-    self.install_packages(env, params.exclude_packages)
-
-  def configure(self, env):
+    self.install_packages(env)
+    
+  def configure(env):
+    ZkfcSlave.configure_static(env)
+    
+  @staticmethod
+  def configure_static(env):
     import params
     env.set_params(params)
     hdfs("zkfc_slave")
@@ -42,11 +54,15 @@ class ZkfcSlave(Script):
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class ZkfcSlaveDefault(ZkfcSlave):
 
-  def start(self, env, rolling_restart=False):
+  def start(self, env, upgrade_type=None):
+    ZkfcSlaveDefault.start_static(env, upgrade_type)
+    
+  @staticmethod
+  def start_static(env, upgrade_type=None):
     import params
 
     env.set_params(params)
-    self.configure(env)
+    ZkfcSlave.configure_static(env)
     Directory(params.hadoop_pid_dir_prefix,
               mode=0755,
               owner=params.hdfs_user,
@@ -67,8 +83,12 @@ class ZkfcSlaveDefault(ZkfcSlave):
       action="start", name="zkfc", user=params.hdfs_user, create_pid_dir=True,
       create_log_dir=True
     )
+  
+  def stop(self, env, upgrade_type=None):
+    ZkfcSlaveDefault.stop_static(env, upgrade_type)
 
-  def stop(self, env, rolling_restart=False):
+  @staticmethod
+  def stop_static(env, upgrade_type=None):
     import params
 
     env.set_params(params)
@@ -79,6 +99,10 @@ class ZkfcSlaveDefault(ZkfcSlave):
 
 
   def status(self, env):
+    ZkfcSlaveDefault.status_static(env)
+    
+  @staticmethod
+  def status_static(env):
     import status_params
     env.set_params(status_params)
     check_process_status(status_params.zkfc_pid_file)
@@ -125,6 +149,18 @@ class ZkfcSlaveDefault(ZkfcSlave):
         self.put_structured_out({"securityState": "UNSECURED"})
     else:
       self.put_structured_out({"securityState": "UNSECURED"})
+      
+  def get_log_folder(self):
+    import params
+    return params.hdfs_log_dir
+  
+  def get_user(self):
+    import params
+    return params.hdfs_user
+
+  def get_pid_files(self):
+    import status_params
+    return [status_params.zkfc_pid_file]
 
 def initialize_ha_zookeeper(params):
   try:
@@ -159,6 +195,8 @@ class ZkfcSlaveWindows(ZkfcSlave):
 
   def status(self, env):
     import status_params
+    from resource_management.libraries.functions.windows_service_utils import check_windows_service_status
+
     env.set_params(status_params)
     check_windows_service_status(status_params.zkfc_win_service_name)
 

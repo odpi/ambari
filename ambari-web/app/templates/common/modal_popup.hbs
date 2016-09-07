@@ -18,41 +18,37 @@
 
 
 <div class="modal-backdrop"></div>
-<div class="modal" id="modal" tabindex="-1" role="dialog" aria-labelledby="modal-label" aria-hidden="true">
+<div {{bindAttr class=":modal view.showFooter:with-footer:no-footer"}} id="modal" tabindex="-1" role="dialog" aria-labelledby="modal-label" aria-hidden="true">
   <div class="modal-header">
-    {{#if showCloseButton}}
+    {{#if view.showCloseButton}}
       <a class="close" {{action onClose target="view"}}>x</a>
     {{/if}}
     <h3 id="modal-label">
-      {{#if headerClass}}
-        {{view headerClass}}
+      {{#if view.headerClass}}
+        {{view view.headerClass}}
       {{else}}
-        {{header}}
+        {{view.header}}
       {{/if}}
     </h3>
   </div>
   <div {{bindAttr class=":modal-body view.isHideBodyScroll:hidden-scroll"}}>
-    {{#if bodyClass}}
-      {{view bodyClass}}
+    {{#if view.bodyClass}}
+      {{view view.bodyClass}}
     {{else}}
-      {{#if encodeBody}}
-        {{body}}
+      {{#if view.encodeBody}}
+        {{view.body}}
       {{else}}
-        {{{body}}}
+        {{{view.body}}}
       {{/if}}
     {{/if}}
   </div>
-  {{#if showFooter}}
-    {{#if footerClass}}
-      {{view footerClass}}
+  {{#if view.showFooter}}
+    {{#if view.footerClass}}
+      {{view view.footerClass}}
     {{else}}
       <div class="modal-footer">
-        {{#if view.hasFooterCheckbox}}
-          <label id="footer-checkbox">{{view Ember.Checkbox classNames="checkbox" checkedBinding="view.isNotShowBgChecked"}} &nbsp;
-          {{t app.settings.notShowBgOperations}}</label>
-        {{/if}}
         {{#if view.third}}
-          <button class="btn" {{bindAttr disabled="view.disableThird"}} {{action onThird target="view"}}>{{view.third}}</button>
+          <button {{bindAttr disabled="view.disableThird" class=":btn view.thirdClass"}} {{action onThird target="view"}}>{{view.third}}</button>
         {{/if}}
         {{#if view.secondary}}
           <button {{bindAttr disabled="view.disableSecondary" class=":btn view.secondaryClass"}} {{action onSecondary target="view"}}>{{view.secondary}}</button>

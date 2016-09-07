@@ -16,11 +16,18 @@
 # limitations under the License.
 #}
 
-collector={{metric_collector_host}}
+collector={{metric_collector_hosts}}
+protocol={{metric_collector_protocol}}
+zookeeper.quorum={{zookeeper_quorum}}
 port={{metric_collector_port}}
 collectionFrequency={{metrics_collection_period}}000
 maxRowCacheSize=10000
 sendInterval={{metrics_report_interval}}000
+
+# HTTPS properties
+truststore.path = {{metric_truststore_path}}
+truststore.type = {{metric_truststore_type}}
+truststore.password = {{metric_truststore_password}}
 
 # Metric names having type COUNTER
 counters=EventTakeSuccessCount,EventPutSuccessCount,EventTakeAttemptCount,EventPutAttemptCount

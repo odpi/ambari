@@ -23,11 +23,21 @@ import org.apache.ambari.view.hive.BaseService;
 import org.apache.ambari.view.hive.backgroundjobs.BackgroundJobController;
 import org.apache.ambari.view.hive.client.Connection;
 import org.apache.ambari.view.hive.client.Cursor;
+import org.apache.ambari.view.hive.client.HiveAuthCredentials;
 import org.apache.ambari.view.hive.client.HiveClientException;
+import org.apache.ambari.view.hive.client.UserLocalConnection;
+import org.apache.ambari.view.hive.client.UserLocalHiveAuthCredentials;
 import org.apache.ambari.view.hive.persistence.utils.ItemNotFound;
 import org.apache.ambari.view.hive.resources.jobs.atsJobs.IATSParser;
-import org.apache.ambari.view.hive.resources.jobs.viewJobs.*;
-import org.apache.ambari.view.hive.utils.*;
+import org.apache.ambari.view.hive.resources.jobs.viewJobs.Job;
+import org.apache.ambari.view.hive.resources.jobs.viewJobs.JobController;
+import org.apache.ambari.view.hive.resources.jobs.viewJobs.JobImpl;
+import org.apache.ambari.view.hive.resources.jobs.viewJobs.JobInfo;
+import org.apache.ambari.view.hive.resources.jobs.viewJobs.JobResourceManager;
+import org.apache.ambari.view.hive.utils.MisconfigurationFormattedException;
+import org.apache.ambari.view.hive.utils.NotFoundFormattedException;
+import org.apache.ambari.view.hive.utils.ServiceFormattedException;
+import org.apache.ambari.view.hive.utils.SharedObjectsFactory;
 import org.apache.commons.beanutils.PropertyUtils;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
@@ -38,11 +48,28 @@ import org.slf4j.LoggerFactory;
 
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletResponse;
-import javax.ws.rs.*;
-import javax.ws.rs.core.*;
-import java.io.*;
+import javax.ws.rs.Consumes;
+import javax.ws.rs.DELETE;
+import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+import javax.ws.rs.QueryParam;
+import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.StreamingOutput;
+import javax.ws.rs.core.UriInfo;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.lang.reflect.InvocationTargetException;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 /**
@@ -60,8 +87,10 @@ public class JobService extends BaseService {
   @Inject
   ViewResourceHandler handler;
 
-  protected JobResourceManager resourceManager;
+  private JobResourceManager resourceManager;
   private IOperationHandleResourceManager opHandleResourceManager;
+  private UserLocalConnection connectionLocal = new UserLocalConnection();
+
   protected final static Logger LOG =
       LoggerFactory.getLogger(JobService.class);
   private Aggregator aggregator;
@@ -259,6 +288,23 @@ public class JobService extends BaseService {
     }
   }
 
+
+  @Path("{jobId}/status")
+  @GET
+  @Consumes(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.APPLICATION_JSON)
+  public Response fetchJobStatus(@PathParam("jobId") String jobId) throws ItemNotFound, HiveClientException, NoOperationStatusSetException {
+    JobController jobController = getResourceManager().readController(jobId);
+    String jobStatus = jobController.getStatus().status;
+    LOG.info("jobStatus : {} for jobId : {}",jobStatus, jobId);
+
+    JSONObject jsonObject = new JSONObject();
+    jsonObject.put("jobStatus", jobStatus);
+    jsonObject.put("jobId", jobId);
+
+    return Response.ok(jsonObject).build();
+  }
+
   /**
    * Get next results page
    */
@@ -273,6 +319,14 @@ public class JobService extends BaseService {
                              @QueryParam("columns") final String requestedColumns) {
     try {
       final JobController jobController = getResourceManager().readController(jobId);
+      LOG.info("jobController.getStatus().status : " + jobController.getStatus().status + " for job : " + jobController.getJob().getId());
+      if(jobController.getStatus().status.equals(Job.JOB_STATE_INITIALIZED)
+         || jobController.getStatus().status.equals(Job.JOB_STATE_PENDING)
+         || jobController.getStatus().status.equals(Job.JOB_STATE_RUNNING)
+         || jobController.getStatus().status.equals(Job.JOB_STATE_UNKNOWN)){
+
+         return Response.status(Response.Status.SERVICE_UNAVAILABLE).header("Retry-After","1").build();
+      }
       if (!jobController.hasResults()) {
         return ResultsPaginationController.emptyResponse().build();
       }
@@ -372,20 +426,49 @@ public class JobService extends BaseService {
    */
   @GET
   @Produces(MediaType.APPLICATION_JSON)
-  public Response getList() {
+  public List<Job> getList(@QueryParam("startTime") long startTime, @QueryParam("endTime") long endTime) {
     try {
-      LOG.debug("Getting all job");
-      List<Job> allJobs = getAggregator().readAll(context.getUsername());
+
+      LOG.debug("Getting all job: startTime: {}, endTime: {}",startTime,endTime);
+      List<Job> allJobs = getAggregator().readAllForUserByTime(context.getUsername(),startTime, endTime);
       for(Job job : allJobs) {
         job.setSessionTag(null);
       }
 
-      JSONObject object = new JSONObject();
-      object.put("jobs", allJobs);
-      return Response.ok(object).build();
+      return allJobs;
     } catch (WebApplicationException ex) {
+      LOG.error("Exception occured while fetching all jobs.", ex);
       throw ex;
     } catch (Exception ex) {
+      LOG.error("Exception occured while fetching all jobs.", ex);
+      throw new ServiceFormattedException(ex.getMessage(), ex);
+    }
+  }
+
+  /**
+   * fetch the jobs with given info.
+   * provide as much info about the job so that next api can optimize the fetch process.
+   * @param jobInfos
+   * @return
+   */
+  @Path("/getList")
+  @POST
+  @Produces(MediaType.APPLICATION_JSON)
+  @Consumes(MediaType.APPLICATION_JSON)
+  public List<Job> getList(List<JobInfo> jobInfos) {
+    try {
+      LOG.debug("fetching jobs with ids :{}", jobInfos);
+      List<Job> allJobs = getAggregator().readJobsByIds(jobInfos);
+      for(Job job : allJobs) {
+        job.setSessionTag(null);
+      }
+
+      return allJobs;
+    } catch (WebApplicationException ex) {
+      LOG.error("Exception occured while fetching all jobs.", ex);
+      throw ex;
+    } catch (Exception ex) {
+      LOG.error("Exception occured while fetching all jobs.", ex);
       throw new ServiceFormattedException(ex.getMessage(), ex);
     }
   }
@@ -413,13 +496,56 @@ public class JobService extends BaseService {
 
       return Response.ok(jobObject).status(201).build();
     } catch (WebApplicationException ex) {
+      LOG.error("Error occurred while creating job : ",ex);
       throw ex;
     } catch (ItemNotFound itemNotFound) {
+      LOG.error("Error occurred while creating job : ",itemNotFound);
       throw new NotFoundFormattedException(itemNotFound.getMessage(), itemNotFound);
+    } catch (Exception ex) {
+      LOG.error("Error occurred while creating job : ",ex);
+      throw new ServiceFormattedException(ex.getMessage(), ex);
+    }
+  }
+
+  /**
+   * Set password and connect to Hive
+   */
+  @POST
+  @Path("auth")
+  @Consumes(MediaType.APPLICATION_JSON)
+  public Response setupPassword(AuthRequest request) {
+    try {
+      HiveAuthCredentials authCredentials = new HiveAuthCredentials();
+      authCredentials.setPassword(request.password);
+      new UserLocalHiveAuthCredentials().set(authCredentials, context);
+
+      connectionLocal.remove(context);  // force reconnect on next get
+      connectionLocal.get(context);
+      return Response.ok().status(200).build();
+    } catch (WebApplicationException ex) {
+      throw ex;
     } catch (Exception ex) {
       throw new ServiceFormattedException(ex.getMessage(), ex);
     }
   }
+
+  /**
+   * Remove connection credentials
+   */
+  @DELETE
+  @Path("auth")
+  public Response removePassword() {
+    try {
+      new UserLocalHiveAuthCredentials().remove(context);
+      connectionLocal.remove(context);  // force reconnect on next get
+      return Response.ok().status(200).build();
+    } catch (WebApplicationException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new ServiceFormattedException(ex.getMessage(), ex);
+    }
+  }
+
 
   /**
    * Invalidate session
@@ -428,7 +554,7 @@ public class JobService extends BaseService {
   @Path("sessions/{sessionTag}")
   public Response invalidateSession(@PathParam("sessionTag") String sessionTag) {
     try {
-      Connection connection = getSharedObjectsFactory().getHiveConnection();
+      Connection connection = connectionLocal.get(context);
       connection.invalidateSessionByTag(sessionTag);
       return Response.ok().build();
     } catch (WebApplicationException ex) {
@@ -446,7 +572,7 @@ public class JobService extends BaseService {
   @Produces(MediaType.APPLICATION_JSON)
   public Response sessionStatus(@PathParam("sessionTag") String sessionTag) {
     try {
-      Connection connection = getSharedObjectsFactory().getHiveConnection();
+      Connection connection = connectionLocal.get(context);
 
       JSONObject session = new JSONObject();
       session.put("sessionTag", sessionTag);
@@ -472,5 +598,12 @@ public class JobService extends BaseService {
    */
   public static class JobRequest {
     public JobImpl job;
+  }
+
+  /**
+   * Wrapper for authentication json mapping
+   */
+  public static class AuthRequest {
+    public String password;
   }
 }

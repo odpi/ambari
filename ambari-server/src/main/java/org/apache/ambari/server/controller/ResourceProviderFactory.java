@@ -22,10 +22,13 @@ package org.apache.ambari.server.controller;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.ambari.server.controller.internal.UpgradeResourceProvider;
+import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.Resource.Type;
 import org.apache.ambari.server.controller.spi.ResourceProvider;
 
 import com.google.inject.name.Named;
+import java.util.Set;
 
 public interface ResourceProviderFactory {
   @Named("host")
@@ -56,6 +59,18 @@ public interface ResourceProviderFactory {
   @Named("hostKerberosIdentity")
   ResourceProvider getHostKerberosIdentityResourceProvider(AmbariManagementController managementController);
 
+  @Named("credential")
+  ResourceProvider getCredentialResourceProvider(AmbariManagementController managementController);
+
   @Named("repositoryVersion")
   ResourceProvider getRepositoryVersionResourceProvider();
+
+  @Named("kerberosDescriptor")
+  ResourceProvider getKerberosDescriptorResourceProvider(AmbariManagementController managementController,
+                                                         Set<String> propertyIds,
+                                                         Map<Resource.Type, String> keyPropertyIds);
+
+  @Named("upgrade")
+  UpgradeResourceProvider getUpgradeResourceProvider(AmbariManagementController managementController);
+
 }

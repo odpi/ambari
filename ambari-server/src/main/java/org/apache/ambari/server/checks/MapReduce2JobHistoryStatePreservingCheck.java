@@ -24,10 +24,12 @@ import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
 import org.apache.ambari.server.state.stack.PrerequisiteCheck;
+import org.apache.ambari.server.state.stack.UpgradePack.PrerequisiteCheckConfig;
 import org.apache.ambari.server.utils.VersionUtils;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -36,7 +38,7 @@ import java.util.Map;
  * is used to check that the MR2 History server has state preserving mode enabled.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.CONFIGURATION_WARNING, order = 1.0f)
+@UpgradeCheck(group = UpgradeCheckGroup.CONFIGURATION_WARNING, order = 17.0f)
 public class MapReduce2JobHistoryStatePreservingCheck extends AbstractCheckDescriptor {
 
   final static String MAPREDUCE2_JOBHISTORY_RECOVERY_ENABLE_KEY =
@@ -47,33 +49,6 @@ public class MapReduce2JobHistoryStatePreservingCheck extends AbstractCheckDescr
     "mapreduce.jobhistory.recovery.store.leveldb.path";
   final static String YARN_TIMELINE_SERVICE_LEVELDB_STATE_STORE_PATH_KEY =
     "yarn.timeline-service.leveldb-state-store.path";
-  /**
-   * Due to the introduction of MapReduce2 JobHistory state recovery only from certain
-   * stack-versions onwards, this check is not applicable to earlier versions
-   * of the stack.
-   *
-   * This enumeration lists the minimum stack-versions for which this check is applicable.
-   * If a stack is not specified in this enumeration, this check will be applicable.
-   */
-  private enum MinimumApplicableStackVersion {
-    HDP_STACK("HDP", "2.3.0.0");
-
-    private String stackName;
-    private String stackVersion;
-
-    private MinimumApplicableStackVersion(String stackName, String stackVersion) {
-      this.stackName = stackName;
-      this.stackVersion = stackVersion;
-    }
-
-    public String getStackName() {
-      return stackName;
-    }
-
-    public String getStackVersion() {
-      return stackVersion;
-    }
-  }
 
   /**
    * Constructor.
@@ -87,29 +62,7 @@ public class MapReduce2JobHistoryStatePreservingCheck extends AbstractCheckDescr
    */
   @Override
   public boolean isApplicable(PrereqCheckRequest request) throws AmbariException {
-    if (!super.isApplicable(request)) {
-      return false;
-    }
-
-    final Cluster cluster = clustersProvider.get().getCluster(request.getClusterName());
-    Map<String, Service> services = cluster.getServices();
-    if (!services.containsKey("MAPREDUCE2")) {
-      return false;
-    }
-
-    // Applicable only if stack not defined in MinimumApplicableStackVersion, or
-    // version equals or exceeds the enumerated version.
-    for (MinimumApplicableStackVersion minimumStackVersion : MinimumApplicableStackVersion.values()) {
-      String stackName = cluster.getCurrentStackVersion().getStackName();
-      if (minimumStackVersion.getStackName().equals(stackName)){
-        String targetVersion = request.getTargetStackId().getStackVersion();
-        String sourceVersion = request.getSourceStackId().getStackVersion();
-        return VersionUtils.compareVersions(targetVersion, minimumStackVersion.getStackVersion()) >= 0 &&
-               VersionUtils.compareVersions(sourceVersion, minimumStackVersion.getStackVersion()) >= 0;
-      }
-    }
-
-    return true;
+    return super.isApplicable(request, Arrays.asList("MAPREDUCE2"), true);
   }
 
   /**

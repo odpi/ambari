@@ -19,20 +19,21 @@ limitations under the License.
 
 """
 import os
-import tarfile
 import tempfile
 
 from resource_management.core.logger import Logger
 from resource_management.core.exceptions import Fail
+from resource_management.core.resources.system import Execute
 from resource_management.libraries.functions import tar_archive
 from resource_management.libraries.functions import format
-from resource_management.libraries.functions import Direction
-from resource_management.libraries.functions.version import compare_versions,format_hdp_stack_version
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions import StackFeature
+from resource_management.libraries.script.script import Script
 
 
 BACKUP_TEMP_DIR = "knox-upgrade-backup"
 BACKUP_DATA_ARCHIVE = "knox-data-backup.tar"
-BACKUP_CONF_ARCHIVE = "knox-conf-backup.tar"
+STACK_ROOT_DEFAULT = Script.get_stack_root()
 
 def backup_data():
   """
@@ -41,6 +42,8 @@ def backup_data():
   """
   Logger.info('Backing up Knox data directory before upgrade...')
   directoryMappings = _get_directory_mappings_during_upgrade()
+
+  Logger.info("Directory mappings to backup: {0}".format(str(directoryMappings)))
 
   absolute_backup_dir = os.path.join(tempfile.gettempdir(), BACKUP_TEMP_DIR)
   if not os.path.isdir(absolute_backup_dir):
@@ -62,6 +65,41 @@ def backup_data():
   return absolute_backup_dir
 
 
+def seed_current_data_directory():
+  """
+  HDP stack example:
+
+  Knox uses "versioned" data directories in some stacks:
+  /usr/hdp/2.2.0.0-1234/knox/data -> /var/lib/knox/data
+  /usr/hdp/2.3.0.0-4567/knox/data -> /var/lib/knox/data-2.3.0.0-4567
+
+  If the stack being upgraded to supports versioned data directories for Knox, then we should
+  seed the data from the prior version. This is mainly because Knox keeps things like keystores
+  in the data directory and if those aren't copied over then it will re-create self-signed
+  versions. This side-effect behavior causes loss of service in clusters where Knox is using
+  custom keystores.
+
+  cp -R -p -f /usr/hdp/<old>/knox-server/data/. /usr/hdp/current/knox-server/data
+  :return:
+  """
+  import params
+
+  if params.version is None or params.upgrade_from_version is None:
+    raise Fail("The source and target versions are required")
+
+  if check_stack_feature(StackFeature.KNOX_VERSIONED_DATA_DIR, params.version):
+    Logger.info("Seeding Knox data from prior version...")
+
+    # <stack-root>/2.3.0.0-1234/knox/data/.
+    source_data_dir = os.path.join(params.stack_root, params.upgrade_from_version, "knox", "data", ".")
+
+    # <stack-root>/current/knox-server/data
+    target_data_dir = os.path.join(params.stack_root, "current", "knox-server", "data")
+
+    # recursive copy, overwriting, and preserving attributes
+    Execute(("cp", "-R", "-p", "-f", source_data_dir, target_data_dir), sudo = True)
+
+
 def _get_directory_mappings_during_upgrade():
   """
   Gets a dictionary of directory to archive name that represents the
@@ -70,24 +108,11 @@ def _get_directory_mappings_during_upgrade():
   """
   import params
 
-  # Must be performing an Upgrade
-  if params.upgrade_direction is None or params.upgrade_direction != Direction.UPGRADE or \
-          params.upgrade_from_version is None or params.upgrade_from_version == "":
-    Logger.error("Function _get_directory_mappings_during_upgrade() can only be called during a Stack Upgrade in direction UPGRADE.")
-    return {}
+  # the data directory is always a symlink to the "correct" data directory in /var/lib/knox
+  # such as /var/lib/knox/data or /var/lib/knox/data-2.4.0.0-1234
+  knox_data_dir = STACK_ROOT_DEFAULT + '/current/knox-server/data'
 
-  # By default, use this for all stacks.
-  knox_data_dir = '/var/lib/knox/data'
-
-  if params.stack_name and params.stack_name.upper() == "HDP" and \
-          compare_versions(format_hdp_stack_version(params.upgrade_from_version), "2.3.0.0") > 0:
-    # Use the version that is being upgraded from.
-    knox_data_dir = format('/usr/hdp/{upgrade_from_version}/knox/data')
-
-
-  directories = {knox_data_dir: BACKUP_DATA_ARCHIVE,
-                params.knox_conf_dir + "/": BACKUP_CONF_ARCHIVE} # the trailing "/" is important here so as to not include the "conf" folder itself
+  directories = { knox_data_dir: BACKUP_DATA_ARCHIVE }
 
   Logger.info(format("Knox directories to backup:\n{directories}"))
   return directories
-

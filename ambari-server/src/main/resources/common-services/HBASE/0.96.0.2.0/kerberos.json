@@ -7,12 +7,9 @@
           "name": "/spnego"
         },
         {
-          "name": "/HDFS/hdfs"
-        },
-        {
           "name": "hbase",
           "principal": {
-            "value": "${hbase-env/hbase_user}-${cluster_name}@${realm}",
+            "value": "${hbase-env/hbase_user}-${cluster_name|toLower()}@${realm}",
             "type" : "user",
             "configuration": "hbase-env/hbase_principal_name",
             "local_username": "${hbase-env/hbase_user}"
@@ -40,8 +37,9 @@
             "hbase.security.authentication": "kerberos",
             "hbase.security.authorization": "true",
             "zookeeper.znode.parent": "/hbase-secure",
-              "hbase.coprocessor.master.classes": "{{hbase_coprocessor_master_classes}}",
-              "hbase.coprocessor.region.classes": "{{hbase_coprocessor_region_classes}}",
+            "hbase.coprocessor.master.classes": "{{hbase_coprocessor_master_classes}}",
+            "hbase.coprocessor.region.classes": "{{hbase_coprocessor_region_classes}}",
+            "hbase.coprocessor.regionserver.classes": "{{hbase_coprocessor_regionserver_classes}}",
             "hbase.bulkload.staging.dir": "/apps/hbase/staging"
           }
         }
@@ -50,6 +48,9 @@
         {
           "name": "HBASE_MASTER",
           "identities": [
+            {
+              "name": "/HDFS/NAMENODE/hdfs"
+            },
             {
               "name": "hbase_master_hbase",
               "principal": {
@@ -103,23 +104,11 @@
           "name": "PHOENIX_QUERY_SERVER",
           "identities": [
             {
-              "name": "hbase_queryserver_hbase",
+              "name": "/spnego",
               "principal": {
-                "value": "hbase/_HOST@${realm}",
-                "type" : "service",
-                "configuration": "hbase-site/phoenix.queryserver.kerberos.principal",
-                "local_username": "${hbase-env/hbase_user}"
+                "configuration": "hbase-site/phoenix.queryserver.kerberos.principal"
               },
               "keytab": {
-                "file": "${keytab_dir}/hbase.service.keytab",
-                "owner": {
-                  "name": "${hbase-env/hbase_user}",
-                  "access": "r"
-                },
-                "group": {
-                  "name": "${cluster-env/user_group}",
-                  "access": ""
-                },
                 "configuration": "hbase-site/phoenix.queryserver.keytab.file"
               }
             }

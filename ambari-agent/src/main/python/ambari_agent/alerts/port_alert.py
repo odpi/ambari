@@ -33,11 +33,13 @@ DEFAULT_CRITICAL_TIMEOUT = 5.0
 
 class PortAlert(BaseAlert):
 
-  def __init__(self, alert_meta, alert_source_meta):
-    super(PortAlert, self).__init__(alert_meta, alert_source_meta)
+  def __init__(self, alert_meta, alert_source_meta, config):
+    super(PortAlert, self).__init__(alert_meta, alert_source_meta, config)
 
     self.uri = None
     self.default_port = None
+    self.socket_command = None
+    self.socket_command_response = None
     self.warning_timeout = DEFAULT_WARNING_TIMEOUT
     self.critical_timeout = DEFAULT_CRITICAL_TIMEOUT
 
@@ -61,6 +63,12 @@ class PortAlert(BaseAlert):
         'value' in reporting[reporting_state_critical]:
         self.critical_timeout = reporting[reporting_state_critical]['value']
 
+    if 'parameters' in alert_source_meta:
+      for parameter in alert_source_meta['parameters']:
+        if 'socket.command' == parameter['name']:
+          self.socket_command = parameter['value']
+        if 'socket.command.response' == parameter['name']:
+          self.socket_command_response = parameter['value']
 
     # check warning threshold for sanity
     if self.warning_timeout >= 30:
@@ -102,7 +110,7 @@ class PortAlert(BaseAlert):
 
 
     host = BaseAlert.get_host_from_url(uri_value)
-    if host is None:
+    if host is None or host == "localhost" or host == "0.0.0.0":
       host = self.host_name
 
     try:
@@ -130,6 +138,12 @@ class PortAlert(BaseAlert):
 
       start_time = time.time()
       s.connect((host, port))
+      if self.socket_command is not None:
+        s.sendall(self.socket_command)
+        data = s.recv(1024)
+        if self.socket_command_response is not None and data != self.socket_command_response:
+          raise Exception("Expected response {0}, Actual response {1}".format(
+            self.socket_command_response, data))
       end_time = time.time()
       milliseconds = end_time - start_time
       seconds = milliseconds / 1000.0

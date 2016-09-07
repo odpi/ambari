@@ -17,15 +17,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
+# Python Imports
 import os
-from resource_management import *
+
+# Local Imports
+from oozie import copy_atlas_hive_hook_to_dfs_share_lib
+
+# Resource Managemente Imports
+from resource_management.core import sudo
 from resource_management.core.shell import as_user
+from resource_management.core.logger import Logger
+from resource_management.core.resources.service import Service
+from resource_management.core.resources.system import Execute, File
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.show_logs import show_logs
 from resource_management.libraries.providers.hdfs_resource import WebHDFSUtil
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 from ambari_commons import OSConst
 
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
-def oozie_service(action='start', rolling_restart=False):
+def oozie_service(action='start', upgrade_type=None):
   import params
 
   if action == 'start':
@@ -36,11 +47,11 @@ def oozie_service(action='start', rolling_restart=False):
     Service(params.oozie_server_win_service_name, action="stop")
 
 @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-def oozie_service(action = 'start', rolling_restart=False):
+def oozie_service(action = 'start', upgrade_type=None):
   """
   Starts or stops the Oozie service
   :param action: 'start' or 'stop'
-  :param rolling_restart: if True, then most of the pre-startup checks are
+  :param upgrade_type: type of upgrade, either "rolling" or "non_rolling"
   skipped since a variation of them was performed during the rolling upgrade
   :return:
   """
@@ -61,17 +72,28 @@ def oozie_service(action = 'start', rolling_restart=False):
   
   if action == 'start':
     start_cmd = format("cd {oozie_tmp_dir} && {oozie_home}/bin/oozie-start.sh")
-    
+    path_to_jdbc = params.target
+
     if params.jdbc_driver_name == "com.mysql.jdbc.Driver" or \
        params.jdbc_driver_name == "com.microsoft.sqlserver.jdbc.SQLServerDriver" or \
        params.jdbc_driver_name == "org.postgresql.Driver" or \
        params.jdbc_driver_name == "oracle.jdbc.driver.OracleDriver":
-      db_connection_check_command = format("{java_home}/bin/java -cp {check_db_connection_jar}:{target} org.apache.ambari.server.DBConnectionVerification '{oozie_jdbc_connection_url}' {oozie_metastore_user_name} {oozie_metastore_user_passwd!p} {jdbc_driver_name}")
+
+      if not params.jdbc_driver_jar:
+        path_to_jdbc = format("{oozie_libext_dir}/") + \
+                       params.default_connectors_map[params.jdbc_driver_name] if params.jdbc_driver_name in params.default_connectors_map else None
+        if not os.path.isfile(path_to_jdbc):
+          path_to_jdbc = format("{oozie_libext_dir}/") + "*"
+          error_message = "Error! Sorry, but we can't find jdbc driver with default name " + params.default_connectors_map[params.jdbc_driver_name] + \
+                " in oozie lib dir. So, db connection check can fail. Please run 'ambari-server setup --jdbc-db={db_name} --jdbc-driver={path_to_jdbc} on server host.'"
+          Logger.error(error_message)
+
+      db_connection_check_command = format("{java_home}/bin/java -cp {check_db_connection_jar}:{path_to_jdbc} org.apache.ambari.server.DBConnectionVerification '{oozie_jdbc_connection_url}' {oozie_metastore_user_name} {oozie_metastore_user_passwd!p} {jdbc_driver_name}")
     else:
       db_connection_check_command = None
 
-    if not rolling_restart:
-      if not os.path.isfile(params.target) and params.jdbc_driver_name == "org.postgresql.Driver":
+    if upgrade_type is None:
+      if not os.path.isfile(path_to_jdbc) and params.jdbc_driver_name == "org.postgresql.Driver":
         print format("ERROR: jdbc file {target} is unavailable. Please, follow next steps:\n" \
           "1) Download postgresql-9.0-801.jdbc4.jar.\n2) Create needed directory: mkdir -p {oozie_home}/libserver/\n" \
           "3) Copy postgresql-9.0-801.jdbc4.jar to newly created dir: cp /path/to/jdbc/postgresql-9.0-801.jdbc4.jar " \
@@ -80,6 +102,7 @@ def oozie_service(action = 'start', rolling_restart=False):
         exit(1)
 
       if db_connection_check_command:
+        sudo.chmod(params.check_db_connection_jar, 0755)
         Execute( db_connection_check_command, 
                  tries=5, 
                  try_sleep=10,
@@ -124,15 +147,25 @@ def oozie_service(action = 'start', rolling_restart=False):
         params.HdfsResource(None, action="execute")
         
 
-    # start oozie
-    Execute( start_cmd, environment=environment, user = params.oozie_user,
-      not_if = no_op_test )
+    try:
+      # start oozie
+      Execute( start_cmd, environment=environment, user = params.oozie_user,
+        not_if = no_op_test )
+
+      copy_atlas_hive_hook_to_dfs_share_lib(upgrade_type, params.upgrade_direction)
+    except:
+      show_logs(params.oozie_log_dir, params.oozie_user)
+      raise
 
   elif action == 'stop':
-    stop_cmd  = format("cd {oozie_tmp_dir} && {oozie_home}/bin/oozie-stop.sh")
+    stop_cmd  = format("cd {oozie_tmp_dir} && {oozie_home}/bin/oozied.sh stop 60 -force")
 
-    # stop oozie
-    Execute(stop_cmd, environment=environment, only_if  = no_op_test,
-      user = params.oozie_user)
+    try:
+      # stop oozie
+      Execute(stop_cmd, environment=environment, only_if  = no_op_test,
+        user = params.oozie_user)
+    except:
+      show_logs(params.oozie_log_dir, params.oozie_user)
+      raise
 
     File(params.pid_file, action = "delete")

@@ -23,6 +23,14 @@ App.MainDashboardServiceRangerView = App.MainDashboardServiceView.extend({
 
   serviceName: 'RANGER',
 
+  rangerTagsyncComponent: Em.Object.create({
+    componentName: 'RANGER_TAGSYNC'
+  }),
+
+  isRangerTagsyncCreated: function () {
+    return this.isServiceComponentCreated('RANGER_TAGSYNC');
+  }.property('App.router.clusterController.isComponentsStateLoaded'),
+
   didInsertElement: function () {
     this.set('controller.isRangerUpdateWorking', true);
     App.updater.run(this.get('controller'), 'updateRangerPluginsStatus', 'isRangerUpdateWorking', App.bgOperationsUpdateInterval);

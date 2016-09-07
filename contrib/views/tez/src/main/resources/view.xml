@@ -22,7 +22,7 @@ limitations under the License. Kerberos, LDAP, Custom. Binary/Htt
   <description>Ambari view for Apache Tez</description>
 
   <parameter>
-    <name>yarn.timeline-server.url</name>
+    <name>yarn.ats.url</name>
     <description>The URL to the YARN Application Timeline Server, used to provide Tez information. Typically this is the yarn.timeline-service.webapp.address property in the yarn-site.xml configuration. Url must be accessible from Ambari server.</description>
     <label>YARN Timeline Server URL</label>
     <placeholder>yarn.timeline-service.hostname:8188</placeholder>
@@ -35,11 +35,44 @@ limitations under the License. Kerberos, LDAP, Custom. Binary/Htt
     <placeholder>yarn.resourcemanager.hostname:8088</placeholder>
     <cluster-config>yarn-site/yarn.resourcemanager.webapp.address</cluster-config>
   </parameter>
+  <parameter>
+    <name>hdfs.auth_to_local</name>
+    <description>Auth to Local Configuration</description>
+    <label>Auth To Local</label>
+    <required>false</required>
+    <cluster-config>core-site/hadoop.security.auth_to_local</cluster-config>
+  </parameter>
+  <parameter>
+    <name>timeline.http.auth.type</name>
+    <description>Authentication used for the timeline server HTTP endpoint. Supported values are: simple / kerberos / #AUTHENTICATION_HANDLER_CLASSNAME#. Defaults to simple.</description>
+    <label>Timeline HTTP Auth</label>
+    <required>false</required>
+    <cluster-config>yarn-site/yarn.timeline-service.http-authentication.type</cluster-config>
+  </parameter>
+  <parameter>
+    <name>hadoop.http.auth.type</name>
+    <description>Defines authentication used for RM HTTP endpoint. Supported values are: simple | kerberos | #AUTHENTICATION_HANDLER_CLASSNAME#. Default to simple.</description>
+    <label>RM HTTP Auth</label>
+    <required>false</required>
+    <cluster-config>core-site/hadoop.http.authentication.type</cluster-config>
+  </parameter>
 
   <!-- The status resource exists to show the subset of properties that any user is allowed to see, not just an admin user. -->
   <resource>
     <name>status</name>
     <service-class>org.apache.ambari.view.tez.rest.ViewStatusResource</service-class>
+  </resource>
+  <resource>
+    <name>rmredirect</name>
+    <service-class>org.apache.ambari.view.tez.rest.RMRedirectResource</service-class>
+  </resource>
+  <resource>
+    <name>rmproxy</name>
+    <service-class>org.apache.ambari.view.tez.rest.RMProxyResource</service-class>
+  </resource>
+  <resource>
+    <name>atsproxy</name>
+    <service-class>org.apache.ambari.view.tez.rest.AtsProxyResource</service-class>
   </resource>
   <resource>
     <name>configurations</name>

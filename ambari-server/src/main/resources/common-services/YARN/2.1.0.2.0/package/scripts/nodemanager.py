@@ -21,14 +21,16 @@ Ambari Agent
 
 import nodemanager_upgrade
 
-from resource_management import *
-from resource_management.libraries.functions import conf_select
-from resource_management.libraries.functions import hdp_select
-from resource_management.libraries.functions.version import compare_versions, format_hdp_stack_version
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions import conf_select, stack_select
+from resource_management.libraries.functions.constants import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.security_commons import build_expectations, \
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties, \
   FILE_TYPE_XML
+from resource_management.core.logger import Logger
 from yarn import yarn
 from service import service
 from ambari_commons import OSConst
@@ -39,12 +41,12 @@ class Nodemanager(Script):
   def install(self, env):
     self.install_packages(env)
 
-  def stop(self, env, rolling_restart=False):
+  def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     service('nodemanager',action='stop')
 
-  def start(self, env, rolling_restart=False):
+  def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     self.configure(env) # FOR SECURITY
@@ -64,20 +66,20 @@ class NodemanagerWindows(Nodemanager):
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class NodemanagerDefault(Nodemanager):
-  def get_stack_to_component(self):
-    return {"HDP": "hadoop-yarn-nodemanager"}
+  def get_component_name(self):
+    return "hadoop-yarn-nodemanager"
 
-  def pre_rolling_restart(self, env):
-    Logger.info("Executing NodeManager Rolling Upgrade pre-restart")
+  def pre_upgrade_restart(self, env, upgrade_type=None):
+    Logger.info("Executing NodeManager Stack Upgrade pre-restart")
     import params
     env.set_params(params)
 
-    if params.version and compare_versions(format_hdp_stack_version(params.version), '2.2.0.0') >= 0:
+    if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version):
       conf_select.select(params.stack_name, "hadoop", params.version)
-      hdp_select.select("hadoop-yarn-nodemanager", params.version)
+      stack_select.select("hadoop-yarn-nodemanager", params.version)
 
-  def post_rolling_restart(self, env):
-    Logger.info("Executing NodeManager Rolling Upgrade post-restart")
+  def post_upgrade_restart(self, env, upgrade_type=None):
+    Logger.info("Executing NodeManager Stack Upgrade post-restart")
     import params
     env.set_params(params)
 
@@ -148,6 +150,17 @@ class NodemanagerDefault(Nodemanager):
     else:
       self.put_structured_out({"securityState": "UNSECURED"})
 
+  def get_log_folder(self):
+    import params
+    return params.yarn_log_dir
+  
+  def get_user(self):
+    import params
+    return params.yarn_user
+
+  def get_pid_files(self):
+    import status_params
+    return [status_params.nodemanager_pid_file]
 
 if __name__ == "__main__":
   Nodemanager().execute()

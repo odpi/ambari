@@ -212,18 +212,7 @@ describe('App.StackService', function () {
     });
   });
 
-  describe('#isClientOnlyService', function () {
-    it('Has not only client serviceComponents', function () {
-      ss.set('serviceComponents', [Em.Object.create({isSlave: true}), Em.Object.create({isClient: true})]);
-      ss.propertyDidChange('isClientOnlyService');
-      expect(ss.get('isClientOnlyService')).to.be.false;
-    });
-    it('Has only client serviceComponents', function () {
-      ss.set('serviceComponents', [Em.Object.create({isClient: true})]);
-      ss.propertyDidChange('isClientOnlyService');
-      expect(ss.get('isClientOnlyService')).to.be.true;
-    });
-  });
+  App.TestAliases.testAsComputedEveryBy(ss, 'isClientOnlyService', 'serviceComponents', 'isClient', true);
 
   describe('#isNoConfigTypes', function () {
     it('configTypes is null', function () {
@@ -266,13 +255,24 @@ describe('App.StackService', function () {
       expect(ss.get('configCategories').mapProperty('name')).to.eql([
         "General",
         "Advanced",
-        "Advanced key",
-        "Custom key"
+        "Advanced key"
       ]);
     });
     it('HDFS service with DATANODE serviceComponents', function () {
       ss.set('serviceComponents', [Em.Object.create({componentName: 'DATANODE'})]);
       ss.set('serviceName', 'HDFS');
+      ss.propertyDidChange('configCategories');
+      expect(ss.get('configCategories').mapProperty('name')).to.eql([
+        "DATANODE",
+        "General",
+        "Advanced",
+        "Advanced key"]);
+    });
+
+    it('HDFS service with custom serviceComponents', function () {
+      ss.set('serviceComponents', [Em.Object.create({componentName: 'DATANODE'})]);
+      ss.set('serviceName', 'HDFS');
+      ss.set('configTypes', { key: { supports: {adding_forbidden: "false"}}});
       ss.propertyDidChange('configCategories');
       expect(ss.get('configCategories').mapProperty('name')).to.eql([
         "DATANODE",

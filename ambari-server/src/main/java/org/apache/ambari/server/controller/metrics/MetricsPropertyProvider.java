@@ -20,13 +20,12 @@ package org.apache.ambari.server.controller.metrics;
 import org.apache.ambari.server.configuration.ComponentSSLConfiguration;
 import org.apache.ambari.server.controller.internal.AbstractPropertyProvider;
 import org.apache.ambari.server.controller.internal.PropertyInfo;
+import org.apache.ambari.server.controller.internal.URLStreamProvider;
 import org.apache.ambari.server.controller.metrics.timeline.cache.TimelineMetricCacheProvider;
 import org.apache.ambari.server.controller.spi.Predicate;
 import org.apache.ambari.server.controller.spi.Request;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.SystemException;
-import org.apache.ambari.server.controller.utilities.PredicateHelper;
-import org.apache.ambari.server.controller.utilities.StreamProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.Map;
@@ -41,7 +40,7 @@ public abstract class MetricsPropertyProvider extends AbstractPropertyProvider {
 
   protected static final Pattern questionMarkPattern = Pattern.compile("\\?");
 
-  protected final StreamProvider streamProvider;
+  protected final URLStreamProvider streamProvider;
 
   protected final MetricHostProvider hostProvider;
 
@@ -60,7 +59,7 @@ public abstract class MetricsPropertyProvider extends AbstractPropertyProvider {
 
   protected MetricsPropertyProvider(Map<String, Map<String,
        PropertyInfo>> componentPropertyInfoMap,
-       StreamProvider streamProvider,
+       URLStreamProvider streamProvider,
        ComponentSSLConfiguration configuration,
        MetricHostProvider hostProvider,
        String clusterNamePropertyId,
@@ -80,7 +79,7 @@ public abstract class MetricsPropertyProvider extends AbstractPropertyProvider {
   public static MetricsPropertyProviderProxy createInstance(
         Resource.Type type,
         Map<String, Map<String, PropertyInfo>> componentPropertyInfoMap,
-        StreamProvider streamProvider,
+        URLStreamProvider streamProvider,
         ComponentSSLConfiguration configuration,
         TimelineMetricCacheProvider cacheProvider,
         MetricHostProvider hostProvider,
@@ -128,9 +127,12 @@ public abstract class MetricsPropertyProvider extends AbstractPropertyProvider {
   @Override
   public Set<Resource> populateResources(Set<Resource> resources,
                 Request request, Predicate predicate) throws SystemException {
-
     Set<String> ids = getRequestPropertyIds(request, predicate);
     if (ids.isEmpty()) {
+      return resources;
+    }
+
+    if (!checkAuthorizationForMetrics(resources, clusterNamePropertyId)) {
       return resources;
     }
 

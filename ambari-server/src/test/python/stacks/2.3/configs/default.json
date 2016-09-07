@@ -3,6 +3,9 @@
     "clusterName": "c1",
     "hostname": "c6401.ambari.apache.org",
     "hostLevelParams": {
+        "not_managed_hdfs_path_list": "[\"/apps/hive/warehouse\",\"/apps/falcon\",\"/mr-history/done\",\"/app-logs\",\"/tmp\"]",
+        "agent_stack_retry_count": "5",
+        "agent_stack_retry_on_unavailability": "false",
         "jdk_location": "http://c6401.ambari.apache.org:8080/resources/",
         "ambari_db_rca_password": "mapred",
         "ambari_db_rca_url": "jdbc:postgresql://c6401.ambari.apache.org/ambarirca",
@@ -33,11 +36,18 @@
         "slider-client": {
             "slider.yarn.queue": "default"
         },
+        "sqoop-site": {
+          "atlas.cluster.name": "c1",
+          "sqoop.job.data.publish.class": "org.apache.atlas.sqoop.hook.SqoopHook"
+        },
         "mahout-env": {
              "mahout_user": "mahout"
         },
         "yarn-env": {
             "yarn_user": "yarn"
+        },
+        "hbase-env": {
+            "hbase_user": "hbase"
         },
         "mahout-log4j": {
             "content": "\n            #\n            #\n            # Licensed to the Apache Software Foundation (ASF) under one\n            # or more contributor license agreements.  See the NOTICE file\n            # distributed with this work for additional information\n            # regarding copyright ownership.  The ASF licenses this file\n            # to you under the Apache License, Version 2.0 (the\n            # \"License\"); you may not use this file except in compliance\n            # with the License.  You may obtain a copy of the License at\n            #\n            #   http://www.apache.org/licenses/LICENSE-2.0\n            #\n            # Unless required by applicable law or agreed to in writing,\n            # software distributed under the License is distributed on an\n            # \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n            # KIND, either express or implied.  See the License for the\n            # specific language governing permissions and limitations\n            # under the License.\n            #\n            #\n            #\n\n            # Set everything to be logged to the console\n            log4j.rootCategory=WARN, console\n            log4j.appender.console=org.apache.log4j.ConsoleAppender\n            log4j.appender.console.target=System.err\n            log4j.appender.console.layout=org.apache.log4j.PatternLayout\n            log4j.appender.console.layout.ConversionPattern=%d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n\n\n            # Settings to quiet third party logs that are too verbose\n            log4j.logger.org.eclipse.jetty=WARN\n            log4j.logger.org.apache.spark.repl.SparkIMain$exprTyper=WARN\n            log4j.logger.org.apache.spark.repl.SparkILoop$SparkILoopInterpreter=WARN"
@@ -57,6 +67,7 @@
             "yarn.resourcemanager.scheduler.address": "c6401.ambari.apache.org:8030"
         },
         "cluster-env": {
+            "managed_hdfs_resource_property_names": "",
             "security_enabled": "false",
             "ignore_groupsusers_create": "false",
             "smokeuser": "ambari-qa",
@@ -163,10 +174,21 @@
         "log.index.interval.bytes": "4096",
         "log.retention.hours": "168"
       },
+      "infra-solr-env": {
+        "infra_solr_znode": "/infra-solr",
+        "infra_solr_user": "solr",
+        "infra_solr_group": "solr",
+        "infra_solr_client_log_dir" :"/var/log/ambari-infra-solr-client"
+      },
+      "infra-solr-client-log4j" : {
+        "infra_solr_client_log_dir" : "/var/log/ambari-infra-solr-client",
+        "content" : "content"
+      },
       "application-properties": {
+        "atlas.cluster.name" : "c2",
         "atlas.graph.storage.backend": "berkeleyje",
         "atlas.graph.storage.directory": "data/berkley",
-        "atlas.graph.index.search.backend": "elasticsearch",
+        "atlas.graph.index.search.backend": "solr5",
         "atlas.graph.index.search.directory": "data/es",
         "atlas.graph.index.search.elasticsearch.client-only": false,
         "atlas.graph.index.search.elasticsearch.local-mode": true,
@@ -185,7 +207,16 @@
         "atlas.http.authentication.kerberos.principal": "HTTP/_HOST@EXAMPLE.COM",
         "atlas.http.authentication.kerberos.keytab": "/etc/security/keytabs/spnego.service.keytab",
         "atlas.http.authentication.kerberos.name.rules": "DEFAULT",
-        "atlas.server.http.port" : "21000"
+        "atlas.server.http.port" : "21000",
+        "atlas.notification.embedded" : false,
+        "atlas.kafka.bootstrap.servers" : "c6401.ambari.apache.org:6667",
+        "atlas.kafka.data" : "/usr/hdp/current/atlas-server/data/kafka",
+        "atlas.kafka.entities.group.id" : "entities",
+        "atlas.kafka.hook.group.id" : "atlas",
+        "atlas.kafka.zookeeper.connect" : "c6401.ambari.apache.org:2181"
+      },
+      "zoo.cfg": {
+        "clientPort": "2181"
       },
       "atlas-env": {
         "content": "# The java implementation to use. If JAVA_HOME is not found we expect java and jar to be in path\nexport JAVA_HOME={{java64_home}}\n# any additional java opts you want to set. This will apply to both client and server operations\nexport METADATA_OPTS={{metadata_opts}}\n# metadata configuration directory\nexport METADATA_CONF={{conf_dir}}\n# Where log files are stored. Defatult is logs directory under the base install location\nexport METADATA_LOG_DIR={{log_dir}}\n# additional classpath entries\nexport METADATACPPATH={{metadata_classpath}}\n# data dir\nexport METADATA_DATA_DIR={{data_dir}}\n# Where do you want to expand the war file. By Default it is in /server/webapp dir under the base install dir.\nexport METADATA_EXPANDED_WEBAPP_DIR={{expanded_war_dir}}",
@@ -195,6 +226,14 @@
         "metadata_log_dir": "/var/log/atlas",
         "metadata_data_dir": "/var/lib/atlas/data",
         "metadata_expanded_war_dir": "/var/lib/atlas/server/webapp"
+      },
+      "atlas-log4j": {
+        "content": "<property><name>content</name><description>Custom log4j.properties</description><value></value></property>",
+        "atlas_log_level": "debug",
+        "audit_log_level": "OFF"
+      },
+      "atlas-solrconfig": {
+        "content": "<property><name>content</name><description>Custom solrconfig properties</description><value></value></property>"
       },
       "ranger-hbase-plugin-properties": {
             "ranger-hbase-plugin-enabled":"yes"
@@ -207,6 +246,7 @@
       }
     },
     "configuration_attributes": {
+        "sqoop-site": {},
         "yarn-site": {
             "final": {
                 "yarn.nodemanager.disk-health-checker.min-healthy-disks": "true",
@@ -239,6 +279,7 @@
       "kafka-env": {},
       "kafka-log4j": {},
       "kafka-broker": {},
+      "atlas-hbase-site": {},
       "metadata-env": {}
     },
     "configurationTags": {
@@ -298,14 +339,20 @@
             "c6401.ambari.apache.org",
             "c6402.ambari.apache.org"
         ],
-      "knox_gateway_hosts": [
-        "jaimin-knox-1.c.pramod-thangali.internal"
-      ],
-      "kafka_broker_hosts": [
-        "c6401.ambari.apache.org"
-      ],
-       "zookeeper_hosts": [
+        "knox_gateway_hosts": [
+          "jaimin-knox-1.c.pramod-thangali.internal"
+        ],
+        "kafka_broker_hosts": [
+          "c6401.ambari.apache.org"
+        ],
+        "infra_solr_hosts": [
+          "c6401.ambari.apache.org"
+        ],
+        "zookeeper_hosts": [
          "c6401.ambari.apache.org"
+        ],
+        "atlas_server_hosts": [
+          "c6401.ambari.apache.org"
         ]
 
 }

@@ -186,12 +186,31 @@ App.HighAvailabilityWizardController = App.WizardController.extend({
     this.set('content.tasksRequestIds', requestIds);
   },
 
+  loadHdfsUserFromServer: function () {
+    return App.get('router.configurationController').loadFromServer([{'siteName': 'hadoop-env'}]);
+  },
+
   loadMap: {
     '1': [
       {
-        type: 'sync',
+        type: 'async',
         callback: function () {
-          this.load('cluster');
+          var dfd = $.Deferred(),
+            self = this,
+            usersLoadingCallback = function () {
+              self.saveHdfsUser();
+              self.load('cluster');
+              dfd.resolve();
+            };
+          if (App.db.getHighAvailabilityWizardHdfsUser()) {
+            usersLoadingCallback();
+          } else {
+            this.loadHdfsUserFromServer().done(function (data) {
+              self.set('content.hdfsUser', Em.get(data, '0.properties.hdfs_user'));
+              usersLoadingCallback();
+            });
+          }
+          return dfd.promise();
         }
       }
     ],
@@ -203,9 +222,10 @@ App.HighAvailabilityWizardController = App.WizardController.extend({
           var self = this;
           this.loadHosts().done(function () {
             self.loadServicesFromServer();
-            self.loadMasterComponentHosts();
-            self.loadHdfsUser();
-            dfd.resolve();
+            self.loadMasterComponentHosts().done(function () {
+              self.loadHdfsUser();
+              dfd.resolve();
+            });
           });
           return dfd.promise();
         }

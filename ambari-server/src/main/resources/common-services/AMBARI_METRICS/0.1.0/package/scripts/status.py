@@ -17,29 +17,37 @@ limitations under the License.
 
 """
 
-from resource_management import *
+from resource_management.libraries.functions import format
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 import os
 
+def get_collector_pid_files():
+  pid_files = []
+  pid_files.append(format("{ams_collector_pid_dir}/ambari-metrics-collector.pid"))
+  pid_files.append(format("{hbase_pid_dir}/hbase-{hbase_user}-master.pid"))
+  if os.path.exists(format("{hbase_pid_dir}/distributed_mode")):
+    pid_files.append(format("{hbase_pid_dir}/hbase-{hbase_user}-regionserver.pid"))
+  return pid_files
+
 @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
 def check_service_status(name):
-  if name=='collector':
-    pid_file = format("{ams_collector_pid_dir}/ambari-metrics-collector.pid")
-    check_process_status(pid_file)
-    pid_file = format("{hbase_pid_dir}/hbase-{hbase_user}-master.pid")
-    check_process_status(pid_file)
-    if os.path.exists(format("{hbase_pid_dir}/distributed_mode")):
-      pid_file = format("{hbase_pid_dir}/hbase-{hbase_user}-regionserver.pid")
-      check_process_status(pid_file)
+  import status_params
+  env.set_params(status_params)
 
+  from resource_management.libraries.functions.check_process_status import check_process_status
+  if name=='collector':
+    for pid_files in get_collector_pid_files():
+      check_process_status(pid_file)
   elif name == 'monitor':
-    pid_file = format("{ams_monitor_pid_dir}/ambari-metrics-monitor.pid")
-    check_process_status(pid_file)
+    check_process_status(status_params.monitor_pid_file)
+  elif name == 'grafana':
+    check_process_status(status_params.grafana_pid_file)
 
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
 def check_service_status(name):
   import service_mapping
+  from resource_management.libraries.functions.windows_service_utils import check_windows_service_status
   if name=='collector':
     check_windows_service_status(service_mapping.ams_collector_win_service_name)
   elif name == 'monitor':

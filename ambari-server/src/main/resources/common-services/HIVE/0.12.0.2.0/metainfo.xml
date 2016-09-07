@@ -31,6 +31,7 @@
           <category>MASTER</category>
           <cardinality>1</cardinality>
           <versionAdvertised>true</versionAdvertised>
+          <reassignAllowed>true</reassignAllowed>
           <clientsToUpdateConfigs></clientsToUpdateConfigs>
           <auto-deploy>
             <enabled>true</enabled>
@@ -41,6 +42,12 @@
             <scriptType>PYTHON</scriptType>
             <timeout>1200</timeout>
           </commandScript>
+          <logs>
+            <log>
+              <logId>hive_metastore</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
           <configuration-dependencies>
             <config-type>hive-site</config-type>
           </configuration-dependencies>
@@ -52,6 +59,7 @@
           <category>MASTER</category>
           <cardinality>1</cardinality>
           <versionAdvertised>true</versionAdvertised>
+          <reassignAllowed>true</reassignAllowed>
           <clientsToUpdateConfigs></clientsToUpdateConfigs>
           <dependencies>
             <dependency>
@@ -81,6 +89,12 @@
             <script>scripts/hive_server.py</script>
             <scriptType>PYTHON</scriptType>
           </commandScript>
+          <logs>
+            <log>
+              <logId>hive_hiveserver2</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
           <configuration-dependencies>
             <config-type>hive-site</config-type>
           </configuration-dependencies>
@@ -91,12 +105,20 @@
           <category>MASTER</category>
           <cardinality>1</cardinality>
           <versionAdvertised>true</versionAdvertised>
+          <reassignAllowed>true</reassignAllowed>
           <clientsToUpdateConfigs>
             <client>HCAT</client>
           </clientsToUpdateConfigs>
           <dependencies>
             <dependency>
               <name>HDFS/HDFS_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+            </dependency>
+            <dependency>
+              <name>HIVE/HIVE_CLIENT</name>
               <scope>host</scope>
               <auto-deploy>
                 <enabled>true</enabled>
@@ -154,6 +176,7 @@
           <category>MASTER</category>
           <cardinality>0-1</cardinality>
           <versionAdvertised>false</versionAdvertised>
+          <reassignAllowed>true</reassignAllowed>
           <clientsToUpdateConfigs></clientsToUpdateConfigs>
           <commandScript>
             <script>scripts/mysql_server.py</script>
@@ -223,10 +246,10 @@
               <dictionaryName>hcat-env</dictionaryName>
             </configFile>
           </configFiles>
+          <configuration-dependencies>
+            <config-type>hive-site</config-type>
+          </configuration-dependencies>
         </component>
-        <configuration-dependencies>
-          <config-type>hive-site</config-type>
-        </configuration-dependencies>
       </components>
 
       <osSpecifics>
@@ -248,11 +271,12 @@
             <package>
               <name>mysql-connector-java</name>
               <skipUpgrade>true</skipUpgrade>
+              <condition>should_install_mysql_connector</condition>
             </package>
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>redhat6,suse11</osFamily>
+          <osFamily>amazon2015,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
               <name>mysql</name>
@@ -261,11 +285,12 @@
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>redhat6,debian7,ubuntu12,ubuntu14</osFamily>
+          <osFamily>amazon2015,redhat6,debian7,ubuntu12,ubuntu14,ubuntu16</osFamily>
           <packages>
             <package>
               <name>mysql-server</name>
               <skipUpgrade>true</skipUpgrade>
+              <condition>should_install_mysql</condition>
             </package>
           </packages>
         </osSpecific>
@@ -275,15 +300,17 @@
             <package>
               <name>mysql-community-release</name>
               <skipUpgrade>true</skipUpgrade>
+              <condition>should_install_mysql</condition>
             </package>
             <package>
               <name>mysql-community-server</name>
               <skipUpgrade>true</skipUpgrade>
+              <condition>should_install_mysql</condition>
             </package>
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>suse11</osFamily>
+          <osFamily>suse11,suse12</osFamily>
           <packages>
             <package>
               <name>mysql-client</name>
@@ -309,6 +336,7 @@
         <config-type>hive-log4j</config-type>
         <config-type>hive-exec-log4j</config-type>
         <config-type>hive-env</config-type>
+        <config-type>hivemetastore-site.xml</config-type>
         <config-type>webhcat-site</config-type>
         <config-type>webhcat-env</config-type>
         <config-type>ranger-hive-plugin-properties</config-type>
@@ -316,6 +344,7 @@
         <config-type>ranger-hive-policymgr-ssl</config-type>
         <config-type>ranger-hive-security</config-type>
         <config-type>mapred-site</config-type>
+        <config-type>application.properties</config-type>
       </configuration-dependencies>
     </service>
   </services>

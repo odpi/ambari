@@ -19,8 +19,6 @@ Ambari Agent
 
 """
 
-from resource_management.libraries.functions.version import compare_versions
-from resource_management import *
 import sys
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import re
@@ -28,7 +26,16 @@ import subprocess
 from ambari_commons import os_utils
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.constants import StackFeature
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions.get_user_call_output import get_user_call_output
+from resource_management.core.exceptions import Fail
+from resource_management.core.logger import Logger
+from resource_management.core.resources.system import Execute, File
+from resource_management.core.source import StaticFile
+from resource_management.core import shell
 
 CURL_CONNECTION_TIMEOUT = '5'
 
@@ -85,13 +92,23 @@ class ServiceCheckDefault(ServiceCheck):
     import params
     env.set_params(params)
 
-    if params.hdp_stack_version_major != "" and compare_versions(params.hdp_stack_version_major, '2.2') >= 0:
-      path_to_distributed_shell_jar = "/usr/hdp/current/hadoop-yarn-client/hadoop-yarn-applications-distributedshell.jar"
+    params.HdfsResource(format("/user/{smokeuser}"),
+                        type="directory",
+                        action="create_on_execute",
+                        owner=params.smokeuser,
+                        mode=params.smoke_hdfs_user_mode,
+                        )
+
+    if params.stack_version_formatted_major and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.stack_version_formatted_major):
+      path_to_distributed_shell_jar = format("{stack_root}/current/hadoop-yarn-client/hadoop-yarn-applications-distributedshell.jar")
     else:
       path_to_distributed_shell_jar = "/usr/lib/hadoop-yarn/hadoop-yarn-applications-distributedshell*.jar"
 
-    yarn_distrubuted_shell_check_cmd = format("yarn org.apache.hadoop.yarn.applications.distributedshell.Client "
-                                              "-shell_command ls -num_containers {number_of_nm} -jar {path_to_distributed_shell_jar}")
+    yarn_distrubuted_shell_check_params = ["yarn org.apache.hadoop.yarn.applications.distributedshell.Client",
+                                           "-shell_command", "ls", "-num_containers", "{number_of_nm}",
+                                           "-jar", "{path_to_distributed_shell_jar}", "-timeout", "300000",
+                                           "--queue", "{service_check_queue_name}"]
+    yarn_distrubuted_shell_check_cmd = format(" ".join(yarn_distrubuted_shell_check_params))
 
     if params.security_enabled:
       kinit_cmd = format("{kinit_path_local} -kt {smoke_user_keytab} {smokeuser_principal};")
@@ -113,9 +130,8 @@ class ServiceCheckDefault(ServiceCheck):
       if "application" in item:
         application_name = item
 
-    json_response_received = False
-    for rm_host in params.rm_hosts:
-      info_app_url = params.scheme + "://" + rm_host + ":" + params.rm_active_port + "/ws/v1/cluster/apps/" + application_name
+    for rm_webapp_address in params.rm_webapp_addresses_list:
+      info_app_url = params.scheme + "://" + rm_webapp_address + "/ws/v1/cluster/apps/" + application_name
 
       get_app_info_cmd = "curl --negotiate -u : -ksL --connect-timeout " + CURL_CONNECTION_TIMEOUT + " " + info_app_url
 
@@ -123,19 +139,24 @@ class ServiceCheckDefault(ServiceCheck):
                                             user=params.smokeuser,
                                             path='/usr/sbin:/sbin:/usr/local/bin:/bin:/usr/bin',
                                             )
+      
+      # Handle HDP<2.2.8.1 where RM doesn't do automatic redirection from standby to active
+      if stdout.startswith("This is standby RM. Redirecting to the current active RM:"):
+        Logger.info(format("Skipped checking of {rm_webapp_address} since returned '{stdout}'"))
+        continue
 
       try:
         json_response = json.loads(stdout)
-
-        json_response_received = True
-
-        if json_response['app']['state'] != "FINISHED" or json_response['app']['finalStatus'] != "SUCCEEDED":
-          raise Exception("Application " + app_url + " state/status is not valid. Should be FINISHED/SUCCEEDED.")
       except Exception as e:
-        pass
+        raise Fail(format("Response from YARN API was not a valid JSON. Response: {stdout}"))
+      
+      if json_response is None or 'app' not in json_response or \
+              'state' not in json_response['app'] or 'finalStatus' not in json_response['app']:
+        raise Fail("Application " + app_url + " returns invalid data.")
 
-    if not json_response_received:
-      raise Exception("Could not get json response from YARN API")
+      if json_response['app']['state'] != "FINISHED" or json_response['app']['finalStatus'] != "SUCCEEDED":
+        raise Fail("Application " + app_url + " state/status is not valid. Should be FINISHED/SUCCEEDED.")
+
 
 
 if __name__ == "__main__":

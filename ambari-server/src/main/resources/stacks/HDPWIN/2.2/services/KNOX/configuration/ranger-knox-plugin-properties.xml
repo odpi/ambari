@@ -19,10 +19,9 @@
  */
 -->
 <configuration supports_final="true">
-
   <property>
     <name>KNOX_HOME</name>
     <value>c:\hadoop\knox</value>
+    <on-ambari-upgrade add="true"/>
   </property>
-
 </configuration>

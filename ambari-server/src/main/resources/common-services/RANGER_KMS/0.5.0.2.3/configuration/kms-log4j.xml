@@ -18,10 +18,10 @@
  * limitations under the License.
  */
 -->
-<configuration>
-
+<configuration supports_adding_forbidden="true">
   <property>
     <name>content</name>
+    <display-name>kms-log4j template</display-name>
     <description>kms-log4j.properties</description>
     <value>
 #
@@ -58,14 +58,17 @@ log4j.appender.kms-audit.layout.ConversionPattern=%d{ISO8601} %m%n
 log4j.logger.kms-audit=INFO, kms-audit
 log4j.additivity.kms-audit=false
 
-log4j.rootLogger=ALL, kms
+log4j.logger=INFO, kms
+log4j.additivity.kms=false
+log4j.rootLogger=INFO, kms
 log4j.logger.org.apache.hadoop.conf=ERROR
 log4j.logger.org.apache.hadoop=INFO
 log4j.logger.com.sun.jersey.server.wadl.generators.WadlGeneratorJAXBGrammarGenerator=OFF        
     </value>
     <value-attributes>
+      <type>content</type>
       <show-property-name>false</show-property-name>
     </value-attributes>
-  </property>     
-
-</configuration>  
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

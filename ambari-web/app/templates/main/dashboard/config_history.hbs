@@ -28,11 +28,11 @@
     {{/view}}
 
     <tr class="filter-row config-history-filter-row">
-      <th class="first">{{view view.serviceFilterView}}</th>
-      <th>{{view view.configGroupFilterView}}</th>
-      <th>{{view view.modifiedFilterView}}</th>
-      <th>{{view view.authorFilterView}}</th>
-      <th>{{view view.notesFilterView}}</th>
+      <th class="first cg-service">{{view view.serviceFilterView}}</th>
+      <th class="cg-name">{{view view.configGroupFilterView}}</th>
+      <th class="cg-created">{{view view.modifiedFilterView}}</th>
+      <th class="cg-author">{{view view.authorFilterView}}</th>
+      <th class="cg-notes">{{view view.notesFilterView}}</th>
     </tr>
     </thead>
     <tbody class="services-menu">
@@ -42,9 +42,13 @@
           {{#view view.ConfigVersionView contentBinding="item"}}
             <td class="first">
               <span class="label label-info">{{item.versionText}}</span>
-              <a {{action goToServiceConfigs item}} class="service-name">
+              {{#if view.isServiceLinkDisabled}}
                 {{item.displayName}}
-              </a>
+              {{else}}
+                <a {{action goToServiceConfigs item}} class="service-name">
+                  {{item.displayName}}
+                </a>
+              {{/if}}
               <i {{bindAttr class=":icon-refresh :restart-required-service item.isRestartRequired::hidden"}}
                 rel="Tooltip" {{translateAttr data-original-title="dashboard.configHistory.table.restart.tooltip"}}></i>
             </td>
@@ -80,7 +84,7 @@
         </tr>
       {{/if}}
     {{else}}
-      <tr><td colspan="5"><div class="spinner"></div></td></tr>
+      <tr><td colspan="5">{{view App.SpinnerView}}</td></tr>
     {{/if}}
     </tbody>
 </table>

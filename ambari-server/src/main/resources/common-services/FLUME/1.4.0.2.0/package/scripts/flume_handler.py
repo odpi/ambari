@@ -17,73 +17,48 @@ limitations under the License.
 
 """
 
-import flume_upgrade
-
 from flume import flume
 from flume import get_desired_state
 
-from resource_management import *
-from resource_management.libraries.functions import conf_select
-from resource_management.libraries.functions import hdp_select
-from resource_management.libraries.functions.flume_agent_helper import find_expected_agent_names
-from resource_management.libraries.functions.flume_agent_helper import get_flume_status
-
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions import conf_select, stack_select
+from resource_management.libraries.functions.flume_agent_helper import find_expected_agent_names, get_flume_status, get_flume_pid_files
+from resource_management.core.exceptions import ComponentIsNotRunning
+from resource_management.core.logger import Logger
+from resource_management.core.resources.service import Service
 import service_mapping
 from ambari_commons import OSConst
-from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
+from ambari_commons.os_family_impl import OsFamilyImpl
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions.constants import StackFeature
 
 class FlumeHandler(Script):
-
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-  def get_stack_to_component(self):
-    return {"HDP": "flume-server"}
-
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-  def install(self, env):
-    import params
-    self.install_packages(env)
-    env.set_params(params)
-
-  @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
-  def install(self, env):
-    if not check_windows_service_exists(service_mapping.flume_win_service_name):
-      self.install_packages(env)
-    self.configure(env)
-
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-  def start(self, env, rolling_restart=False):
-    import params
-    env.set_params(params)
-    self.configure(env)
-    flume(action='start')
-
-  @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
-  def start(self, env):
-    import params
-    env.set_params(params)
-    self.configure(env)
-    Service(service_mapping.flume_win_service_name, action="start")
-
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-  def stop(self, env, rolling_restart=False):
-    import params
-    env.set_params(params)
-    flume(action='stop')
-
-    # only backup data on upgrade
-    if rolling_restart and params.upgrade_direction == Direction.UPGRADE:
-      flume_upgrade.post_stop_backup()
-
-  @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
-  def stop(self, env):
-    Service(service_mapping.flume_win_service_name, action="stop")
-
   def configure(self, env):
     import params
     env.set_params(params)
     flume(action='config')
 
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
+@OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
+class FlumeHandlerLinux(FlumeHandler):
+  def get_component_name(self):
+    return "flume-server"
+
+  def install(self, env):
+    import params
+    self.install_packages(env)
+    env.set_params(params)
+
+  def start(self, env, upgrade_type=None):
+    import params
+    env.set_params(params)
+    self.configure(env)
+    flume(action='start')
+
+  def stop(self, env, upgrade_type=None):
+    import params
+    env.set_params(params)
+    flume(action='stop')
+
   def status(self, env):
     import params
     env.set_params(params)
@@ -94,8 +69,8 @@ class FlumeHandler(Script):
     json['processes'] = processes
     self.put_structured_out(json)
 
-    # only throw an exception if there are agents defined and there is a 
-    # problem with the processes; if there are no agents defined, then 
+    # only throw an exception if there are agents defined and there is a
+    # problem with the processes; if there are no agents defined, then
     # the service should report STARTED (green) ONLY if the desired state is started.  otherwise, INSTALLED (red)
     if len(expected_agents) > 0:
       for proc in processes:
@@ -104,29 +79,52 @@ class FlumeHandler(Script):
     elif len(expected_agents) == 0 and 'INSTALLED' == get_desired_state():
       raise ComponentIsNotRunning()
 
-
-  @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
-  def status(self, env):
-    import params
-    check_windows_service_status(service_mapping.flume_win_service_name)
-
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-  def pre_rolling_restart(self, env):
+  def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
     env.set_params(params)
 
     # this function should not execute if the version can't be determined or
-    # is not at least HDP 2.2.0.0
-    if not params.version or Script.is_hdp_stack_less_than("2.2"):
+    # the stack does not support rolling upgrade
+    if not (params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version)):
       return
 
-    Logger.info("Executing Flume Rolling Upgrade pre-restart")
+    Logger.info("Executing Flume Stack Upgrade pre-restart")
     conf_select.select(params.stack_name, "flume", params.version)
-    hdp_select.select("flume-server", params.version)
+    stack_select.select("flume-server", params.version)
 
-    # only restore on upgrade, not downgrade
-    if params.upgrade_direction == Direction.UPGRADE:
-      flume_upgrade.pre_start_restore()
+  def get_log_folder(self):
+    import params
+    return params.flume_log_dir
+  
+  def get_user(self):
+    import params
+    return None # means that is run from the same user as ambari is run
+
+  def get_pid_files(self):
+    import params
+    return get_flume_pid_files(params.flume_conf_dir, params.flume_run_dir)
+
+@OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
+class FlumeHandlerWindows(FlumeHandler):
+  def install(self, env):
+    from resource_management.libraries.functions.windows_service_utils import check_windows_service_exists
+    if not check_windows_service_exists(service_mapping.flume_win_service_name):
+      self.install_packages(env)
+    self.configure(env)
+
+  def start(self, env, upgrade_type=None):
+    import params
+    env.set_params(params)
+    self.configure(env)
+    Service(service_mapping.flume_win_service_name, action="start")
+
+  def stop(self, env, upgrade_type=None):
+    Service(service_mapping.flume_win_service_name, action="stop")
+
+  def status(self, env):
+    import params
+    from resource_management.libraries.functions.windows_service_utils import check_windows_service_status
+    check_windows_service_status(service_mapping.flume_win_service_name)
 
 if __name__ == "__main__":
   FlumeHandler().execute()

@@ -41,9 +41,12 @@ class NamenodeHAState:
     """
     import params
 
-    self.name_service = default("/configurations/hdfs-site/dfs.nameservices", None)
+    self.name_service = default('/configurations/hdfs-site/dfs.internal.nameservices', None)
+    if self.name_service is None:
+      self.name_service = default('/configurations/hdfs-site/dfs.nameservices', None)
+
     if not self.name_service:
-      raise ValueError("Could not retrieve property dfs.nameservices")
+      raise ValueError("Could not retrieve property dfs.nameservices or dfs.internal.nameservices")
 
     nn_unique_ids_key = "dfs.ha.namenodes." + str(self.name_service)
     # List of the nn unique ids
@@ -86,7 +89,7 @@ class NamenodeHAState:
         # If JMX parsing failed
         if not state:
           run_user = default("/configurations/hadoop-env/hdfs_user", "hdfs")
-          check_service_cmd = "hdfs haadmin -getServiceState {0}".format(nn_unique_id)
+          check_service_cmd = "hdfs haadmin -ns {dfs_ha_nameservices} -getServiceState {0}".format(nn_unique_id)
           code, out = shell.call(check_service_cmd, logoutput=True, user=run_user)
           if code == 0 and out:
             if NAMENODE_STATE.STANDBY in out:
@@ -179,6 +182,33 @@ class NamenodeHAState:
       hostname = list(hosts)[0]
       return self.get_address_for_host(hostname)
     return None
+
+  def is_active(self, host_name):
+    """
+    :param host_name: Host name
+    :return: Return True if this is the active NameNode, otherwise, False.
+    """
+    return self._is_in_state(host_name, NAMENODE_STATE.ACTIVE)
+
+  def is_standby(self, host_name):
+    """
+    :param host_name: Host name
+    :return: Return True if this is the standby NameNode, otherwise, False.
+    """
+    return self._is_in_state(host_name, NAMENODE_STATE.STANDBY)
+
+  def _is_in_state(self, host_name, state):
+    """
+    :param host_name: Host name
+    :param state: State to check
+    :return: Return True if this NameNode is in the specified state, otherwise, False.
+    """
+    mapping = self.get_namenode_state_to_hostnames()
+    if state in mapping:
+      hosts_in_state = mapping[state]
+      if hosts_in_state is not None and len(hosts_in_state) == 1 and next(iter(hosts_in_state)).lower() == host_name.lower():
+        return True
+    return False
 
   def is_healthy(self):
     """

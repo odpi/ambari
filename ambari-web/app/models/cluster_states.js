@@ -83,10 +83,13 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
    * Is cluster installed
    * @type {bool}
    */
-  isInstalled: function () {
-    var notInstalledStates = ['CLUSTER_NOT_CREATED_1', 'CLUSTER_DEPLOY_PREP_2', 'CLUSTER_INSTALLING_3', 'SERVICE_STARTING_3'];
-    return !notInstalledStates.contains(this.get('clusterState'));
-  }.property('clusterState'),
+  isInstalled: Em.computed.notExistsIn('clusterState', ['CLUSTER_NOT_CREATED_1', 'CLUSTER_DEPLOY_PREP_2', 'CLUSTER_INSTALLING_3', 'SERVICE_STARTING_3']),
+
+  /**
+   * Stores instance of <code>App.ModalPopup</code> created by <code>postUserPrefErrorCallback</code>
+   * @property {App.ModalPopup|null}
+   */
+  persistErrorModal: null,
 
   /**
    * General info about cluster
@@ -111,6 +114,7 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
     this.set('additionalData', {
       user: App.db.getUser(),
       login: App.db.getLoginName(),
+      auth: App.db.getAuth(),
       overrideLocaldb: !overrideLocaldb
     });
     return this.getUserPref(this.get('key'));
@@ -141,7 +145,7 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
       if (response.localdb && !$.isEmptyObject(response.localdb)) {
         this.set('localdb', response.localdb);
         // restore HAWizard data if process was started
-        var isHAWizardStarted = App.isAccessible('ADMIN') && !App.isEmptyObject(response.localdb.HighAvailabilityWizard);
+        var isHAWizardStarted = App.isAuthorized('SERVICE.ENABLE_HA') && !App.isEmptyObject(response.localdb.HighAvailabilityWizard);
         if (params.data.overrideLocaldb || isHAWizardStarted) {
           var localdbTables = (App.db.data.app && App.db.data.app.tables) ? App.db.data.app.tables : {};
           var authenticated = Em.get(App, 'db.data.app.authenticated') || false;
@@ -149,6 +153,7 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
           App.db.setLocalStorage();
           App.db.setUser(params.data.user);
           App.db.setLoginName(params.data.login);
+          App.db.setAuth(params.data.auth);
           App.db.setAuthenticated(authenticated);
           App.db.data.app.tables = localdbTables;
         }
@@ -170,7 +175,6 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
   getUserPrefErrorCallback: function (request, ajaxOptions, error) {
     if (request.status == 404) {
       // default status already set
-      console.log('Persist API did NOT find the key CLUSTER_CURRENT_STATUS');
       return;
     }
     App.ModalPopup.show({
@@ -199,10 +203,8 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
    */
   setClusterStatus: function (newValue, opt) {
     if (App.get('testMode')) return false;
-    if (!App.isAccessible('ADMIN')) {
-      Em.assert('Non-Admin user should not execute setClusterStatus function', true);
-    }
     var user = App.db.getUser();
+    var auth = App.db.getAuth();
     var login = App.db.getLoginName();
     var val = {clusterName: this.get('clusterName')};
     if (newValue) {
@@ -225,6 +227,8 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
       if (newValue.localdb) {
         if (newValue.localdb.app && newValue.localdb.app.user)
           delete newValue.localdb.app.user;
+        if (newValue.localdb.app && newValue.localdb.app.auth)
+          delete newValue.localdb.app.auth;
         if (newValue.localdb.app && newValue.localdb.app.loginName)
           delete newValue.localdb.app.loginName;
         if (newValue.localdb.app && newValue.localdb.app.tables)
@@ -235,11 +239,13 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
         val.localdb = newValue.localdb;
       } else {
         delete App.db.data.app.user;
+        delete App.db.data.app.auth;
         delete App.db.data.app.loginName;
         delete App.db.data.app.tables;
         delete App.db.data.app.authenticated;
         val.localdb = App.db.data;
         App.db.setUser(user);
+        App.db.setAuth(auth);
         App.db.setLoginName(login);
       }
       if (!$.mocho) {
@@ -268,7 +274,6 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
    * @method postUserPrefErrorCallback
    */
   postUserPrefErrorCallback: function (request, ajaxOptions, error) {
-    console.log("ERROR");
     var msg = '', doc;
     try {
       msg = 'Error ' + (request.status) + ' ';
@@ -278,7 +283,16 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
       msg += JSON.parse(request.responseText).message;
     }
 
-    App.ModalPopup.show({
+    if (this.get('persistErrorModal')) {
+      if (this.get('persistErrorModal').get('state') === 'destroyed') {
+        this.set('persistErrorModal', null);
+      } else {
+        this.get('persistErrorModal').onPrimary();
+        this.set('persistErrorModal', null);
+      }
+    }
+
+    var modal = App.ModalPopup.show({
       header: Em.I18n.t('common.error'),
       secondary: false,
       response: msg,
@@ -286,6 +300,7 @@ App.clusterStatus = Em.Object.create(App.UserPref, {
         template: Em.Handlebars.compile('<p>{{t common.persist.error}} {{response}}</p>')
       })
     });
+    this.set('persistErrorModal', modal);
   }
 
 });

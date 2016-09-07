@@ -20,13 +20,16 @@ Ambari Agent
 """
 import os
 
-from resource_management import *
+from resource_management.core.resources.system import Directory, File
+from resource_management.libraries.resources.xml_config import XmlConfig
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions import is_empty
 
 def mahout():
   import params
 
   Directory( params.mahout_conf_dir,
-             recursive = True,
+             create_parents = True,
              owner = params.mahout_user,
              group = params.user_group
   )

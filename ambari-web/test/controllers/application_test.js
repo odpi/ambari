@@ -19,10 +19,23 @@
 
 var App = require('app');
 require('models/cluster');
+var testHelpers = require('test/helpers');
+
+function getController() {
+  return App.ApplicationController.create();
+}
 
 describe('App.ApplicationController', function () {
 
-  var installerController = App.ApplicationController.create();
+  var applicationController = getController();
+
+  App.TestAliases.testAsComputedTruncate(getController(), 'clusterDisplayName', 'clusterName', 13, 10);
+
+  App.TestAliases.testAsComputedAnd(getController(), 'isClusterDataLoaded', ['App.router.clusterController.isLoaded','App.router.loggedIn']);
+
+  App.TestAliases.testAsComputedAnd(getController(), 'isExistingClusterDataLoaded', ['App.router.clusterInstallCompleted','isClusterDataLoaded']);
+
+  App.TestAliases.testAsComputedAnd(getController(), 'enableLinks', ['isExistingClusterDataLoaded','!App.isOnlyViewUser']);
 
   describe('#showAboutPopup', function() {
     var dataToShowRes = {};
@@ -35,7 +48,7 @@ describe('App.ApplicationController', function () {
       App.ModalPopup.show.restore();
     });
     it ('Should send correct data to popup', function() {
-      installerController.showAboutPopup();
+      applicationController.showAboutPopup();
       dataToShowRes = JSON.parse(JSON.stringify(dataToShowRes));
       expect(dataToShowRes).to.eql({
         "header": "About",
@@ -52,61 +65,15 @@ describe('App.ApplicationController', function () {
       App.router.get.restore();
     });
     it ('Should return cluster name', function() {
-      expect(installerController.get('clusterName')).to.equal('cl1');
-    });
-  });
-
-  describe('#showSettingsPopup', function() {
-    var dataToShowRes = {};
-
-    beforeEach(function () {
-      sinon.stub(App.ModalPopup, 'show', function(dataToShow){
-        dataToShowRes = dataToShow;
-      });
-      sinon.stub(App, 'isAccessible').returns(true);
-      var emulatorClass = function() {};
-      emulatorClass.prototype.done = function(func) {
-        if (func) {
-          func();
-        }
-      };
-      var emulator = new emulatorClass();
-      sinon.stub(installerController, 'dataLoading').returns(emulator);
-    });
-    afterEach(function () {
-      App.isAccessible.restore();
-      App.ModalPopup.show.restore();
-      installerController.dataLoading.restore();
-    });
-    it ('Should show settings popup', function() {
-      installerController.showSettingsPopup();
-      dataToShowRes = JSON.parse(JSON.stringify(dataToShowRes));
-      expect(dataToShowRes).to.eql({
-        "header": "User Settings",
-        "primary": "Save"
-      });
+      expect(applicationController.get('clusterName')).to.equal('cl1');
     });
   });
 
   describe('#startKeepAlivePoller', function() {
     it ('Should change run poller state', function() {
-      installerController.set('isPollerRunning', false);
-      installerController.startKeepAlivePoller();
-      expect(installerController.get('isPollerRunning')).to.be.true;
-    });
-  });
-
-  describe('#getUserPrefErrorCallback', function() {
-    it ('Should set currentPrefObject', function() {
-      installerController.getUserPrefErrorCallback({status: 404}, {}, {});
-      expect(installerController.get('currentPrefObject')).to.be.true;
-    });
-  });
-
-  describe('#getUserPrefSuccessCallback', function() {
-    it ('Should set currentPrefObject', function() {
-      installerController.getUserPrefSuccessCallback({status: 200}, {}, {});
-      expect(installerController.get('currentPrefObject')).to.be.eql({status: 200});
+      applicationController.set('isPollerRunning', false);
+      applicationController.startKeepAlivePoller();
+      expect(applicationController.get('isPollerRunning')).to.be.true;
     });
   });
 
@@ -122,81 +89,21 @@ describe('App.ApplicationController', function () {
       App.router.route.restore();
     });
     it ('Should call route once', function() {
-      installerController.goToAdminView();
+      applicationController.goToAdminView();
       expect(result).to.be.equal('adminView');
     });
   });
 
-  describe('#dataLoading', function() {
-    beforeEach(function () {
-      sinon.stub(installerController, 'getUserPref', function(){
-        return {
-          complete: function(func) {
-            if (func) {
-              func();
-            }
-          }
-        };
-      });
-    });
-    afterEach(function () {
-      installerController.getUserPref.restore();
-    });
-    it ('Should change run poller state', function() {
-      installerController.set('currentPrefObject', {name: 'n1'});
-      installerController.dataLoading().then(function(data){
-        expect(data).to.be.eql({
-          "name": "n1"
-        });
-      });
-    });
-  });
-
   describe('#getStack', function() {
-    var res;
-    beforeEach(function () {
-      sinon.stub(App.ajax, 'send', function(data) {
-        res = data;
-      });
-    });
-    afterEach(function () {
-      App.ajax.send.restore();
-    });
+
     it ('Should return send value', function() {
       var callback = {
         'callback': true
       };
-      installerController.getStack(callback);
-      res = JSON.parse(JSON.stringify(res));
-      expect(res).to.be.eql({
-        "name": "router.login.clusters",
-        "sender": {
-          "isPollerRunning": true,
-          "currentPrefObject": null
-        },
-        "callback": {
-          "callback": true
-        }
-      });
-    });
-  });
-
-  describe('#clusterDisplayName', function() {
-    it ('Should return cluster display name', function() {
-      installerController.set('clusterName', '');
-      expect(installerController.get('clusterDisplayName')).to.equal('mycluster');
-    });
-  });
-
-  describe('#isClusterDataLoaded', function() {
-    beforeEach(function () {
-      sinon.stub(App.router, 'get').returns('cl1');
-    });
-    afterEach(function () {
-      App.router.get.restore();
-    });
-    it ('Should return true, when data loaded', function() {
-      expect(installerController.get('isClusterDataLoaded')).to.be.equal('cl1');
+      applicationController.getStack(callback);
+      var args = testHelpers.findAjaxRequest('name', 'router.login.clusters');
+      expect(args[0]).to.exists;
+      expect(args[0].callback.callback).to.be.true;
     });
   });
 

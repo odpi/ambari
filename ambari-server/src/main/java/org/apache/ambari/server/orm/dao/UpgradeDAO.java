@@ -48,6 +48,18 @@ public class UpgradeDAO {
   private DaoUtils daoUtils;
 
   /**
+   * Get all items.
+   * @return List of all of the UpgradeEntity items.
+   */
+  @RequiresSession
+  public List<UpgradeEntity> findAll() {
+    TypedQuery<UpgradeEntity> query = entityManagerProvider.get().createNamedQuery(
+        "UpgradeEntity.findAll", UpgradeEntity.class);
+
+    return daoUtils.selectList(query);
+  }
+
+  /**
    * @param clusterId the cluster id
    * @return the list of upgrades initiated for the cluster
    */
@@ -92,7 +104,13 @@ public class UpgradeDAO {
    */
   @Transactional
   public void create(UpgradeEntity entity) {
-    entityManagerProvider.get().persist(entity);
+    EntityManager entityManager = entityManagerProvider.get();
+    // This is required because since none of the entities
+    // for the request are actually persisted yet,
+    // JPA ordering could allow foreign key entities
+    // to be created after this statement.
+    entityManager.flush();
+    entityManager.persist(entity);
   }
 
   /**
@@ -157,14 +175,13 @@ public class UpgradeDAO {
   }
 
   /**
-   * @param requestId the request id
-   * @param stageId the stage id
+   * @param clusterId the cluster id
    * @return the upgrade entity, or {@code null} if not found
    */
   @RequiresSession
   public UpgradeEntity findLastUpgradeForCluster(long clusterId) {
     TypedQuery<UpgradeEntity> query = entityManagerProvider.get().createNamedQuery(
-        "UpgradeEntity.findLatestForCluster", UpgradeEntity.class);
+        "UpgradeEntity.findLatestForClusterInDirection", UpgradeEntity.class);
     query.setMaxResults(1);
     query.setParameter("clusterId", clusterId);
     query.setParameter("direction", Direction.UPGRADE);
@@ -174,4 +191,24 @@ public class UpgradeDAO {
     return daoUtils.selectSingle(query);
   }
 
+  /**
+   * @param clusterId the cluster id
+   * @return the upgrade entity, or {@code null} if not found
+   */
+  @RequiresSession
+  public UpgradeEntity findLastUpgradeOrDowngradeForCluster(long clusterId) {
+    TypedQuery<UpgradeEntity> query = entityManagerProvider.get().createNamedQuery(
+        "UpgradeEntity.findLatestForCluster", UpgradeEntity.class);
+    query.setMaxResults(1);
+    query.setParameter("clusterId", clusterId);
+
+    query.setHint(QueryHints.REFRESH, HintValues.TRUE);
+
+    return daoUtils.selectSingle(query);
+  }
+
+  @Transactional
+  public UpgradeEntity merge(UpgradeEntity upgradeEntity) {
+    return entityManagerProvider.get().merge(upgradeEntity);
+  }
 }

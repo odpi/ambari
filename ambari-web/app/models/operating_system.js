@@ -27,7 +27,10 @@ App.OperatingSystem = DS.Model.extend({
   repositories: DS.hasMany('App.Repository'),
   stack: DS.belongsTo('App.Stack'),
   isSelected: DS.attr('boolean', {defaultValue: true}),
-  isDeselected: Em.computed.not('isSelected')
+  isDeselected: Em.computed.not('isSelected'),
+
+  isNotFilled: Em.computed.someBy('repositories', 'isEmpty', true),
+  isEmpty: Em.computed.everyBy('repositories', 'isEmpty', true)
 });
 
 

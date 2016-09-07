@@ -18,13 +18,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
+import os
+import tarfile
+import zipfile
+from contextlib import closing
 from resource_management.core.resources.system import Execute
 
 def archive_dir(output_filename, input_dir):
   Execute(('tar', '-zcvf', output_filename, input_dir),
     sudo = True,
+    tries = 3,
+    try_sleep = 1,
   )
-
 
 def archive_directory_dereference(archive, directory):
   """
@@ -34,15 +39,43 @@ def archive_directory_dereference(archive, directory):
   :param directory:   the directory to include
   :return:  None
   """
-  
+
   Execute(('tar', '-zcvhf', archive, directory),
     sudo = True,
+    tries = 3,
+    try_sleep = 1,
   )
-  
+
 def untar_archive(archive, directory):
   """
   :param directory:   can be a symlink and is followed
   """
   Execute(('tar','-xvf',archive,'-C',directory+"/"),
-          sudo = True,
+    sudo = True,
+    tries = 3,
+    try_sleep = 1,
   )
+
+def extract_archive(archive, directory):
+  if archive.endswith('.tar.gz') or path.endswith('.tgz'):
+    mode = 'r:gz'
+  elif archive.endswith('.tar.bz2') or path.endswith('.tbz'):
+    mode = 'r:bz2'
+  else:
+    raise ValueError, "Could not extract `%s` as no appropriate extractor is found" % path
+  with closing(tarfile.open(archive, mode)) as tar:
+    tar.extractall(directory)
+
+def get_archive_root_dir(archive):
+  if archive.endswith('.tar.gz') or path.endswith('.tgz'):
+    mode = 'r:gz'
+  elif archive.endswith('.tar.bz2') or path.endswith('.tbz'):
+    mode = 'r:bz2'
+  else:
+    raise ValueError, "Could not extract `%s` as no appropriate extractor is found" % path
+  root_dir = None
+  with closing(tarfile.open(archive, mode)) as tar:
+    names = tar.getnames()
+    if names:
+      root_dir = os.path.commonprefix(names)
+  return root_dir

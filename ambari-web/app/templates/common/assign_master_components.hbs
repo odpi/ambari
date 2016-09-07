@@ -16,7 +16,9 @@
 * limitations under the License.
 }}
 <div id="assign-masters">
+{{#if view.showTitle}}
   <h2>{{view.title}}</h2>
+{{/if}}
   <div class="alert alert-info">
     {{{view.alertMessage}}}
   </div>
@@ -103,7 +105,7 @@
                           </span>
                           <span rel="popover" title="Error" {{bindAttr data-content="errorMessage"}}>
                             {{#if errorMessage}}
-                              <i class="icon-remove-sign"></i>
+                              <i class="icon-exclamation-sign"></i>
                             {{/if}}
                           </span>
                         </div>
@@ -135,10 +137,25 @@
       <div class="clearfix"></div>
     </div>
   {{else}}
-    <div class="spinner"></div>
+    {{view App.SpinnerView}}
   {{/if}}
   <div class="btn-area">
-    <a class="btn pull-left installer-back-btn" {{action back}}>&larr; {{t common.back}}</a>
-    <a class="btn btn-success pull-right" {{bindAttr disabled="submitDisabled"}} {{action submit target="controller"}}>{{t common.next}} &rarr;</a>
+    {{#if view.isBackButtonVisible}}
+      <button type="button" class="btn pull-left installer-back-btn" {{bindAttr disabled="App.router.btnClickInProgress"}} {{action back}}>
+        &larr; {{t common.back}}
+        {{#if App.router.backBtnClickInProgress}}
+          {{view App.SpinnerView tagName="span" classNames="service-button-spinner"}}
+        {{/if}}
+      </button>
+    {{/if}}
+    <button type="button" class="btn btn-success pull-right" {{bindAttr disabled="nextButtonDisabled"}} {{action submit target="controller"}}>
+      {{#if App.router.nextBtnClickInProgress}}
+        {{view App.SpinnerView tagName="span" classNames="service-button-spinner"}}
+      {{/if}}
+      {{view.acceptButtonText}}
+    </button>
+    {{#if view.isCancelButtonVisible}}
+      <button class="btn pull-right mrm" {{action onCancel target="controller"}}>{{t common.cancel}}</button>
+    {{/if}}
   </div>
 </div>

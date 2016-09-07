@@ -18,55 +18,84 @@
 package org.apache.hadoop.metrics2.sink.timeline.cache;
 
 import java.io.IOException;
-import java.net.ConnectException;
-import java.net.InetSocketAddress;
-import java.net.SocketAddress;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpMethod;
 import org.apache.hadoop.metrics2.sink.timeline.AbstractTimelineMetricsSink;
+import org.apache.hadoop.metrics2.sink.timeline.TimelineMetric;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetrics;
 import org.apache.hadoop.metrics2.sink.timeline.UnableToConnectException;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.powermock.core.classloader.annotations.PrepareForTest;
+import org.powermock.modules.junit4.PowerMockRunner;
 
-@RunWith(MockitoJUnitRunner.class)
+import static org.easymock.EasyMock.anyString;
+import static org.easymock.EasyMock.expect;
+import static org.powermock.api.easymock.PowerMock.createNiceMock;
+import static org.powermock.api.easymock.PowerMock.expectNew;
+import static org.powermock.api.easymock.PowerMock.replayAll;
+
+@RunWith(PowerMockRunner.class)
+@PrepareForTest({AbstractTimelineMetricsSink.class, URL.class, HttpURLConnection.class})
 public class HandleConnectExceptionTest {
   private static final String COLLECTOR_URL = "collector";
-  @Mock private HttpClient client;
   private TestTimelineMetricsSink sink;
   
-  @Before public void init(){
+  @Before
+  public void init(){
     sink = new TestTimelineMetricsSink();
-    sink.setHttpClient(client);
-    
+    OutputStream os = createNiceMock(OutputStream.class);
+    HttpURLConnection connection = createNiceMock(HttpURLConnection.class);
+    URL url = createNiceMock(URL.class);
+    AbstractTimelineMetricsSink.NUMBER_OF_SKIPPED_COLLECTOR_EXCEPTIONS = 2;
     try {
-      Mockito.when(client.executeMethod(Mockito.<HttpMethod>any())).thenThrow(new ConnectException());
-    } catch (IOException e) {
+      expectNew(URL.class, anyString()).andReturn(url).anyTimes();
+      expect(url.openConnection()).andReturn(connection).anyTimes();
+      expect(connection.getOutputStream()).andReturn(os).anyTimes();
+      expect(connection.getResponseCode()).andThrow(new IOException()).anyTimes();
+
+      replayAll();
+    } catch (Exception e) {
       //no-op
     }
-  } 
-  
+  }
+
   @Test
   public void handleTest(){
-    try{
+    emitMetricsWithExpectedException(new TimelineMetrics());
+    try {
       sink.emitMetrics(new TimelineMetrics());
+    } catch (Exception e) {
+      Assert.fail("There should be no exception");
+    }
+    emitMetricsWithExpectedException(new TimelineMetrics());
+  }
+
+  private void emitMetricsWithExpectedException(TimelineMetrics timelineMetrics) {
+    try{
+      sink.emitMetrics(timelineMetrics);
       Assert.fail();
-    }catch(UnableToConnectException e){
+    } catch (UnableToConnectException e){
       Assert.assertEquals(COLLECTOR_URL, e.getConnectUrl());
-    }catch(Exception e){
+    } catch (Exception e){
+      e.printStackTrace();
       Assert.fail(e.getMessage());
     }
   }
-  class TestTimelineMetricsSink extends AbstractTimelineMetricsSink{
+
+  private class TestTimelineMetricsSink extends AbstractTimelineMetricsSink{
     @Override
-    protected String getCollectorUri() {
+    protected String getCollectorUri(String host) {
       return COLLECTOR_URL;
+    }
+
+    @Override
+    protected String getCollectorProtocol() {
+      return "http";
     }
 
     @Override
@@ -75,8 +104,26 @@ public class HandleConnectExceptionTest {
     }
 
     @Override
-    public void emitMetrics(TimelineMetrics metrics) throws IOException {
-      super.emitMetrics(metrics);
+    protected String getZookeeperQuorum() {
+      return "localhost:2181";
     }
+
+    @Override
+    protected String getConfiguredCollectors() {
+      return "localhost:2181";
+    }
+
+    @Override
+    protected String getHostname() {
+      return "h1";
+    }
+
+    @Override
+    public boolean emitMetrics(TimelineMetrics metrics) {
+      super.init();
+      return super.emitMetrics(metrics);
+    }
+
+
   }
 }

@@ -58,6 +58,7 @@ import org.apache.ambari.server.controller.spi.TemporalInfo;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
 import org.apache.ambari.server.controller.utilities.PredicateHelper;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -91,6 +92,11 @@ public class QueryImpl implements Query, ResourceInstance {
    * Map of primary and foreign key values.
    */
   private final Map<Resource.Type, String> keyValueMap = new HashMap<Resource.Type, String>();
+
+  /**
+   * Map of properties from the request.
+   */
+  private final Map<String, String> requestInfoProperties = new HashMap<String, String>();
 
   /**
    * Set of query results.
@@ -246,6 +252,18 @@ public class QueryImpl implements Query, ResourceInstance {
   public void setRenderer(Renderer renderer) {
     this.renderer = renderer;
     renderer.init(clusterController);
+  }
+
+  @Override
+  public void setRequestInfoProps(Map<String, String> requestInfoProperties) {
+    if(requestInfoProperties != null) {
+      this.requestInfoProperties.putAll(requestInfoProperties);
+    }
+  }
+
+  @Override
+  public Map<String, String> getRequestInfoProps() {
+    return this.requestInfoProperties;
   }
 
 
@@ -407,16 +425,16 @@ public class QueryImpl implements Query, ResourceInstance {
     }
 
     // Optimization:
-    // Currently the steps executed when sub-resources are requested are: 
+    // Currently the steps executed when sub-resources are requested are:
     //   (1) Get *all* top-level resources
     //   (2) Populate all top-level resources
-    //   (3) Query for and populate sub-resources of *all* top-level resources 
+    //   (3) Query for and populate sub-resources of *all* top-level resources
     //   (4) Apply pagination and predicate on resources from above
     //
     // Though this works, it is very inefficient when either:
     //   (a) Predicate does not apply to sub-resources
     //   (b) Page request is present
-    // It is inefficient because we needlessly populate sub-resources that might not get 
+    // It is inefficient because we needlessly populate sub-resources that might not get
     // used due to their top-level resources being filtered out by the predicate and paging
     //
     // The optimization is to apply the predicate and paging request on the top-level resources
@@ -467,6 +485,9 @@ public class QueryImpl implements Query, ResourceInstance {
             resourceSet.addAll(queryResources);
           } catch (NoSuchResourceException e) {
             // do nothing ...
+          } catch (AuthorizationException e) {
+            // do nothing, since the user does not have access to the data ...
+            LOG.debug("User does not have authorization to get {} resources. The data will not be added to the response.", resourceType.name());
           }
           subResource.queryResults.put(resource,
               new QueryResult(request, queryPredicate, subResourcePredicate, map, new QueryResponseImpl(resourceSet)));
@@ -547,22 +568,22 @@ public class QueryImpl implements Query, ResourceInstance {
    *          │
    *          └── CResource2
    *                p3:2
-   * 
+   *
    * Given the following query ...
-   * 
+   *
    *     api/v1/a_resources?b_resources/p1>3&b_resources/p2=5&c_resources/p3=1
-   * 
+   *
    * The caller should pass the following property ids ...
-   * 
+   *
    *     b_resources/p1
    *     b_resources/p2
    *     c_resources/p3
-   * 
+   *
    * getJoinedResourceProperties should produce the following map of property sets
    * by making recursive calls on the sub-resources of each of this query's resources,
    * joining the resulting property sets, and adding them to the map keyed by the
    * resource ...
-   * 
+   *
    *  {
    *    AResource1=[{b_resources/p1=1, b_resources/p2=5, c_resources/p3=1},
    *                {b_resources/p1=2, b_resources/p2=0, c_resources/p3=1},
@@ -891,13 +912,23 @@ public class QueryImpl implements Query, ResourceInstance {
       }
     }
 
+    Predicate p = null;
+
     if (setPredicates.size() == 1) {
-      return setPredicates.iterator().next();
+      p = setPredicates.iterator().next();
     } else if (setPredicates.size() > 1) {
-      return new AndPredicate(setPredicates.toArray(new Predicate[setPredicates.size()]));
+      p = new AndPredicate(setPredicates.toArray(new Predicate[setPredicates.size()]));
     } else {
       return null;
     }
+
+    Resource.Type type = getResourceDefinition().getType();
+    Predicate override = clusterController.getAmendedPredicate(type, p);
+    if (null != override) {
+      p = override;
+    }
+
+    return p;
   }
 
   private Predicate createPredicate() {
@@ -953,7 +984,8 @@ public class QueryImpl implements Query, ResourceInstance {
   }
 
   private Request createRequest() {
-    Map<String, String> requestInfoProperties = new HashMap<String, String>();
+    // Initiate this request's requestInfoProperties with the ones set from the original request
+    Map<String, String> requestInfoProperties = new HashMap<String, String>(this.requestInfoProperties);
 
     if (pageRequest != null) {
       requestInfoProperties.put(BaseRequest.PAGE_SIZE_PROPERTY_KEY,

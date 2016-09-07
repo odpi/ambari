@@ -207,9 +207,12 @@ class Options(Const):
   REPLACE_JH_HOST_NAME_TAG = "REPLACE_JH_HOST"
   REPLACE_RM_HOST_NAME_TAG = "REPLACE_RM_HOST"
   REPLACE_WITH_TAG = "REPLACE_WITH_"
+  PHOENIX_QUERY_SERVER = "PHOENIX_QUERY_SERVER"
   ZK_OPTIONS = "zoo.cfg"
   KAFKA_BROKER_CONF = "kafka-broker"
   RANGER_ADMIN = "admin-properties"
+  RANGER_USERSYNC = "usersync-properties"
+  RANGER_ENV = "ranger-env"
   KAFKA_PORT = "port"
   RANGER_EXTERNAL_URL = "policymgr_external_url"
   ZK_CLIENTPORT = "clientPort"
@@ -261,6 +264,7 @@ class Options(Const):
   def initialize(cls):
     cls.ROOT_URL = '%s://%s:%s/api/v1' % (cls.API_PROTOCOL, cls.HOST, cls.API_PORT)
     cls.CLUSTER_URL = cls.ROOT_URL + "/clusters/%s" % cls.CLUSTER_NAME
+    cls.COMPONENTS_URL = cls.CLUSTER_URL + "/components?fields=ServiceComponentInfo/total_count"
     cls.COMPONENTS_FORMAT = cls.CLUSTER_URL + "/components/{0}"
     cls.TEZ_VIEW_URL = cls.ROOT_URL + "/views/TEZ"
     cls.STACKS_URL = cls.ROOT_URL + "/stacks"
@@ -280,8 +284,6 @@ class Options(Const):
     if cls.ambari_server.server_version[0] * 10 + cls.ambari_server.server_version[1] >= 17:
       return True
     return False
-
-
 
   @classmethod
   def initialize_logger(cls, filename=None):
@@ -349,6 +351,16 @@ class AmbariServer(object):
     Options.logger.info("Resolving Ambari server configuration ...")
     self._get_server_info()
     self._get_agents_info()
+    self._get_components()
+
+  def _get_components(self):
+    info = curl(Options.COMPONENTS_URL, parse=True)
+    self._components = []
+    if CatConst.ITEMS_TAG in info:
+      for item in info[CatConst.ITEMS_TAG]:
+        if "ServiceComponentInfo" in item and "total_count" in item["ServiceComponentInfo"] and \
+          int(item["ServiceComponentInfo"]["total_count"]) > 0 and "component_name" in item["ServiceComponentInfo"]:
+          self._components.append(item["ServiceComponentInfo"]["component_name"])
 
   def _get_server_info(self):
     info = curl(Options.AMBARI_SERVER_URL, parse=True)
@@ -368,6 +380,10 @@ class AmbariServer(object):
     if "hostComponents" in info:
       agent_props = info["hostComponents"]
       self._agents = list(map(lambda x: x["RootServiceHostComponents"]["host_name"], agent_props))
+
+  @property
+  def components(self):
+    return self._components
 
   @property
   def server_version(self):
@@ -1396,8 +1412,6 @@ def get_tez_history_url_base():
     raise TemplateProcessingException(str(e))
 
   version = ""
-
-
   if "versions" in tez_view and \
     len(tez_view['versions']) > 0 and \
     "ViewVersionInfo" in tez_view['versions'][0] and \
@@ -1418,6 +1432,7 @@ def get_kafka_listeners():
   kafka_listeners = "PLAINTEXT://{0}:{1}".format(kafka_host, kafka_port)
 
   return kafka_listeners
+
 
 def get_ranger_xaaudit_hdfs_destination_directory():
   namenode_hostname="localhost"
@@ -1501,6 +1516,28 @@ def get_hdfs_batch_filespool_dir(config_name, component):
   return path
 
 
+def get_usersync_sync_source():
+  ug_sync_source = 'org.apache.ranger.unixusersync.process.UnixUserGroupBuilder'
+  sync_source = 'unix'
+  if Options.server_config_factory is not None and Options.RANGER_USERSYNC in Options.server_config_factory.items():
+    props = Options.server_config_factory.get_config(Options.RANGER_USERSYNC)
+    if "SYNC_SOURCE" in props.properties:
+      sync_source = props.properties['SYNC_SOURCE']
+
+    if sync_source == 'ldap':
+      ug_sync_source = 'org.apache.ranger.ldapusersync.process.LdapUserGroupBuilder'
+  return ug_sync_source
+
+def get_audit_check(audit_type):
+  audit_check_flag = "false"
+  if Options.server_config_factory is not None and Options.RANGER_ENV in Options.server_config_factory.items():
+    props = Options.server_config_factory.get_config(Options.RANGER_ENV)
+    audit_property = "xasecure.audit.destination.{0}".format(audit_type)
+    if audit_property in props.properties:
+      audit_check_flag = props.properties[audit_property]
+
+  return audit_check_flag
+
 def get_jt_host(catalog):
   """
   :type catalog: UpgradeCatalog
@@ -1541,11 +1578,13 @@ def get_ranger_service_details():
     data['RANGER_JDBC_DIALECT'] = 'org.eclipse.persistence.platform.database.MySQLPlatform'
     data['RANGER_JDBC_URL'] = 'jdbc:mysql://{0}/{1}'.format(properties_latest['db_host'], properties_latest['db_name'])
     data['RANGER_AUDIT_JDBC_URL'] = 'jdbc:mysql://{0}/{1}'.format(properties_latest['db_host'], properties_latest['audit_db_name'])
+    data['RANGER_ROOT_JDBC_URL'] = 'jdbc:mysql://{0}'.format(properties_latest['db_host'])
   elif properties_latest['DB_FLAVOR'].lower() == 'oracle':
     data['RANGER_JDBC_DRIVER'] = 'oracle.jdbc.OracleDriver'
     data['RANGER_JDBC_DIALECT'] = 'org.eclipse.persistence.platform.database.OraclePlatform'
     data['RANGER_JDBC_URL'] = 'jdbc:oracle:thin:@//{0}'.format(properties_latest['db_host'])
     data['RANGER_AUDIT_JDBC_URL'] = 'jdbc:oracle:thin:@//{0}'.format(properties_latest['db_host'])
+    data['RANGER_ROOT_JDBC_URL'] = 'jdbc:oracle:thin:@//{0}'.format(properties_latest['db_host'])
 
   return data
 
@@ -1607,6 +1646,29 @@ def get_hbase_coprocessmaster_classes():
   return old_value
 
 
+def get_rpc_scheduler_factory_class():
+  if Options.PHOENIX_QUERY_SERVER in Options.ambari_server.components:
+    return "org.apache.hadoop.hbase.ipc.PhoenixRpcSchedulerFactory"
+  else:
+    return ""
+
+
+def get_hbase_rpc_controllerfactory_class():
+  if Options.PHOENIX_QUERY_SERVER in Options.ambari_server.components:
+    return "org.apache.hadoop.hbase.ipc.controller.ServerRpcControllerFactory"
+  else:
+    return ""
+
+
+def get_hbase_regionserver_wal_codec():
+  prop = "phoenix_sql_enabled"
+  scf = Options.server_config_factory
+  if "hbase-env" in scf.items():
+    if prop in scf.get_config("hbase-env").properties and scf.get_config("hbase-env").properties[prop].upper() == "TRUE":
+      return "org.apache.hadoop.hbase.regionserver.wal.IndexedWALEditCodec"
+  return "org.apache.hadoop.hbase.regionserver.wal.WALCellCodec"
+
+
 def get_hbase_coprocessor_region_classes():
   scf = Options.server_config_factory
   prop = "hbase.coprocessor.region.classes"
@@ -1644,6 +1706,12 @@ def _substitute_handler(upgrade_catalog, tokens, value):
       value = value.replace(token, get_jh_host(upgrade_catalog))
     elif token == "{RESOURCEMANAGER_HOST}":
       value = value.replace(token, get_jt_host(upgrade_catalog))
+    elif token == "{HBASE_REGIONSERVER_WAL_CODEC}":
+      value = value.replace(token, get_hbase_regionserver_wal_codec())
+    elif token == "{HBASE_REGION_SERVER_RPC_SCHEDULER_FACTORY_CLASS}":
+      value = value.replace(token, get_rpc_scheduler_factory_class())
+    elif token == "{HBASE_RPC_CONTROLLERFACTORY_CLASS}":
+      value = value.replace(token, get_hbase_rpc_controllerfactory_class())
     elif token == "{ZOOKEEPER_QUORUM}":
       value = value.replace(token, get_zookeeper_quorum())
     elif token == "{HBASE_COPROCESS_MASTER_CLASSES}":
@@ -1720,8 +1788,6 @@ def _substitute_handler(upgrade_catalog, tokens, value):
       value = value.replace(token, get_audit_jdbc_url())
     elif token == "{STORM_AUDIT_JDBC_URL}":
       value = value.replace(token, get_audit_jdbc_url())
-    elif token == "{AUDIT_DB_PASSWD}":
-      value = value.replace(token, get_audit_db_passwd())
     elif token == "{AUDIT_TO_DB_HDFS}":
       value = value.replace(token, get_audit_to_db_enabled("ranger-hdfs-plugin-properties"))
     elif token == "{AUDIT_TO_DB_HBASE}":
@@ -1752,6 +1818,14 @@ def _substitute_handler(upgrade_catalog, tokens, value):
       value = value.replace(token, get_hdfs_batch_filespool_dir("ranger-knox-plugin-properties", "knox"))
     elif token == "{AUDIT_HDFS_FILESPOOL_DIR_STORM}":
       value = value.replace(token, get_hdfs_batch_filespool_dir("ranger-storm-plugin-properties", "storm"))
+    elif token == "{USERSYNC_SYNC_SOURCE}":
+      value = value.replace(token, get_usersync_sync_source())
+    elif token == "{AUDIT_TO_DB}":
+      value =  value.replace(token, get_audit_check("db"))
+    elif token == "{AUDIT_TO_HDFS}":
+      value =  value.replace(token, get_audit_check("hdfs"))
+    elif token == "{RANGER_ROOT_JDBC_URL}":
+      value = value.replace(token, get_ranger_service_details()['RANGER_ROOT_JDBC_URL'])
 
   return value
 
@@ -1933,8 +2007,12 @@ def curl(url, tokens=None, headers=None, request_type="GET", data=None, parse=Fa
     if write_only_print:
       if request_type in post_req:
         Options.logger.info(url)
+        if data is not None:
+          Options.logger.info("POST Data: \n" + str(data))
     else:
       Options.logger.info(url)
+      if request_type in post_req and data is not None:
+        Options.logger.info("POST Data: \n" + str(data))
 
   code = 200
   if not (print_url and request_type in post_req):

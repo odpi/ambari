@@ -52,7 +52,10 @@ import javax.persistence.UniqueConstraint;
     @NamedQuery(name = "ClusterConfigEntity.findNextConfigVersion", query = "SELECT COALESCE(MAX(clusterConfig.version),0) + 1 as nextVersion FROM ClusterConfigEntity clusterConfig WHERE clusterConfig.type=:configType AND clusterConfig.clusterId=:clusterId"),
     @NamedQuery(name = "ClusterConfigEntity.findAllConfigsByStack", query = "SELECT clusterConfig FROM ClusterConfigEntity clusterConfig WHERE clusterConfig.clusterId=:clusterId AND clusterConfig.stack=:stack"),
     @NamedQuery(name = "ClusterConfigEntity.findLatestConfigsByStack", query = "SELECT clusterConfig FROM ClusterConfigEntity clusterConfig WHERE clusterConfig.clusterId=:clusterId AND clusterConfig.timestamp = (SELECT MAX(clusterConfig2.timestamp) FROM ClusterConfigEntity clusterConfig2 WHERE clusterConfig2.clusterId=:clusterId AND clusterConfig2.stack=:stack AND clusterConfig2.type = clusterConfig.type)"),
-    @NamedQuery(name = "ClusterConfigEntity.findClusterConfigMappingsByStack", query = "SELECT clusterConfigMapping FROM ClusterConfigMappingEntity clusterConfigMapping WHERE clusterConfigMapping.clusterId=:clusterId and clusterConfigMapping.tag in ( select clusterConfig.tag from ClusterConfigEntity clusterConfig where clusterConfig.stack = :stack)")
+    @NamedQuery(name = "ClusterConfigEntity.findClusterConfigMappingsByStack",
+      query = "SELECT mapping FROM ClusterConfigMappingEntity mapping " +
+        "JOIN ClusterConfigEntity config ON mapping.typeName = config.type AND mapping.tag = config.tag " +
+        "WHERE mapping.clusterId = :clusterId AND config.stack = :stack")
 })
 
 public class ClusterConfigEntity {
@@ -199,16 +202,19 @@ public class ClusterConfigEntity {
 
     ClusterConfigEntity that = (ClusterConfigEntity) o;
 
+    if (configId != null ? !configId.equals(that.configId) : that.configId != null) {
+      return false;
+    }
+
     if (clusterId != null ? !clusterId.equals(that.clusterId) : that.clusterId != null) {
       return false;
     }
 
-    if (configJson != null ? !configJson.equals(that.configJson) : that.configJson != null) {
+    if (type != null ? !type.equals(that.type) : that.type != null) {
       return false;
     }
 
-    if (configAttributesJson != null ? !configAttributesJson
-      .equals(that.configAttributesJson) : that.configAttributesJson != null) {
+    if (tag != null ? !tag.equals(that.tag) : that.tag != null) {
       return false;
     }
 
@@ -217,14 +223,17 @@ public class ClusterConfigEntity {
     }
 
     return true;
+
   }
 
   @Override
   public int hashCode() {
-    int result = clusterId != null ? clusterId.intValue() : 0;
-    result = 31 * result + (configJson != null ? configJson.hashCode() : 0);
-    result = 31 * result + (configAttributesJson != null ? configAttributesJson.hashCode() : 0);
+    int result = configId != null ? configId.hashCode() : 0;
+    result = 31 * result + (clusterId != null ? clusterId.hashCode() : 0);
+    result = 31 * result + (type != null ? type.hashCode() : 0);
+    result = 31 * result + (tag != null ? tag.hashCode() : 0);
     result = 31 * result + (stack != null ? stack.hashCode() : 0);
+
     return result;
   }
 

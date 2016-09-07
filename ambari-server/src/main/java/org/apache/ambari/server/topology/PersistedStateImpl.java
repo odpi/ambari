@@ -18,21 +18,17 @@
 
 package org.apache.ambari.server.topology;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import com.google.gson.Gson;
 import com.google.inject.Inject;
 import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.StaticallyInject;
 import org.apache.ambari.server.actionmanager.HostRoleCommand;
 import org.apache.ambari.server.api.predicate.InvalidQueryException;
+import org.apache.ambari.server.controller.internal.BaseClusterRequest;
+import org.apache.ambari.server.controller.internal.ProvisionClusterRequest;
+import org.apache.ambari.server.orm.dao.HostDAO;
 import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
 import org.apache.ambari.server.orm.dao.TopologyHostGroupDAO;
+import org.apache.ambari.server.orm.dao.TopologyHostInfoDAO;
 import org.apache.ambari.server.orm.dao.TopologyHostRequestDAO;
 import org.apache.ambari.server.orm.dao.TopologyLogicalTaskDAO;
 import org.apache.ambari.server.orm.dao.TopologyRequestDAO;
@@ -45,50 +41,65 @@ import org.apache.ambari.server.orm.entities.TopologyLogicalRequestEntity;
 import org.apache.ambari.server.orm.entities.TopologyLogicalTaskEntity;
 import org.apache.ambari.server.orm.entities.TopologyRequestEntity;
 import org.apache.ambari.server.stack.NoSuchStackException;
+import org.apache.ambari.server.state.Host;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.inject.Singleton;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Implementation which uses Ambari Database DAO and Entity objects for persistence
  * of topology related information.
  */
-@StaticallyInject
+@Singleton
 public class PersistedStateImpl implements PersistedState {
 
   protected final static Logger LOG = LoggerFactory.getLogger(PersistedState.class);
 
   @Inject
-  private static TopologyRequestDAO topologyRequestDAO;
+  private TopologyRequestDAO topologyRequestDAO;
 
   @Inject
-  private static TopologyHostGroupDAO hostGroupDAO;
+  private TopologyHostInfoDAO topologyHostInfoDAO;
 
   @Inject
-  private static TopologyHostRequestDAO hostRequestDAO;
+  private HostDAO hostDAO;
 
   @Inject
-  private static TopologyLogicalTaskDAO topologyLogicalTaskDAO;
+  private TopologyHostGroupDAO hostGroupDAO;
 
   @Inject
-  private static HostRoleCommandDAO hostRoleCommandDAO;
+  private TopologyHostRequestDAO hostRequestDAO;
 
   @Inject
-  private static HostRoleCommandDAO physicalTaskDAO;
+  private TopologyLogicalTaskDAO topologyLogicalTaskDAO;
 
   @Inject
-  private static BlueprintFactory blueprintFactory;
+  private HostRoleCommandDAO hostRoleCommandDAO;
 
   @Inject
-  private static LogicalRequestFactory logicalRequestFactory;
+  private HostRoleCommandDAO physicalTaskDAO;
 
   @Inject
-  private static AmbariContext ambariContext;
+  private BlueprintFactory blueprintFactory;
+
+  @Inject
+  private LogicalRequestFactory logicalRequestFactory;
+
+  @Inject
+  private AmbariContext ambariContext;
 
   private static Gson jsonSerializer = new Gson();
 
 
   @Override
-  public  PersistedTopologyRequest persistTopologyRequest(TopologyRequest request) {
+  public  PersistedTopologyRequest persistTopologyRequest(BaseClusterRequest request) {
     TopologyRequestEntity requestEntity = toEntity(request);
     topologyRequestDAO.create(requestEntity);
     return new PersistedTopologyRequest(requestEntity.getId(), request);
@@ -125,6 +136,37 @@ public class PersistedStateImpl implements PersistedState {
   }
 
   @Override
+  public void registerInTopologyHostInfo(Host host) {
+    TopologyHostInfoEntity entity = topologyHostInfoDAO.findByHostname(host.getHostName());
+    if(entity != null && entity.getHostEntity() == null) {
+      entity.setHostEntity(hostDAO.findById(host.getHostId()));
+      topologyHostInfoDAO.merge(entity);
+    }
+  }
+
+  @Override
+  public LogicalRequest getProvisionRequest(long clusterId) {
+    Collection<TopologyRequestEntity> entities = topologyRequestDAO.findByClusterId(clusterId);
+    for (TopologyRequestEntity entity : entities) {
+      if(TopologyRequest.Type.PROVISION == TopologyRequest.Type.valueOf(entity.getAction())) {
+        TopologyLogicalRequestEntity logicalRequestEntity = entity.getTopologyLogicalRequestEntity();
+        TopologyRequest replayedRequest = new ReplayedTopologyRequest(entity, blueprintFactory);
+        try {
+          ClusterTopology clusterTopology = new ClusterTopologyImpl(ambariContext, replayedRequest);
+          Long logicalId = logicalRequestEntity.getId();
+          return logicalRequestFactory.createRequest(logicalId, replayedRequest, clusterTopology, logicalRequestEntity);
+        } catch (InvalidTopologyException e) {
+          throw new RuntimeException("Failed to construct cluster topology while replaying request: " + e, e);
+        } catch (AmbariException e) {
+          throw new RuntimeException("Failed to construct logical request during replay: " + e, e);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  @Override
   public Map<ClusterTopology, List<LogicalRequest>> getAllRequests() {
     //todo: we only currently support a single request per ambari instance so there should only
     //todo: be a single cluster topology
@@ -133,11 +175,14 @@ public class PersistedStateImpl implements PersistedState {
 
     Map<Long, ClusterTopology> topologyRequests = new HashMap<Long, ClusterTopology>();
     for (TopologyRequestEntity entity : entities) {
-      TopologyRequest replayedRequest = new ReplayedTopologyRequest(entity);
+      TopologyRequest replayedRequest = new ReplayedTopologyRequest(entity, blueprintFactory);
       ClusterTopology clusterTopology = topologyRequests.get(replayedRequest.getClusterId());
       if (clusterTopology == null) {
         try {
           clusterTopology = new ClusterTopologyImpl(ambariContext, replayedRequest);
+          if (entity.getProvisionAction() != null) {
+            clusterTopology.setProvisionAction(entity.getProvisionAction());
+          }
           topologyRequests.put(replayedRequest.getClusterId(), clusterTopology);
           allRequests.put(clusterTopology, new ArrayList<LogicalRequest>());
         } catch (InvalidTopologyException e) {
@@ -171,7 +216,7 @@ public class PersistedStateImpl implements PersistedState {
     return allRequests;
   }
 
-  private TopologyRequestEntity toEntity(TopologyRequest request) {
+  private TopologyRequestEntity toEntity(BaseClusterRequest request) {
     TopologyRequestEntity entity = new TopologyRequestEntity();
 
     //todo: this isn't set for a scaling operation because we had intended to allow multiple
@@ -186,6 +231,10 @@ public class PersistedStateImpl implements PersistedState {
     entity.setClusterId(request.getClusterId());
     entity.setClusterProperties(propertiesAsString(request.getConfiguration().getProperties()));
     entity.setDescription(request.getDescription());
+
+    if (request.getProvisionAction() != null) {
+      entity.setProvisionAction(request.getProvisionAction());
+    }
 
     // host groups
     Collection<TopologyHostGroupEntity> hostGroupEntities = new ArrayList<TopologyHostGroupEntity>();
@@ -282,6 +331,7 @@ public class PersistedStateImpl implements PersistedState {
           hostInfoEntity.setPredicate(groupInfo.getPredicateString());
         }
         hostInfoEntity.setFqdn(hostName);
+        hostInfoEntity.setRackInfo(groupInfo.getHostRackInfo().get(hostName));
         hostInfoEntity.setHostCount(0);
         hostInfoEntities.add(hostInfoEntity);
       }
@@ -306,7 +356,7 @@ public class PersistedStateImpl implements PersistedState {
     private final Configuration configuration;
     private final Map<String, HostGroupInfo> hostGroupInfoMap = new HashMap<String, HostGroupInfo>();
 
-    public ReplayedTopologyRequest(TopologyRequestEntity entity) {
+    public ReplayedTopologyRequest(TopologyRequestEntity entity, BlueprintFactory blueprintFactory) {
       clusterId = entity.getClusterId();
       type = Type.valueOf(entity.getAction());
       description = entity.getDescription();
@@ -383,6 +433,7 @@ public class PersistedStateImpl implements PersistedState {
           String hostname = hostInfoEntity.getFqdn();
           if (hostname != null && ! hostname.isEmpty()) {
             groupInfo.addHost(hostname);
+            groupInfo.addHostRackInfo(hostname, hostInfoEntity.getRackInfo());
           } else {
             // should not be more than one group info if host count is specified
             groupInfo.setRequestedCount(hostInfoEntity.getHostCount());

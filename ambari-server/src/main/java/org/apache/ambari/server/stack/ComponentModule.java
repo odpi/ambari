@@ -21,6 +21,9 @@ package org.apache.ambari.server.stack;
 import org.apache.ambari.server.state.ComponentInfo;
 import org.apache.ambari.server.state.CustomCommandDefinition;
 import org.apache.ambari.server.state.DependencyInfo;
+import org.apache.ambari.server.state.LogDefinition;
+import org.apache.commons.lang.builder.ToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
 
 import java.util.Collection;
 import java.util.HashSet;
@@ -43,7 +46,8 @@ public class ComponentModule extends BaseModule<ComponentModule, ComponentInfo> 
    */
   protected boolean valid = true;
 
-          
+  private Set<String> errorSet = new HashSet<String>();
+
   /**
    * Constructor.
    *
@@ -54,12 +58,13 @@ public class ComponentModule extends BaseModule<ComponentModule, ComponentInfo> 
   }
 
   @Override
-  public void resolve(ComponentModule parent, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices) {
+  public void resolve(ComponentModule parent, Map<String, StackModule> allStacks,
+	    Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions) {
     if (parent != null) {
       ComponentInfo parentInfo = parent.getModuleInfo();
       if (!parent.isValid()) {
         setValid(false);
-        setErrors(parent.getErrors());
+        addErrors(parent.getErrors());
       }
 
       if (componentInfo.getCommandScript() == null) {
@@ -83,9 +88,31 @@ public class ComponentModule extends BaseModule<ComponentModule, ComponentInfo> 
       if (componentInfo.getCardinality() == null) {
         componentInfo.setCardinality(parentInfo.getCardinality());
       }
-      componentInfo.setVersionAdvertised(parentInfo.isVersionAdvertised());
+
+      // Inherit versionAdvertised from the parent if the current Component Info has it as null or "inherit".
+      if (null == componentInfo.getVersionAdvertisedField()) {
+        componentInfo.setVersionAdvertised(parentInfo.isVersionAdvertised());
+      } else {
+        // Set to explicit boolean
+        componentInfo.setVersionAdvertised(componentInfo.getVersionAdvertisedField().booleanValue());
+      }
+
+      if (componentInfo.getDecommissionAllowed() == null) {
+        componentInfo.setDecommissionAllowed(parentInfo.getDecommissionAllowed());
+      }
+
       if (componentInfo.getAutoDeploy() == null) {
         componentInfo.setAutoDeploy(parentInfo.getAutoDeploy());
+      }
+
+      componentInfo.setRecoveryEnabled(parentInfo.isRecoveryEnabled());
+
+      if (componentInfo.getBulkCommandDefinition() == null){
+        componentInfo.setBulkCommands(parentInfo.getBulkCommandDefinition());
+      }
+
+      if (componentInfo.getReassignAllowed() == null) {
+        componentInfo.setReassignAllowed(parentInfo.getReassignAllowed());
       }
 
       mergeComponentDependencies(parentInfo.getDependencies(),
@@ -93,6 +120,8 @@ public class ComponentModule extends BaseModule<ComponentModule, ComponentInfo> 
 
       mergeCustomCommands(parentInfo.getCustomCommands(),
               componentInfo.getCustomCommands());
+
+      mergeLogs(parentInfo.getLogs(), componentInfo.getLogs());
     }
   }
 
@@ -162,6 +191,29 @@ public class ComponentModule extends BaseModule<ComponentModule, ComponentInfo> 
     }
   }
 
+  /**
+   * Merge logs.
+   * Child logs override a parent log of the same log id.
+   *
+   * @param parentLogs  parent logs
+   * @param childLogs   child logs
+   */
+  //todo: currently there is no way to remove an inherited log
+  private void mergeLogs(List<LogDefinition> parentLogs, List<LogDefinition> childLogs) {
+    Collection<String> existingLogIds = new HashSet<String>();
+
+    for (LogDefinition childLog : childLogs) {
+      existingLogIds.add(childLog.getLogId());
+    }
+    if (parentLogs != null) {
+      for (LogDefinition parentLog : parentLogs) {
+        if (! existingLogIds.contains(parentLog.getLogId())) {
+          childLogs.add(parentLog);
+        }
+      }
+    }
+  }
+
   @Override
   public boolean isValid() {
     return valid;
@@ -172,20 +224,23 @@ public class ComponentModule extends BaseModule<ComponentModule, ComponentInfo> 
     this.valid = valid;
   }
 
-  private Set<String> errorSet = new HashSet<String>();
-  
   @Override
-  public void setErrors(String error) {
+  public void addError(String error) {
     errorSet.add(error);
   }
 
   @Override
-  public Collection getErrors() {
+  public Collection<String> getErrors() {
     return errorSet;
   }
   
   @Override
-  public void setErrors(Collection error) {
-    this.errorSet.addAll(error);
-  }  
+  public void addErrors(Collection<String> errors) {
+    this.errorSet.addAll(errors);
+  }
+
+  @Override
+  public String toString() {
+    return ToStringBuilder.reflectionToString(this, ToStringStyle.MULTI_LINE_STYLE);
+  }
 }

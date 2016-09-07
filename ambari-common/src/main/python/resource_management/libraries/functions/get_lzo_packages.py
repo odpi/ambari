@@ -22,26 +22,28 @@ Ambari Agent
 __all__ = ["get_lzo_packages"]
 
 from ambari_commons.os_check import OSCheck
-from resource_management.libraries.functions.version import compare_versions, format_hdp_stack_version
-from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions import StackFeature
+from resource_management.libraries.script.script import Script
 
+# TODO: Make list of lzo packages stack driven
 def get_lzo_packages(stack_version_unformatted):
   lzo_packages = []
- 
-  if OSCheck.is_redhat_family() or OSCheck.is_suse_family():
+  script_instance = Script.get_instance()
+  if OSCheck.is_suse_family() and int(OSCheck.get_os_major_version()) >= 12:
+    lzo_packages += ["liblzo2-2", "hadoop-lzo-native"]
+  elif OSCheck.is_redhat_family() or OSCheck.is_suse_family():
     lzo_packages += ["lzo", "hadoop-lzo-native"]
   elif OSCheck.is_ubuntu_family():
     lzo_packages += ["liblzo2-2"]
-    
-  underscored_version = stack_version_unformatted.replace('.', '_')
-  dashed_version = stack_version_unformatted.replace('.', '-')
-  hdp_stack_version = format_hdp_stack_version(stack_version_unformatted)
 
-  if hdp_stack_version != "" and compare_versions(hdp_stack_version, '2.2') >= 0:
-    if OSCheck.is_redhat_family() or OSCheck.is_suse_family():
-      lzo_packages += [format("hadooplzo_{underscored_version}_*")]
-    elif OSCheck.is_ubuntu_family():
-      lzo_packages += [format("hadooplzo_{dashed_version}_*")]
+  if stack_version_unformatted and check_stack_feature(StackFeature.ROLLING_UPGRADE, stack_version_unformatted):
+    if OSCheck.is_ubuntu_family():
+      lzo_packages += [script_instance.format_package_name("hadooplzo-${stack_version}") ,
+                       script_instance.format_package_name("hadooplzo-${stack_version}-native")]
+    else:
+      lzo_packages += [script_instance.format_package_name("hadooplzo_${stack_version}"),
+                       script_instance.format_package_name("hadooplzo_${stack_version}-native")]
   else:
     lzo_packages += ["hadoop-lzo"]
 

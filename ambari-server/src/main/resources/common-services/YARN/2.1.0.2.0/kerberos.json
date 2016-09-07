@@ -7,9 +7,6 @@
           "name": "/spnego"
         },
         {
-          "name": "/HDFS/hdfs"
-        },
-        {
           "name": "/smokeuser"
         }
       ],
@@ -39,8 +36,8 @@
         },
         {
           "core-site": {
-            "hadoop.proxyuser.yarn.groups": "*",
-            "hadoop.proxyuser.yarn.hosts": "${yarn-site/yarn.resourcemanager.hostname}"
+            "hadoop.proxyuser.${yarn-env/yarn_user}.groups": "*",
+            "hadoop.proxyuser.${yarn-env/yarn_user}.hosts": "${clusterHostInfo/rm_host}"
           }
         }
       ],
@@ -154,6 +151,9 @@
               "keytab": {
                 "configuration": "yarn-site/yarn.timeline-service.http-authentication.kerberos.keytab"
               }
+            },
+            {
+              "name": "/HDFS/NAMENODE/hdfs"
             }
           ]
         }
@@ -166,9 +166,6 @@
           "name": "/spnego"
         },
         {
-          "name": "/HDFS/hdfs"
-        },
-        {
           "name": "/smokeuser"
         }
       ],
@@ -176,6 +173,9 @@
         {
           "name": "HISTORYSERVER",
           "identities": [
+            {
+              "name": "/HDFS/NAMENODE/hdfs"
+            },
             {
               "name": "history_server_jhs",
               "principal": {

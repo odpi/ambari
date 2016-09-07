@@ -18,6 +18,7 @@
 package org.apache.ambari.server.checks;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +30,7 @@ import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
 import org.apache.ambari.server.state.stack.PrerequisiteCheck;
+import org.apache.ambari.server.state.stack.UpgradePack.PrerequisiteCheckConfig;
 import org.apache.commons.lang.StringUtils;
 
 import com.google.inject.Singleton;
@@ -37,25 +39,20 @@ import com.google.inject.Singleton;
  * Checks that MR jobs reference hadoop libraries from the distributed cache.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.NAMENODE_HA, order = 3.0f)
+@UpgradeCheck(group = UpgradeCheckGroup.NAMENODE_HA, order = 17.1f)
 public class ServicesMapReduceDistributedCacheCheck extends AbstractCheckDescriptor {
 
   static final String KEY_APP_CLASSPATH = "app_classpath";
   static final String KEY_FRAMEWORK_PATH = "framework_path";
   static final String KEY_NOT_DFS = "not_dfs";
+  static final String DFS_PROTOCOLS_REGEX_PROPERTY_NAME = "dfs-protocols-regex";
+  static final String DFS_PROTOCOLS_REGEX_DEFAULT = "^([^:]*dfs|wasb|ecs):.*";
 
   @Override
   public boolean isApplicable(PrereqCheckRequest request)
     throws AmbariException {
 
-    if (!super.isApplicable(request)) {
-      return false;
-    }
-
-    final Cluster cluster = clustersProvider.get().getCluster(request.getClusterName());
-    try {
-      cluster.getService("YARN");
-    } catch (ServiceNotFoundException ex) {
+    if (!super.isApplicable(request, Arrays.asList("YARN"), true)) {
       return false;
     }
 
@@ -76,6 +73,16 @@ public class ServicesMapReduceDistributedCacheCheck extends AbstractCheckDescrip
 
   @Override
   public void perform(PrerequisiteCheck prerequisiteCheck, PrereqCheckRequest request) throws AmbariException {
+    String dfsProtocolsRegex = DFS_PROTOCOLS_REGEX_DEFAULT;
+    PrerequisiteCheckConfig prerequisiteCheckConfig = request.getPrerequisiteCheckConfig();
+    Map<String, String> checkProperties = null;
+    if(prerequisiteCheckConfig != null) {
+      checkProperties = prerequisiteCheckConfig.getCheckProperties(this.getClass().getName());
+    }
+    if(checkProperties != null && checkProperties.containsKey(DFS_PROTOCOLS_REGEX_PROPERTY_NAME)) {
+      dfsProtocolsRegex = checkProperties.get(DFS_PROTOCOLS_REGEX_PROPERTY_NAME);
+    }
+
     final String clusterName = request.getClusterName();
     final Cluster cluster = clustersProvider.get().getCluster(clusterName);
     final String mrConfigType = "mapred-site";
@@ -106,7 +113,7 @@ public class ServicesMapReduceDistributedCacheCheck extends AbstractCheckDescrip
       return;
     }
 
-    if (!frameworkPath.matches("^[^:]*dfs:.*") && (defaultFS == null || !defaultFS.matches("^[^:]*dfs:.*"))) {
+    if (!frameworkPath.matches(dfsProtocolsRegex) && (defaultFS == null || !defaultFS.matches(dfsProtocolsRegex))) {
       prerequisiteCheck.getFailedOn().add("MAPREDUCE2");
       prerequisiteCheck.setStatus(PrereqCheckStatus.FAIL);
       prerequisiteCheck.setFailReason(getFailReason(KEY_NOT_DFS, prerequisiteCheck, request));

@@ -27,14 +27,10 @@ App.ConfigHistoryFlowView = Em.View.extend({
   startIndex: 0,
   showLeftArrow: false,
   showRightArrow: false,
-  leftArrowTooltip: function () {
-    return this.get('showLeftArrow') ? Em.I18n.t('services.service.config.configHistory.leftArrow.tooltip') : null;
-  }.property('showLeftArrow'),
-  rightArrowTooltip: function () {
-    return this.get('showRightArrow') ? Em.I18n.t('services.service.config.configHistory.rightArrow.tooltip') : null;
-  }.property('showRightArrow'),
+  leftArrowTooltip: Em.computed.ifThenElse('showLeftArrow', Em.I18n.t('services.service.config.configHistory.leftArrow.tooltip'), null),
+  rightArrowTooltip: Em.computed.ifThenElse('showRightArrow', Em.I18n.t('services.service.config.configHistory.rightArrow.tooltip'), null),
   VERSIONS_IN_FLOW: 6,
-  VERSIONS_IN_DROPDOWN: 6,
+  VERSIONS_IN_DROPDOWN: 25,
   /**
    * flag identify whether to show all versions or short list of them
    */
@@ -49,6 +45,19 @@ App.ConfigHistoryFlowView = Em.View.extend({
     COMPARE: 'compare',
     REVERT: 'revert'
   },
+
+  /**
+   * serviceVersion object that is currently being hovered in the dropdown menu
+   */
+  hoveredServiceVersion: null,
+  /**
+   * flag to check if sub-menu popup is currently being hovered
+   */
+  displaySubMenuFlag: false,
+  /**
+   * flag to check if any dropdown item is currently hovered by the user
+   */
+  isHovered: false,
 
   /**
    * In reason of absence of properties dynamic values support which passed to an action,
@@ -69,51 +78,42 @@ App.ConfigHistoryFlowView = Em.View.extend({
     return App.ServiceConfigVersion.find().filterProperty('serviceName', this.get('serviceName'));
   }.property('serviceName'),
 
-  showCompareVersionBar: function() {
-    return !Em.isNone(this.get('compareServiceVersion'));
-  }.property('compareServiceVersion'),
+  showCompareVersionBar: Em.computed.bool('compareServiceVersion'),
 
-  isSaveDisabled: function () {
-    return (this.get('controller.isSubmitDisabled') || !this.get('controller.versionLoaded') || !this.get('controller.isPropertiesChanged')) ;
-  }.property('controller.isSubmitDisabled', 'controller.versionLoaded', 'controller.isPropertiesChanged'),
+  isSaveDisabled: Em.computed.or('controller.isSubmitDisabled', '!controller.versionLoaded', '!controller.isPropertiesChanged'),
 
-  serviceName: function () {
-    return this.get('controller.selectedService.serviceName');
-  }.property('controller.selectedService.serviceName'),
+  serviceName: Em.computed.alias('controller.selectedService.serviceName'),
 
-  displayedServiceVersion: function () {
-    return this.get('serviceVersions').findProperty('isDisplayed');
-  }.property('serviceVersions.@each.isDisplayed'),
+  displayedServiceVersion: Em.computed.findBy('serviceVersions', 'isDisplayed', true),
   /**
    * identify whether to show link that open whole content of notes
    */
-  showMoreLink: function () {
-    //100 is number of symbols that fit into label
-    return (this.get('displayedServiceVersion.notes.length') > 100);
-  }.property('displayedServiceVersion.notes.length'),
+  showMoreLink: Em.computed.gt('displayedServiceVersion.notes.length', 100),
   /**
    * formatted notes ready to display
    */
-  shortNotes: function () {
-    //100 is number of symbols that fit into label
-    if (this.get('showMoreLink')) {
-      return this.get('displayedServiceVersion.notes').slice(0, 100) + '...';
-    }
-    return this.get('displayedServiceVersion.notes');
-  }.property('displayedServiceVersion'),
+  shortNotes: Em.computed.truncate('displayedServiceVersion.notes', 100, 100),
 
   serviceVersions: function () {
-    var groupName = this.get('controller.selectedConfigGroup.isDefault') ? 'default'
+    var groupName = this.get('controller.selectedConfigGroup.isDefault') ? App.ServiceConfigGroup.defaultGroupName
         : this.get('controller.selectedConfigGroup.name');
-    var groupId = this.get('controller.selectedConfigGroup.configGroupId');
+    var groupId = this.get('controller.selectedConfigGroup.id');
+    var self = this;
 
     this.get('allServiceVersions').forEach(function (version) {
       version.set('isDisabled', !(version.get('groupName') === groupName));
     }, this);
 
     var serviceVersions = this.get('allServiceVersions').filter(function(s) {
-      return (s.get('groupId') === groupId) || s.get('groupName') == 'default';
+      return s.get('groupId') === groupId || s.get('groupName') === App.ServiceConfigGroup.defaultGroupName;
     });
+
+    if (!serviceVersions.findProperty('isDisplayed')) {
+      //recompute serviceVersions if displayed version absent
+      Em.run.next(function() {
+        self.propertyDidChange('controller.selectedConfigGroup.name');
+      });
+    }
 
     return serviceVersions.sort(function (a, b) {
       return Em.get(b, 'createTime') - Em.get(a, 'createTime');
@@ -131,22 +131,18 @@ App.ConfigHistoryFlowView = Em.View.extend({
    * service versions which in viewport and visible to user
    */
   visibleServiceVersion: function () {
-    return this.get('serviceVersions').slice(this.get('startIndex'), (this.get('startIndex') + this.VERSIONS_IN_FLOW));
+    return this.get('serviceVersions').slice(this.get('startIndex'), this.get('startIndex') + this.VERSIONS_IN_FLOW);
   }.property('startIndex', 'serviceVersions'),
 
   /**
    * enable actions to manipulate version only after it's loaded
    */
-  versionActionsDisabled: function () {
-    return !this.get('controller.versionLoaded') || this.get('dropDownList.length') === 0;
-  }.property('controller.versionLoaded', 'dropDownList.length'),
+  versionActionsDisabled: Em.computed.or('!controller.versionLoaded', '!dropDownList.length'),
 
   /**
    * enable discard to manipulate version only after it's loaded and any property is changed
    */
-  isDiscardDisabled: function () {
-    return !this.get('controller.versionLoaded') || !this.get('controller.isPropertiesChanged');
-  }.property('controller.versionLoaded','controller.isPropertiesChanged'),
+  isDiscardDisabled: Em.computed.or('!controller.versionLoaded', '!controller.isPropertiesChanged'),
   /**
    * list of service versions
    * by default 6 is number of items in short list
@@ -168,21 +164,6 @@ App.ConfigHistoryFlowView = Em.View.extend({
     this.set('showFullList', !(this.get('serviceVersions.length') > this.VERSIONS_IN_DROPDOWN));
   },
 
-  computePosition: function(event) {
-    var $el = this.$('.dropdown-menu', event.currentTarget);
-    // remove existing style - in case user scrolls the page
-    $el.removeAttr('style');
-    var elHeight = $el.outerHeight(),
-      parentHeight = $el.parent().outerHeight(),
-      pagePosition = window.innerHeight + window.pageYOffset,
-      elBottomPosition = $el.offset().top + elHeight,
-      shouldShowUp = elBottomPosition > pagePosition ;
-    if (shouldShowUp) {
-      $el.css('margin-top', -(elHeight - parentHeight));
-    }
-    $el = null;
-  },
-
   didInsertElement: function () {
     App.tooltip(this.$('[data-toggle=tooltip]'),{
       placement: 'bottom',
@@ -195,15 +176,16 @@ App.ConfigHistoryFlowView = Em.View.extend({
   },
 
   willDestroyElement: function() {
-    Em.keys(this.get('serviceVersionsReferences')).forEach(function(key) {
-      Em.get(this.get('serviceVersionsReferences'), key).destroy();
-    }, this);
     this.$('.version-info-bar-wrapper').trigger('sticky_kit:detach').off();
-    this.$('[data-toggle=tooltip], [data-toggle=arrow-tooltip]').remove();
+    this.$('[data-toggle=tooltip]').tooltip('destroy');
+    this.$('[data-toggle=arrow-tooltip]').tooltip('destroy');
   },
 
-
   willInsertElement: function () {
+    this.setDisplayVersion();
+  },
+
+  setDisplayVersion: function () {
     var serviceVersions = this.get('serviceVersions');
     var startIndex = 0;
     var currentIndex = 0;
@@ -224,7 +206,7 @@ App.ConfigHistoryFlowView = Em.View.extend({
     }
     this.set('startIndex', startIndex);
     this.adjustFlowView();
-  },
+  }.observes('allVersionsLoaded'),
 
   onChangeConfigGroup: function () {
     var serviceVersions = this.get('serviceVersions');
@@ -238,7 +220,7 @@ App.ConfigHistoryFlowView = Em.View.extend({
       // display current in default group
       serviceVersions.forEach(function (serviceVersion, index) {
         // find current in default group
-        if (serviceVersion.get('isCurrent') && serviceVersion.get('groupName') == Em.I18n.t('dashboard.configHistory.table.configGroup.default')) {
+        if (serviceVersion.get('isCurrent') && serviceVersion.get('groupName') === App.ServiceConfigGroup.defaultGroupName) {
           serviceVersion.set('isDisplayed', true);
           currentIndex = index + 1;
         }
@@ -247,7 +229,7 @@ App.ConfigHistoryFlowView = Em.View.extend({
       // display current in selected group
       serviceVersions.forEach(function (serviceVersion, index) {
         // find current in selected group
-        if (serviceVersion.get('isCurrent') && serviceVersion.get('groupName') == selectedGroupName) {
+        if (serviceVersion.get('isCurrent') && serviceVersion.get('groupName') === selectedGroupName) {
           serviceVersion.set('isDisplayed', true);
           currentIndex = index + 1;
         }
@@ -256,7 +238,7 @@ App.ConfigHistoryFlowView = Em.View.extend({
       if (currentIndex == 0) {
         serviceVersions.forEach(function (serviceVersion, index) {
           // find current in default group
-          if (serviceVersion.get('isCurrent') && serviceVersion.get('groupName') == Em.I18n.t('dashboard.configHistory.table.configGroup.default')) {
+          if (serviceVersion.get('isCurrent') && serviceVersion.get('groupName') === App.ServiceConfigGroup.defaultGroupName) {
             currentIndex = index + 1;
             serviceVersion.set('isDisplayed', true);
           }
@@ -278,9 +260,9 @@ App.ConfigHistoryFlowView = Em.View.extend({
   adjustFlowView: function () {
     var startIndex = this.get('startIndex');
     this.get('serviceVersions').forEach(function (serviceVersion, index) {
-      serviceVersion.set('first', (index === startIndex));
+      serviceVersion.set('first', index === startIndex);
     });
-    this.set('showLeftArrow', (startIndex !== 0));
+    this.set('showLeftArrow', startIndex !== 0);
     this.set('showRightArrow', (this.get('serviceVersions.length') > this.VERSIONS_IN_FLOW) && ((startIndex + this.VERSIONS_IN_FLOW) < this.get('serviceVersions.length')));
   },
 
@@ -313,6 +295,7 @@ App.ConfigHistoryFlowView = Em.View.extend({
       self.disableVersions();
       callback();
     });
+    $("#config_version_popup").removeAttr('style');
   },
 
   /**
@@ -320,6 +303,9 @@ App.ConfigHistoryFlowView = Em.View.extend({
    */
   switchVersion: function (event) {
     var version = event.context.get('version');
+    if(this.get('hoveredServiceVersion')) {
+      version = this.get('hoveredServiceVersion.version');
+    }
     var versionIndex = 0;
 
     this.set('compareServiceVersion', null);
@@ -340,8 +326,10 @@ App.ConfigHistoryFlowView = Em.View.extend({
    * add a second version-info-bar for the chosen version
    */
   compare: function (event) {
-    this.set('controller.compareServiceVersion', event.context);
-    this.set('compareServiceVersion', event.context);
+    this.set('controller.compareServiceVersion', this.get('hoveredServiceVersion'));
+    var serviceConfigVersion = this.get('hoveredServiceVersion') || event.context;
+    this.set('compareServiceVersion', serviceConfigVersion);
+
     var controller = this.get('controller');
     controller.get('stepConfigs').clear();
     controller.loadCompareVersionConfigs(controller.get('allConfigs')).done(function() {
@@ -366,14 +354,16 @@ App.ConfigHistoryFlowView = Em.View.extend({
     this.get('controller').loadSelectedVersion(displayedVersion);
   },
   clearCompareVersionBar: function () {
-    this.set('compareServiceVersion', null);
-  }.observes('controller.selectedConfigGroup'),
+    if (this.get('controller.isCompareMode') === false) {
+      this.set('compareServiceVersion', null);
+    }
+  }.observes('controller.isCompareMode'),
   /**
    * revert config values to chosen version and apply reverted configs to server
    */
   revert: function (event) {
     var self = this;
-    var serviceConfigVersion = event.context || Em.Object.create({
+    var serviceConfigVersion = this.get('hoveredServiceVersion') || event.context || Em.Object.create({
       version: this.get('displayedServiceVersion.version'),
       serviceName: this.get('displayedServiceVersion.serviceName'),
       notes:''
@@ -402,6 +392,14 @@ App.ConfigHistoryFlowView = Em.View.extend({
         serviceConfigVersion.set('serviceConfigNote', this.get('serviceConfigNote'));
         self.sendRevertCall(serviceConfigVersion);
         this.hide();
+      },
+      onSecondary: function () {
+        // force <code>serviceVersions</code> recalculating
+        self.propertyDidChange('controller.selectedConfigGroup.name');
+        this._super();
+      },
+      onThird: function () {
+        this.onSecondary();
       }
     });
   },
@@ -442,20 +440,28 @@ App.ConfigHistoryFlowView = Em.View.extend({
    */
   save: function () {
     var self = this;
+    var passwordWasChanged = this.get('controller.passwordConfigsAreChanged');
     return App.ModalPopup.show({
       header: Em.I18n.t('dashboard.configHistory.info-bar.save.popup.title'),
       serviceConfigNote: '',
       bodyClass: Em.View.extend({
         templateName: require('templates/common/configs/save_configuration'),
+        showPasswordChangeWarning: passwordWasChanged,
         notesArea: Em.TextArea.extend({
           classNames: ['full-width'],
+          value: passwordWasChanged ? Em.I18n.t('dashboard.configHistory.info-bar.save.popup.notesForPasswordChange') : '',
           placeholder: Em.I18n.t('dashboard.configHistory.info-bar.save.popup.placeholder'),
+          didInsertElement: function () {
+            if (this.get('value')) {
+              this.onChangeValue();
+            }
+          },
           onChangeValue: function() {
             this.get('parentView.parentView').set('serviceConfigNote', this.get('value'));
           }.observes('value')
         })
       }),
-      footerClass: Ember.View.extend({
+      footerClass: Em.View.extend({
         templateName: require('templates/main/service/info/save_popup_footer')
       }),
       primary: Em.I18n.t('common.save'),
@@ -517,19 +523,16 @@ App.ConfigHistoryFlowView = Em.View.extend({
 
 App.ConfigsServiceVersionBoxView = Em.View.extend({
 
+  /**
+   * bound from template
+   */
+  serviceVersion: null,
+
   actionTypesBinding: 'parentView.actionTypes',
 
-  disabledActionAttr: function() {
-    if (this.get('serviceVersion')) {
-      return this.get('serviceVersion').get('disabledActionAttr');
-    }
-  }.property('serviceVersion.disabledActionAttr'),
+  disabledActionAttr: Em.computed.alias('serviceVersion.disabledActionAttr'),
 
-  disabledActionMessages: function() {
-    if (this.get('serviceVersion')) {
-      return this.get('serviceVersion').get('disabledActionMessages');
-    }
-  }.property('serviceVersion.disabledActionMessages'),
+  disabledActionMessages: Em.computed.alias('serviceVersion.disabledActionMessages'),
 
   templateName: require('templates/common/configs/service_version_box'),
 
@@ -552,6 +555,90 @@ App.ConfigsServiceVersionBoxView = Em.View.extend({
 
   willDestroyElement: function() {
     this.$('.version-box').off();
-    this.$('[data-toggle=tooltip], [data-toggle=arrow-tooltip]').remove();
+    this.$('[data-toggle=tooltip]').tooltip('destroy');
+    this.$('[data-toggle=arrow-tooltip]').tooltip('destroy');
   }
+});
+
+App.ConfigHistoryDropdownRowView = Em.View.extend({
+
+  templateName: require('templates/common/configs/config_history_dropdown_row'),
+
+  tagName: "li",
+
+  classNameBindings: [':pointer', ':dropdown-submenu', 'isDisplayed:not-allowed'],
+
+  serviceVersion: null,
+
+  isDisplayed: function() {
+    var serviceVersion = this.get('serviceVersion');
+    if(serviceVersion) {
+      return serviceVersion.get('isDisplayed');
+    }
+    return false;
+  }.property('serviceVersion'),
+
+  actionTypesBinding: 'parentView.actionTypes',
+
+  doAction: function(event) {
+    this.get('parentView').doAction(event);
+  },
+
+  eventManager: Ember.Object.create({
+    mouseEnter: function(event, view) {
+      var serviceVersion = view.get('serviceVersion');
+      var version = serviceVersion.get('version');
+      var $el = $('#config_version_popup');
+      var $currentTarget = $(event.currentTarget);
+      var parentView = view.get('parentView');
+      if (!serviceVersion.get("isDisplayed"))  {
+        parentView.set('hoveredServiceVersion', serviceVersion);
+        parentView.set('isHovered', true);
+        var elHeight = $el.outerHeight(),
+          pagePosition = window.innerHeight + window.pageYOffset,
+          elBottomPosition = $currentTarget[0].getBoundingClientRect().top + elHeight,
+          shouldShowUp = elBottomPosition > pagePosition;
+        $el.css({
+          "position": "fixed",
+          "top": $currentTarget[0].getBoundingClientRect().top,
+          "left": $currentTarget[0].getBoundingClientRect().left + 400,
+          "margin-top": -(elHeight/3),
+          "display": "block"
+        });
+        if (shouldShowUp) {
+          $el.css('margin-top', -(elHeight - $currentTarget.outerHeight()));
+        }
+      }
+      $el = null;
+    },
+    mouseLeave: function(event, view) {
+      var parentView = view.get('parentView');
+      parentView.set('isHovered', false);
+      Em.run.later(function() {
+        if(!parentView.get('displaySubMenuFlag') && !parentView.get('isHovered')) {
+          parentView.set('hoveredServiceVersion', null);
+          $('#config_version_popup').removeAttr('style');
+        }
+      }, 200);
+    }
+  })
+});
+
+App.ConfigHistoryDropdownSubMenuView = Em.View.extend({
+
+  tagName: 'ul',
+
+  classNameBindings: [':dropdown-menu', ':version-info-operations'],
+
+  eventManager: Ember.Object.create({
+    mouseEnter: function(event, view) {
+      view.get('parentView').set('displaySubMenuFlag', true);
+    },
+    mouseLeave: function(event, view) {
+      var parentView = view.get('parentView');
+      parentView.set('displaySubMenuFlag', false);
+      parentView.set('hoveredServiceVersion', null);
+      $("#config_version_popup").removeAttr('style');
+    }
+  })
 });

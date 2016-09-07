@@ -26,6 +26,7 @@ import signal
 import threading
 import traceback
 from ambari_commons.os_family_impl import OsFamilyImpl
+from RemoteDebugUtils import remote_debug
 import sys
 
 logger = logging.getLogger()
@@ -79,35 +80,26 @@ class HeartbeatStopHandlersWindows(HeartbeatStopHandlers):
 
 def signal_handler(signum, frame):
   global _handler
+  logger.info("Ambari-agent received {0} signal, stopping...".format(signum))
   _handler.set_stop()
 
 
 def debug(sig, frame):
-  """Interrupt running process, and provide a python prompt for
-  interactive debugging."""
+  """Interrupt running process, and provide a stacktrace of threads """
   d = {'_frame': frame}  # Allow access to frame object.
   d.update(frame.f_globals)  # Unless shadowed by global
   d.update(frame.f_locals)
 
-  message = "Signal received : entering python shell.\nTraceback:\n"
+  message = "Signal received.\nTraceback:\n"
   message += ''.join(traceback.format_stack(frame))
   logger.info(message)
 
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class HeartbeatStopHandlersLinux(HeartbeatStopHandlers):
-  def __init__(self, stopEvent=None):
-    # Event is used for synchronizing heartbeat iterations (to make possible
-    # manual wait() interruption between heartbeats )
+  def __init__(self):
     self.heartbeat_wait_event = threading.Event()
-
-    # Event is used to stop the Agent process
-    if stopEvent is None:
-      # Allow standalone testing
-      self.stop_event = threading.Event()
-    else:
-      # Allow one unique event per process
-      self.stop_event = stopEvent
+    self._stop = False
 
   def set_heartbeat(self):
     self.heartbeat_wait_event.set()
@@ -116,19 +108,15 @@ class HeartbeatStopHandlersLinux(HeartbeatStopHandlers):
     self.heartbeat_wait_event.clear()
 
   def set_stop(self):
-    self.stop_event.set()
+    self._stop = True
 
   def wait(self, timeout1, timeout2=0):
-    if self.heartbeat_wait_event.wait(timeout=timeout1):
-      # Event signaled, exit
-      return 1
-    # Stop loop when stop event received
-    # Otherwise sleep a bit more to allow STATUS_COMMAND results to be collected
-    # and sent in one heartbeat. Also avoid server overload with heartbeats
-    if self.stop_event.wait(timeout=timeout2):
+    if self._stop:
       logger.info("Stop event received")
       return 0
-    # Timeout
+
+    if self.heartbeat_wait_event.wait(timeout=timeout1):
+      return 1
     return -1
 
 
@@ -140,6 +128,7 @@ def bind_signal_handlers(agentPid):
     if os.getpid() == agentPid:
       signal.signal(signal.SIGINT, signal_handler)
       signal.signal(signal.SIGTERM, signal_handler)
+      signal.signal(signal.SIGUSR2, remote_debug) # Interrupt running process, and provide a python prompt for it
       try:
         import faulthandler  # This is not default module, has to be installed separately
         faulthandler.enable(file=sys.stderr, all_threads=True)

@@ -42,9 +42,7 @@ App.upgradeEntity = Em.Object.extend({
   /**
    * @type {boolean}
    */
-  isVisible: function () {
-    return this.get('status') !== 'PENDING';
-  }.property('status'),
+  isVisible: Em.computed.notEqual('status', 'PENDING'),
 
   /**
    * status of tasks/items/groups which should be grayed out and disabled
@@ -55,9 +53,7 @@ App.upgradeEntity = Em.Object.extend({
   /**
    * @type {boolean}
    */
-  isRunning: function () {
-    return ['IN_PROGRESS'].contains(this.get('status'));
-  }.property('status'),
+  isRunning: Em.computed.existsIn('status', ['IN_PROGRESS']),
 
   /**
    * @type {number}
@@ -82,9 +78,18 @@ App.upgradeEntity = Em.Object.extend({
     return this.get('type') === 'GROUP' && (this.get('isActive') || this.get('hasExpandableItems'));
   }.property('isActive', 'hasExpandableItems'),
 
+  upgradeItemStatus: Em.computed.firstNotBlank('display_status', 'status'),
+
+  /**
+   * @type {string}
+   */
   upgradeGroupStatus: function () {
-    if (this.get('type') === 'GROUP') {
-      return !this.get('isActive') && this.get('hasExpandableItems') ? 'SUBITEM_FAILED' : this.get('status');
+    if (App.get('upgradeSuspended') && this.get('status') === 'ABORTED') {
+      return 'SUSPENDED';
     }
-  }.property('isExpandableGroup')
+    if (this.get('type') === 'GROUP' && !this.get('isActive') && this.get('hasExpandableItems')) {
+      return 'SUBITEM_FAILED';
+    }
+    return this.get('display_status') || this.get('status');
+  }.property('isExpandableGroup', 'display_status', 'status', 'App.upgradeSuspended')
 });

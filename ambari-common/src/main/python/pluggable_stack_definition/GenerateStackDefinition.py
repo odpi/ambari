@@ -369,6 +369,9 @@ def process_py_files(file_path, config_data, stack_version_changes):
 def process_xml_files(file_path, config_data, stack_version_changes):
   return process_replacements(file_path, config_data, stack_version_changes)
 
+def process_other_files(file_path, config_data, stack_version_changes):
+  return process_replacements(file_path, config_data, stack_version_changes)
+
 def process_config_xml(file_path, config_data):
   tree = ET.parse(file_path)
   root = tree.getroot()
@@ -471,11 +474,13 @@ class GeneratorHelper(object):
 
   def copy_stacks(self):
     original_folder = os.path.join(self.resources_folder, 'stacks', self.config_data.baseStackName)
+    partial_target_folder = os.path.join(self.resources_folder, 'stacks', self.config_data.stackName)
     target_folder = os.path.join(self.output_folder, 'stacks', self.config_data.stackName)
 
     for stack in self.config_data.versions:
       original_stack = os.path.join(original_folder, stack.baseVersion)
       target_stack = os.path.join(target_folder, stack.version)
+      partial_target_stack = os.path.join(partial_target_folder, stack.version)
 
       desired_services = [service.name for service in stack.services]
       desired_services.append('stack_advisor.py')  # stack_advisor.py placed in stacks folder
@@ -520,10 +525,19 @@ class GeneratorHelper(object):
           ###################################################################
           target = process_py_files(target, self.config_data, self.stack_version_changes)
           return
+        ####################################################################
+        # Generic processing for all other types of files.
+        ####################################################################
+        if target.endswith(".j2") or target.endswith(".sh"):
+          process_other_files(target, self.config_data, self.stack_version_changes)
 
       copy_tree(original_stack, target_stack, ignored_files, post_copy=post_copy)
-      # copy default stack advisor
-      shutil.copy(os.path.join(self.resources_folder, 'stacks', 'stack_advisor.py'), os.path.join(target_folder, '../stack_advisor.py'))
+      # After generating target stack from base stack, overlay target stack partial definition defined under
+      # <resourceDir>/stacks/<targetStackName>/<targetStackVersion>
+      copy_tree(partial_target_stack, target_stack, ignored_files, post_copy=None)
+
+    # copy default stack advisor
+    shutil.copy(os.path.join(self.resources_folder, 'stacks', 'stack_advisor.py'), os.path.join(target_folder, '../stack_advisor.py'))
 
   def copy_common_services(self, common_services = []):
     ignored_files = ['.pyc']
@@ -542,17 +556,36 @@ class GeneratorHelper(object):
             # process configuration xml
             target = process_config_xml(target, self.config_data)
           # process generic xml
-          if target.endswith('.xml'):
-            process_xml_files(target, self.config_data, self.stack_version_changes)
+          process_xml_files(target, self.config_data, self.stack_version_changes)
+          return
         # process python files
         if target.endswith('.py'):
           process_py_files(target, self.config_data, self.stack_version_changes)
           return
+        ####################################################################
+        # Generic processing for all other types of files.
+        ####################################################################
+        if target.endswith(".j2") or target.endswith(".sh"):
+          process_other_files(target, self.config_data, self.stack_version_changes)
 
       copy_tree(source_folder, target_folder, ignored_files, post_copy=post_copy)
       if parent_services:
         self.copy_common_services(parent_services)
     pass
+
+  def copy_remaining_common_services(self, common_services = []):
+    ignored_files = ['.pyc']
+    source_common_services_path = os.path.join(self.resources_folder, "common-services")
+    dest_common_services_path = os.path.join(self.output_folder, "common-services")
+
+    source_common_services_list = os.listdir(source_common_services_path)
+    dest_common_services_list = os.listdir(dest_common_services_path)
+
+    for service_name in source_common_services_list:
+      if service_name not in dest_common_services_list:
+        source = os.path.join(source_common_services_path, service_name)
+        dest = os.path.join(dest_common_services_path, service_name)
+        copy_tree(source, dest, ignored_files, post_copy=None)
 
   def copy_resource_management(self):
     source_folder = join(os.path.abspath(join(self.resources_folder, "..", "..", "..", "..")),
@@ -644,6 +677,7 @@ def main(argv):
   gen_helper.copy_stacks()
   gen_helper.copy_resource_management()
   gen_helper.copy_common_services()
+  gen_helper.copy_remaining_common_services()
   gen_helper.copy_ambari_properties()
   gen_helper.copy_custom_actions()
 

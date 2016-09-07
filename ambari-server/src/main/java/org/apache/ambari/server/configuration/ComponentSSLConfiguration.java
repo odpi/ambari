@@ -21,7 +21,7 @@ package org.apache.ambari.server.configuration;
  * Configuration for SSL communication between Ambari and 3rd party services.
  * Currently, the following services are supported with SSL communication:
  * <ul>
- * <li>Ganglia</li>
+ * <li>Ambari metrics</li>
  * </ul>
  */
 public class ComponentSSLConfiguration {
@@ -32,7 +32,7 @@ public class ComponentSSLConfiguration {
   private String truststorePath;
   private String truststorePassword;
   private String truststoreType;
-  private boolean gangliaSSL;
+  private boolean httpsEnabled;
 
   /**
    * The singleton.
@@ -57,10 +57,10 @@ public class ComponentSSLConfiguration {
    * @param configuration  the configuration
    */
   public void init(Configuration configuration) {
-    truststorePath     = configuration.getProperty(Configuration.SSL_TRUSTSTORE_PATH_KEY);
+    truststorePath     = configuration.getProperty(Configuration.SSL_TRUSTSTORE_PATH.getKey());
     truststorePassword = getPassword(configuration);
-    truststoreType     = configuration.getProperty(Configuration.SSL_TRUSTSTORE_TYPE_KEY);
-    gangliaSSL         = Boolean.parseBoolean(configuration.getProperty(Configuration.GANGLIA_HTTPS_KEY));
+    truststoreType     = configuration.getProperty(Configuration.SSL_TRUSTSTORE_TYPE.getKey());
+    httpsEnabled = Boolean.parseBoolean(configuration.getProperty(Configuration.AMBARI_METRICS_HTTPS_ENABLED.getKey()));
   }
 
 
@@ -94,12 +94,12 @@ public class ComponentSSLConfiguration {
   }
 
   /**
-   * Indicates whether or not Ganglia is setup for SSL.
+   * Indicates whether or not Ambari Metrics is setup for SSL.
    *
-   * @return true if Ganglia is setup for SSL
+   * @return true if AMS is setup for SSL
    */
-  public boolean isGangliaSSL() {
-    return gangliaSSL;
+  public boolean isHttpsEnabled() {
+    return httpsEnabled;
   }
 
   /**
@@ -115,7 +115,7 @@ public class ComponentSSLConfiguration {
   // -----helper methods -----------------------------------------------------
 
   private String getPassword(Configuration configuration) {
-    String rawPassword = configuration.getProperty(Configuration.SSL_TRUSTSTORE_PASSWORD_KEY);
+    String rawPassword = configuration.getProperty(Configuration.SSL_TRUSTSTORE_PASSWORD.getKey());
     String password    = configuration.readPasswordFromStore(rawPassword);
 
     return password == null ? rawPassword : password;

@@ -17,6 +17,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 '''
+from ambari_agent import main
+main.MEMORY_LEAK_DEBUG_FILEPATH = "/tmp/memory_leak_debug.out"
 import os
 import tempfile
 import shutil
@@ -33,13 +35,12 @@ class TestCertGeneration(TestCase):
   def setUp(self):
     self.tmpdir = tempfile.mkdtemp()
     config = AmbariConfig.AmbariConfig()
-    #config.add_section('server')
     config.set('server', 'hostname', 'example.com')
     config.set('server', 'url_port', '777')
-    #config.add_section('security')
     config.set('security', 'keysdir', self.tmpdir)
     config.set('security', 'server_crt', 'ca.crt')
-    self.certMan = CertificateManager(config)
+    server_hostname = config.get('server', 'hostname')
+    self.certMan = CertificateManager(config, server_hostname)
 
   @patch.object(os, "chmod")
   def test_generation(self, chmod_mock):

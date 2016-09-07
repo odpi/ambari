@@ -18,13 +18,17 @@
 
 package org.apache.ambari.view.pig;
 
+import org.apache.ambari.view.ClusterType;
 import org.apache.ambari.view.ViewInstanceDefinition;
+import org.apache.ambari.view.utils.ambari.ValidatorUtils;
 import org.apache.ambari.view.validation.ValidationResult;
 import org.apache.ambari.view.validation.Validator;
-import org.apache.commons.validator.routines.RegexValidator;
-import org.apache.commons.validator.routines.UrlValidator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class PropertyValidator implements Validator {
+  protected final static Logger LOG =
+    LoggerFactory.getLogger(PropertyValidator.class);
 
   public static final String WEBHDFS_URL = "webhdfs.url";
   public static final String WEBHCAT_PORT = "webhcat.port";
@@ -39,16 +43,17 @@ public class PropertyValidator implements Validator {
     // 1. Validate non cluster associated properties
     // no properties
 
-    // 2. if associated with cluster, no need to validate associated properties
-    String cluster = viewInstanceDefinition.getClusterHandle();
-    if (cluster != null) {
+    // if associated with cluster(local or remote), no need to validate associated properties
+    ClusterType clusterType = viewInstanceDefinition.getClusterType();
+    if (clusterType == ClusterType.LOCAL_AMBARI || clusterType == ClusterType.REMOTE_AMBARI) {
       return ValidationResult.SUCCESS;
     }
 
     // 3. Cluster associated properties
     if (property.equals(WEBHDFS_URL)) {
       String webhdfsUrl = viewInstanceDefinition.getPropertyMap().get(WEBHDFS_URL);
-      if (!validateHdfsURL(webhdfsUrl)) {
+      if (!ValidatorUtils.validateHdfsURL(webhdfsUrl)) {
+        LOG.error("Illegal webhdfsUrl : {}", webhdfsUrl);
         return new InvalidPropertyValidationResult(false, "Must be valid URL");
       }
     }
@@ -59,36 +64,17 @@ public class PropertyValidator implements Validator {
         try {
           int port = Integer.valueOf(webhcatPort);
           if (port < 1 || port > 65535) {
+            LOG.error("Illegal port : {} ", port);
             return new InvalidPropertyValidationResult(false, "Must be from 1 to 65535");
           }
         } catch (NumberFormatException e) {
+          LOG.error("Port not numeric. webhcatPort = {}", webhcatPort);
           return new InvalidPropertyValidationResult(false, "Must be integer");
         }
       }
     }
 
     return ValidationResult.SUCCESS;
-  }
-
-  /**
-   * Validates filesystem URL
-   * @param webhdfsUrl url
-   * @return is url valid
-   */
-  private boolean validateHdfsURL(String webhdfsUrl) {
-    String[] schemes = {"webhdfs", "hdfs", "s3", "file"};
-    return validateURL(webhdfsUrl, schemes);
-  }
-
-  private boolean validateHttpURL(String webhdfsUrl) {
-    String[] schemes = {"http", "https"};
-    return validateURL(webhdfsUrl, schemes);
-  }
-
-  private boolean validateURL(String webhdfsUrl, String[] schemes) {
-    RegexValidator authority = new RegexValidator(".*");
-    UrlValidator urlValidator = new UrlValidator(schemes, authority, UrlValidator.ALLOW_LOCAL_URLS);
-    return urlValidator.isValid(webhdfsUrl);
   }
 
   public static class InvalidPropertyValidationResult implements ValidationResult {

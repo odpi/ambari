@@ -21,6 +21,8 @@ limitations under the License.
 import os
 import socket
 import time
+import logging
+import traceback
 from resource_management.libraries.functions import hive_check
 from resource_management.libraries.functions import format
 from resource_management.libraries.functions import get_kinit_path
@@ -65,6 +67,11 @@ SMOKEUSER_DEFAULT = 'ambari-qa'
 
 HADOOPUSER_KEY = '{{cluster-env/hadoop.user.name}}'
 HADOOPUSER_DEFAULT = 'hadoop'
+
+CHECK_COMMAND_TIMEOUT_KEY = 'check.command.timeout'
+CHECK_COMMAND_TIMEOUT_DEFAULT = 60.0
+
+logger = logging.getLogger('ambari_alerts')
 
 @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
 def get_tokens():
@@ -114,6 +121,10 @@ def execute(configurations={}, parameters={}, host_name=None):
   security_enabled = False
   if SECURITY_ENABLED_KEY in configurations:
     security_enabled = str(configurations[SECURITY_ENABLED_KEY]).upper() == 'TRUE'
+
+  check_command_timeout = CHECK_COMMAND_TIMEOUT_DEFAULT
+  if CHECK_COMMAND_TIMEOUT_KEY in parameters:
+    check_command_timeout = float(parameters[CHECK_COMMAND_TIMEOUT_KEY])
 
   hive_server2_authentication = HIVE_SERVER2_AUTHENTICATION_DEFAULT
   if HIVE_SERVER2_AUTHENTICATION_KEY in configurations:
@@ -185,16 +196,17 @@ def execute(configurations={}, parameters={}, host_name=None):
     try:
       hive_check.check_thrift_port_sasl(host_name, port, hive_server2_authentication, hive_server_principal,
                                         kinitcmd, smokeuser, transport_mode=transport_mode, ssl=hive_ssl,
-                                        ssl_keystore=hive_ssl_keystore_path, ssl_password=hive_ssl_keystore_password)
+                                        ssl_keystore=hive_ssl_keystore_path, ssl_password=hive_ssl_keystore_password,
+                                        check_command_timeout=int(check_command_timeout))
       result_code = 'OK'
       total_time = time.time() - start_time
       label = OK_MESSAGE.format(total_time, port)
-    except Exception, exception:
+    except:
       result_code = 'CRITICAL'
-      label = CRITICAL_MESSAGE.format(host_name, port, str(exception))
+      label = CRITICAL_MESSAGE.format(host_name, port, traceback.format_exc())
 
-  except Exception, e:
-    label = str(e)
+  except:
+    label = traceback.format_exc()
     result_code = 'UNKNOWN'
 
   return (result_code, [label])
@@ -252,11 +264,11 @@ def execute(configurations={}, parameters={}, host_name=None):
       total_time = time.time() - start_time
       result_code = 'OK'
       label = OK_MESSAGE.format(total_time, port)
-    except Exception, exception:
+    except:
       result_code = 'CRITICAL'
-      label = CRITICAL_MESSAGE.format(host_name, port, str(exception))
-  except Exception, e:
-    label = str(e)
+      label = CRITICAL_MESSAGE.format(host_name, port, traceback.format_exc())
+  except:
+    label = traceback.format_exc()
     result_code = 'UNKNOWN'
 
   return (result_code, [label])

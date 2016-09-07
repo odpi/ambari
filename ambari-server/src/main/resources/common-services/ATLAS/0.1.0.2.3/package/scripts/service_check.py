@@ -16,9 +16,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
-from resource_management import Script, Logger, ComponentIsNotRunning, \
-  Execute
-from resource_management.libraries.functions import format
+
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.format import format
+from resource_management.core.logger import Logger  
+from resource_management.core.resources.system import Execute
+from resource_management.core.exceptions import ComponentIsNotRunning
 
 
 class AtlasServiceCheck(Script):
@@ -30,10 +33,10 @@ class AtlasServiceCheck(Script):
 
     if params.security_enabled:
       Execute(format("{kinit_path_local} -kt {smokeuser_keytab} {smokeuser_principal}"),
-              user=params.metadata_user)
+              user=params.smoke_test_user)
 
     try:
-      Execute(params.smoke_cmd, user=params.metadata_user, tries = 5,
+      Execute(params.smoke_cmd, user=params.smoke_test_user, tries = 5,
               try_sleep = 10)
       Logger.info('Atlas server up and running')
     except:

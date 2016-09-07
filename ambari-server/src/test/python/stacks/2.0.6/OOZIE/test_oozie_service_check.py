@@ -19,8 +19,10 @@ limitations under the License.
 '''
 from mock.mock import MagicMock, call, patch
 from stacks.utils.RMFTestCase import *
+from resource_management.libraries.script.script import Script
 import json
 
+@patch.object(Script, 'format_package_name', new = MagicMock())
 @patch("platform.linux_distribution", new = MagicMock(return_value="Linux"))
 class TestOozieServiceCheck(RMFTestCase):
   COMMON_SERVICES_PACKAGE_DIR = "OOZIE/4.0.0.2.0/package"
@@ -44,7 +46,7 @@ class TestOozieServiceCheck(RMFTestCase):
                        classname = "OozieServiceCheck",
                        command = "service_check",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES,
                        call_mocks = [(0, None), (0, None)],
                        mocks_dict = mocks_dict)
@@ -70,7 +72,7 @@ class TestOozieServiceCheck(RMFTestCase):
       mode = 0755)
 
     self.assertResourceCalled('Execute',
-      "/tmp/prepareOozieHdfsDirectories.sh /usr/hdp/current/oozie-client/conf examples-dir /usr/hdp/current/hadoop-client/conf ",
+      ('/tmp/prepareOozieHdfsDirectories.sh', '/usr/hdp/current/oozie-client/conf', 'examples-dir', '/usr/hdp/current/hadoop-client/conf', 'c6402.ambari.apache.org:8050', 'hdfs://c6401.ambari.apache.org:8020', 'default'),
       tries = 3,
       try_sleep = 5,
       logoutput = True)

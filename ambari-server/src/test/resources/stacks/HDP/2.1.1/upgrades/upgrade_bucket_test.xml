@@ -15,9 +15,22 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 -->
-<upgrade xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <target>2.2.*</target>
-  
+<upgrade xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="upgrade-pack.xsd">
+  <target>2.2.*.*</target>
+  <target-stack>HDP-2.2.6</target-stack>
+  <type>ROLLING</type>
+  <prerequisite-checks>
+    <check>org.apache.ambari.server.checks.HiveMultipleMetastoreCheck</check>
+    <check>org.apache.ambari.server.checks.MapReduce2JobHistoryStatePreservingCheck</check>
+    <check>org.apache.ambari.server.checks.SecondaryNamenodeDeletedCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesMapReduceDistributedCacheCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesNamenodeHighAvailabilityCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesNamenodeTruncateCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesTezDistributedCacheCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesYarnWorkPreservingCheck</check>
+    <check>org.apache.ambari.server.checks.YarnRMHighAvailabilityCheck</check>
+    <check>org.apache.ambari.server.checks.YarnTimelineServerStatePreservingCheck</check>
+  </prerequisite-checks>
   <order>
   
     <group name="ZOOKEEPER" title="Zookeeper">
@@ -33,36 +46,42 @@
       <component name="ZOOKEEPER_SERVER">
         <pre-upgrade>
           <task xsi:type="manual">
-            <message>this is pre</message>
+            <message>pre-manual 1 task to run on all hosts</message>
           </task>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>bar1</function>
           </task>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>bar1</function>
           </task>
-          
         </pre-upgrade>
+        
+        <upgrade />
         
         <post-upgrade>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>bar1</function>
           </task>
           <task xsi:type="manual">
-            <message>this is pre</message>
+            <message>post-manual 1 task to run on all hosts</message>
           </task>
           <task xsi:type="manual">
-            <message>this is pre</message>
+            <message>post-manual 2 task to run on all hosts</message>
           </task>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>bar2</function>
           </task>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>bar3</function>
           </task>
-
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>bar4</function>
           </task>
           
         </post-upgrade>

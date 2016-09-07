@@ -25,22 +25,22 @@
   <table class="table table-striped">
     <thead>
     <tr>
-      <th class="span3">
+      <th class="span3" id="service-name">
           {{view Ember.Checkbox disabledBinding="isInstalled" checkedBinding="isAllChecked"}}{{t common.service}}
       </th>
-      <th>{{t common.version}}</th>
-      <th>{{t common.description}}</th>
+      <th id="service-version">{{t common.version}}</th>
+      <th id="service-description">{{t common.description}}</th>
     </tr>
     </thead>
     <tbody>
     {{#each controller}}
       {{#unless isHiddenOnSelectServicePage}}
-        <tr {{bindAttr class="isSelected:success:"}}>
+        <tr {{bindAttr class="isSelected:success isSelected:service-selected"}}>
           <td><label class="checkbox">{{view Ember.Checkbox classBinding="serviceName"
           disabledBinding="isInstalled"
           checkedBinding="isSelected"}}{{displayNameOnSelectServicePage}}</label>
           </td>
-          <td>{{serviceVersion}}</td>
+          <td>{{serviceVersionDisplay}}</td>
           <td>{{{comments}}}</td>
         </tr>
       {{/unless}}
@@ -50,8 +50,18 @@
 
   <div class="btn-area">
     {{#unless view.parentView.controller.hideBackButton}}
-      <a class="btn pull-left installer-back-btn" {{action back}}>&larr; {{t common.back}}</a>
+      <button type="button" class="btn pull-left installer-back-btn" {{bindAttr disabled="App.router.btnClickInProgress"}} {{action back}}>
+        &larr; {{t common.back}}
+        {{#if App.router.backBtnClickInProgress}}
+          {{view App.SpinnerView tagName="span" classNames="service-button-spinner"}}
+        {{/if}}
+      </button>
     {{/unless}}
-    <a class="btn btn-success pull-right" {{bindAttr disabled="isSubmitDisabled"}} {{action submit target="controller"}}> {{t common.next}} &rarr;</a>
+    <button type="button" class="btn btn-success pull-right" {{bindAttr disabled="isSubmitDisabled"}} {{action submit target="controller"}}>
+      {{#if App.router.nextBtnClickInProgress}}
+        {{view App.SpinnerView tagName="span" classNames="service-button-spinner"}}
+      {{/if}}
+      {{t common.next}} &rarr;
+    </button>
   </div>
 </div>

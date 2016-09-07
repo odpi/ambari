@@ -18,14 +18,47 @@
 
 
 var App = require('app');
-require('messages');
-var filters = require('views/common/filter_view');
 require('views/main/dashboard');
-var mainDashboardView;
-describe('App.MainDashboardView', function() {
 
-   beforeEach(function() {
-     mainDashboardView = App.MainDashboardView.create();
-   });
+describe('App.MainDashboardView', function () {
+  var view;
 
+  beforeEach(function() {
+    view = App.MainDashboardView.create()
+  });
+
+  describe("#NavItemView", function () {
+    var navItemView;
+
+    beforeEach(function() {
+      navItemView = view.get('NavItemView').create();
+    });
+
+    describe("#elementId", function () {
+
+      it("label is null", function() {
+        navItemView.set('templateData', {
+          keywords: {
+            category: {
+              label: null
+            }
+          }
+        });
+        navItemView.propertyDidChange('elementId');
+        expect(navItemView.get('elementId')).to.be.empty;
+      });
+
+      it("label has value", function() {
+        navItemView.set('templateData', {
+          keywords: {
+            category: {
+              label: 'l1'
+            }
+          }
+        });
+        navItemView.propertyDidChange('elementId');
+        expect(navItemView.get('elementId')).to.be.equal('dashboard-view-tab-l1');
+      });
+    });
+  });
 });

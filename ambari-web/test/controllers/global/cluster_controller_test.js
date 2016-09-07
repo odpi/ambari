@@ -18,6 +18,8 @@
 
 
 var App = require('app');
+var credentialUtils = require('utils/credentials');
+var testHelpers = require('test/helpers');
 require('controllers/global/cluster_controller');
 require('models/host_component');
 require('utils/http_client');
@@ -34,6 +36,12 @@ describe('App.clusterController', function () {
     {service_name: 'GANGLIA'}
   ];
 
+  App.TestAliases.testAsComputedAnd(controller, 'isHostContentLoaded', ['isHostsLoaded', 'isComponentsStateLoaded']);
+
+  App.TestAliases.testAsComputedAnd(controller, 'isServiceContentFullyLoaded', ['isServiceMetricsLoaded', 'isComponentsStateLoaded', 'isComponentsConfigLoaded']);
+
+  App.TestAliases.testAsComputedAlias(controller, 'clusterName', 'App.clusterName', 'string');
+
   describe('#updateLoadStatus()', function () {
 
     controller.set('dataLoadList', Em.Object.create({
@@ -45,20 +53,20 @@ describe('App.clusterController', function () {
       expect(controller.get('clusterDataLoadedPercent')).to.equal('width:0');
     });
     it('when first item is loaded then isLoaded should be false', function () {
-      controller.updateLoadStatus.call(controller, 'item1');
+      controller.updateLoadStatus('item1');
       expect(controller.get('isLoaded')).to.equal(false);
     });
     it('when first item is loaded then width should be "width:50%"', function () {
-      controller.updateLoadStatus.call(controller, 'item1');
+      controller.updateLoadStatus('item1');
       expect(controller.get('clusterDataLoadedPercent')).to.equal('width:50%');
     });
 
     it('when all items are loaded then isLoaded should be true', function () {
-      controller.updateLoadStatus.call(controller, 'item2');
+      controller.updateLoadStatus('item2');
       expect(controller.get('isLoaded')).to.equal(true);
     });
     it('when all items are loaded then width should be "width:100%"', function () {
-      controller.updateLoadStatus.call(controller, 'item2');
+      controller.updateLoadStatus('item2');
       expect(controller.get('clusterDataLoadedPercent')).to.equal('width:100%');
     });
   });
@@ -67,6 +75,7 @@ describe('App.clusterController', function () {
 
     beforeEach(function () {
       modelSetup.setupStackVersion(this, 'HDP-2.0.5');
+      App.ajax.send.restore(); // default ajax-mock can't be used here
       sinon.stub(App.ajax, 'send', function () {
         return {
           then: function (successCallback) {
@@ -76,22 +85,22 @@ describe('App.clusterController', function () {
           }
         }
       });
+      this.args = testHelpers.findAjaxRequest('name', 'cluster.load_cluster_name');
     });
     afterEach(function () {
       modelSetup.restoreStackVersion(this);
-      App.ajax.send.restore();
     });
 
     it('if clusterName is "mycluster" and reload is false then clusterName stays the same', function () {
       App.set('clusterName', 'mycluster');
       controller.loadClusterName(false);
-      expect(App.ajax.send.called).to.be.false;
+      expect(this.args).to.not.exists;
       expect(App.get('clusterName')).to.equal('mycluster');
     });
 
     it('reload is true and clusterName is not empty', function () {
       controller.loadClusterName(true);
-      expect(App.ajax.send.calledOnce).to.be.true;
+      expect(this.args).to.exists;
       expect(App.get('clusterName')).to.equal('clusterNameFromServer');
       expect(App.get('currentStackVersion')).to.equal('HDP-2.0.5');
     });
@@ -99,7 +108,7 @@ describe('App.clusterController', function () {
     it('reload is false and clusterName is empty', function () {
       App.set('clusterName', '');
       controller.loadClusterName(false);
-      expect(App.ajax.send.calledOnce).to.be.true;
+      expect(this.args).to.exists;
       expect(App.get('clusterName')).to.equal('clusterNameFromServer');
       expect(App.get('currentStackVersion')).to.equal('HDP-2.0.5');
     });
@@ -108,7 +117,7 @@ describe('App.clusterController', function () {
   });
 
   describe('#reloadSuccessCallback', function () {
-    var test_data = {
+    var testData = {
       "items": [
         {
           "Clusters": {
@@ -119,7 +128,7 @@ describe('App.clusterController', function () {
       ]
     };
     it('Check cluster', function () {
-      controller.reloadSuccessCallback(test_data);
+      controller.reloadSuccessCallback(testData);
       expect(App.get('clusterName')).to.equal('tdk');
       expect(App.get('currentStackVersion')).to.equal('HDP-1.3.0');
     });
@@ -180,43 +189,44 @@ describe('App.clusterController', function () {
   describe('#getUrl', function () {
     controller.set('clusterName', 'tdk');
     var tests = ['test1', 'test2', 'test3'];
-    it('testMode = true', function () {
-      App.testMode = true;
-      tests.forEach(function (test) {
-        expect(controller.getUrl(test, test)).to.equal(test);
-      });
-    });
-    it('testMode = false', function () {
-      App.testMode = false;
-      tests.forEach(function (test) {
+
+    tests.forEach(function (test) {
+      it(test, function () {
         expect(controller.getUrl(test, test)).to.equal(App.apiPrefix + '/clusters/' + controller.get('clusterName') + test);
       });
     });
   });
 
   describe("#createKerberosAdminSession()", function() {
-    before(function () {
-      sinon.stub(App.ajax, 'send', function() {
-        return {success: Em.K}
+
+    beforeEach(function () {
+      sinon.stub(credentialUtils, 'createOrUpdateCredentials', function() {
+        return $.Deferred().resolve().promise();
       });
+      this.stub = sinon.stub(App, 'get');
+      this.stub.withArgs('clusterName').returns('test');
     });
-    after(function () {
-      App.ajax.send.restore();
+
+    afterEach(function () {
+      credentialUtils.createOrUpdateCredentials.restore();
+      App.get.restore();
     });
-    it("make ajax call", function() {
-      controller.createKerberosAdminSession("admin", "pass", {});
-      expect(App.ajax.send.getCall(0).args[0]).to.eql({
-        name: 'common.cluster.update',
-        sender: controller,
-        data: {
-          clusterName: App.get('clusterName'),
-          data: [{
-            session_attributes: {
-              kerberos_admin: {principal: "admin", password: "pass"}
-            }
-          }]
+
+    it("credentials updated via credentials storage call", function() {
+      controller.createKerberosAdminSession({
+        principal: 'admin',
+        key: 'pass',
+        type: 'persistent'
+      }, {});
+      var args = testHelpers.findAjaxRequest('name', 'common.cluster.update');
+      expect(args).to.not.exists;
+      expect(credentialUtils.createOrUpdateCredentials.getCall(0).args).to.eql([
+        'test', 'kdc.admin.credential', {
+          principal: 'admin',
+          key: 'pass',
+          type: 'persistent'
         }
-      });
+      ]);
     });
   });
 
@@ -243,31 +253,42 @@ describe('App.clusterController', function () {
       }
     ];
 
-    beforeEach(function () {
-      sinon.stub(App.ajax, 'send').returns({
-        promise: Em.K
-      });
-    });
-
     afterEach(function () {
-      App.ajax.send.restore();
       App.get.restore();
     });
 
-    it('should check detailed repo version for HDP 2.2', function () {
-      sinon.stub(App, 'get').withArgs('currentStackName').returns('HDP').withArgs('currentStackVersionNumber').returns('2.2');
-      controller.checkDetailedRepoVersion();
-      expect(App.ajax.send.calledOnce).to.be.true;
+    describe('should check detailed repo version for HDP 2.2', function () {
+
+      beforeEach(function () {
+        sinon.stub(App, 'get').withArgs('currentStackName').returns('HDP').withArgs('currentStackVersionNumber').returns('2.2');
+      });
+
+      it('request is sent', function () {
+        controller.checkDetailedRepoVersion();
+        var args = testHelpers.findAjaxRequest('name', 'cluster.load_detailed_repo_version');
+        expect(args).to.exists;
+      });
     });
 
     cases.forEach(function (item) {
-      it(item.title, function () {
-        sinon.stub(App, 'get', function (key) {
-          return item[key] || Em.get(App, key);
+      describe(item.title, function () {
+
+        beforeEach(function () {
+          sinon.stub(App, 'get', function (key) {
+            return item[key] || Em.get(App, key);
+          });
+          controller.checkDetailedRepoVersion();
         });
-        controller.checkDetailedRepoVersion();
-        expect(App.ajax.send.called).to.be.false;
-        expect(App.get('isStormMetricsSupported')).to.equal(item.isStormMetricsSupported);
+
+        it('request is not sent', function () {
+          var args = testHelpers.findAjaxRequest('name', 'cluster.load_detailed_repo_version');
+          expect(args).to.not.exists;
+        });
+
+        it('App.isStormMetricsSupported is ' + item.isStormMetricsSupported, function () {
+          expect(App.get('isStormMetricsSupported')).to.equal(item.isStormMetricsSupported);
+        });
+
       });
     });
 
@@ -383,19 +404,149 @@ describe('App.clusterController', function () {
 
   describe('#getAllUpgrades()', function () {
 
-    beforeEach(function () {
-      sinon.stub(App.ajax, 'send', Em.K);
-    });
-
-    afterEach(function () {
-      App.ajax.send.restore();
-    });
-
     it('should send request to get upgrades data', function () {
       controller.getAllUpgrades();
-      expect(App.ajax.send.calledOnce).to.be.true;
+      var args = testHelpers.findAjaxRequest('name', 'cluster.load_last_upgrade');
+      expect(args).to.exists;
     });
 
   });
 
+  describe("#restoreUpgradeState()", function() {
+    var data = {upgradeData: {}};
+    var mock = {
+      done: function (callback) {
+        callback(data.upgradeData);
+      }
+    };
+    var upgradeController = Em.Object.create({
+      restoreLastUpgrade: Em.K,
+      initDBProperties: Em.K,
+      loadUpgradeData: Em.K,
+      loadStackVersionsToModel: function () {
+        return {done: Em.K};
+      }
+    });
+
+    beforeEach(function () {
+      sinon.stub(controller, 'getAllUpgrades').returns(mock);
+      sinon.spy(mock, 'done');
+      sinon.stub(App.router, 'get').returns(upgradeController);
+      sinon.stub(App.db, 'get').returns('PENDING');
+      sinon.spy(upgradeController, 'restoreLastUpgrade');
+      sinon.spy(upgradeController, 'initDBProperties');
+      sinon.spy(upgradeController, 'loadUpgradeData');
+      sinon.spy(upgradeController, 'loadStackVersionsToModel');
+    });
+
+    afterEach(function () {
+      mock.done.restore();
+      controller.getAllUpgrades.restore();
+      App.router.get.restore();
+      App.db.get.restore();
+      upgradeController.restoreLastUpgrade.restore();
+      upgradeController.initDBProperties.restore();
+      upgradeController.loadUpgradeData.restore();
+      upgradeController.loadStackVersionsToModel.restore();
+    });
+
+    describe("has upgrade request", function() {
+
+      beforeEach(function () {
+        data.upgradeData = {items: [
+          {
+            Upgrade: {
+              request_id: 1
+            }
+          }
+        ]};
+        controller.restoreUpgradeState();
+      });
+
+      it('getAllUpgrades is called once', function () {
+        expect(controller.getAllUpgrades.calledOnce).to.be.true;
+      });
+
+      it('upgradeState is PENDING', function () {
+        expect(App.get('upgradeState')).to.equal('PENDING');
+      });
+
+      it('restoreLastUpgrade is called with valid arguments', function () {
+        expect(upgradeController.restoreLastUpgrade.calledWith(data.upgradeData.items[0])).to.be.true;
+      });
+
+      it('loadStackVersionsToModel is called with valid arguments', function () {
+        expect(upgradeController.loadStackVersionsToModel.calledWith(true)).to.be.true;
+      });
+
+      it('initDBProperties is not called', function () {
+        expect(upgradeController.initDBProperties.called).to.be.false;
+      });
+
+      it('loadUpgradeData is not called', function () {
+        expect(upgradeController.loadUpgradeData.called).to.be.false;
+      });
+
+    });
+
+    describe("has completed upgrade request", function() {
+
+      beforeEach(function () {
+        data.upgradeData = {items: [
+          {
+            Upgrade: {
+              request_id: 1,
+              request_status: 'COMPLETED'
+            }
+          }
+        ]};
+        controller.restoreUpgradeState();
+      });
+
+      it('getAllUpgrades is called once', function () {
+        expect(controller.getAllUpgrades.calledOnce).to.be.true;
+      });
+
+      it('restoreLastUpgrade should not be called', function () {
+        expect(upgradeController.restoreLastUpgrade.called).to.be.false;
+      });
+
+      it('loadStackVersionsToModel should not be called', function () {
+        expect(upgradeController.loadStackVersionsToModel.called).to.be.false;
+      });
+    });
+
+    describe("does not have upgrade request", function() {
+
+      beforeEach(function () {
+        data.upgradeData = {items: []};
+        controller.restoreUpgradeState();
+      });
+
+      it('getAllUpgrades is called once', function () {
+        expect(controller.getAllUpgrades.calledOnce).to.be.true;
+      });
+
+      it('upgradeState is PENDING', function () {
+        expect(App.get('upgradeState')).to.equal('PENDING');
+      });
+
+      it('restoreLastUpgrade is not called', function () {
+        expect(upgradeController.restoreLastUpgrade.called).to.be.false;
+      });
+
+      it('loadStackVersionsToModel is called with valid arguments', function () {
+        expect(upgradeController.loadStackVersionsToModel.calledWith(true)).to.be.true;
+      });
+
+      it('initDBProperties is called once', function () {
+        expect(upgradeController.initDBProperties.calledOnce).to.be.true;
+      });
+
+      it('loadUpgradeData is called with valid arguments', function () {
+        expect(upgradeController.loadUpgradeData.calledWith(true)).to.be.true;
+      });
+
+    });
+  });
 });

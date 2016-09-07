@@ -121,7 +121,6 @@
   }
   &.slider-widget {
     width: 100%;
-    overflow-x: hidden;
     margin-left: -20px;
     margin-right: 0;
     padding-left: 20px;
@@ -200,7 +199,7 @@
         display: none;
       }
       .tooltip-inner {
-        padding: 0px 2px;
+        padding: 0 2px;
         background-color: @slider-widget-tooltip-background-color;
         text-align: center;
       }
@@ -212,9 +211,9 @@
       }
     }
     .slider-tick {
-      width: 0px;
+      width: 0;
       margin-top: 10px;
-      margin-left: 0px;
+      margin-left: 0;
       font-size: 8px;
       &:before,
       &.in-selection:before {
@@ -363,46 +362,53 @@
   .undo-button {
     margin-left: @undo-btn-margin;
   }
+}
 
-  .bootstrap-switch {
-    &,
-    &.bootstrap-switch-focused {
-      border-color: transparent;
-      box-shadow: none;
-    }
+.bootstrap-switch {
+  &,
+  &.bootstrap-switch-focused {
+    border-color: transparent;
+    box-shadow: none;
+  }
 
-    .bootstrap-switch-label {
-      background-color: @toggle-widget-handle-background-color;
-      background-image: none;
+  .bootstrap-switch-label {
+    background-color: @toggle-widget-handle-background-color;
+    background-image: none;
+    text-shadow: none;
+    border-width: 0;
+    padding: 2px 8px;
+    border-left: 1px solid transparent;
+    border-right: 1px solid transparent;
+    border-bottom: 1px solid @toggle-widget-handle-background-color;
+  }
+
+  .bootstrap-switch-handle-on,
+  .bootstrap-switch-handle-off {
+    color: @toggle-widget-text-color;
+    font-size: @toggle-widget-text-size;
+    background-image: none;
+    text-shadow: none;
+    border: none;
+    padding: 2px 0;
+
+    &:hover {
       text-shadow: none;
-      border-width: 0;
-      padding: 2px 8px;
-      border-left: 1px solid transparent;
-      border-right: 1px solid transparent;
-      border-bottom: 1px solid @toggle-widget-handle-background-color;
-    }
-
-    .bootstrap-switch-handle-on,
-    .bootstrap-switch-handle-off {
       color: @toggle-widget-text-color;
-      font-size: @toggle-widget-text-size;
+    }
+
+    &.bootstrap-switch-default {
+      background-color: @toggle-widget-on-background-color;
+    }
+
+    &.bootstrap-switch-success {
+      background-color: @toggle-widget-off-background-color;
+    }
+
+    &.bootstrap-switch-default,
+    &.bootstrap-switch-success {
+      color: @toggle-widget-text-color;
       background-image: none;
       text-shadow: none;
-      border: none;
-      padding: 2px 0;
-
-      &:hover {
-        text-shadow: none;
-        color: @toggle-widget-text-color;
-      }
-
-      &.bootstrap-switch-default {
-        background-color: @toggle-widget-on-background-color;
-      }
-
-      &.bootstrap-switch-success {
-        background-color: @toggle-widget-off-background-color;
-      }
     }
   }
 }
@@ -455,7 +461,6 @@
   .bootstrap-checkbox {
     &>button.btn {
       padding: 0;
-      margin-top: -7px;
       color: @green;
       &:focus {
         border-color: none;
@@ -477,11 +482,19 @@
   }
 }
 
+#serviceConfig {
+  .text-field-widget {
+    .with-unit input {
+      width: 75%;
+    }
+  }
+}
+
 .label-current.icon-ok {
   color: white;
 }
 
 .compare-mode {
   background-color: rgba(211, 237, 247, 0.39);
-  padding: 10px 5px 0px 10px;
+  padding: 10px 5px 0 10px;
 }

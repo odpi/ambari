@@ -26,6 +26,7 @@ export default Ember.Controller.extend({
   notifyService: Ember.inject.service(constants.namingConventions.notify),
   session: Ember.inject.service(constants.namingConventions.session),
   settingsService: Ember.inject.service(constants.namingConventions.settings),
+  ldapAuthenticationService: Ember.inject.service(constants.namingConventions.ldapAuthentication),
 
   openQueries   : Ember.inject.controller(constants.namingConventions.openQueries),
   udfs          : Ember.inject.controller(constants.namingConventions.udfs),
@@ -141,8 +142,16 @@ export default Ember.Controller.extend({
         defer = Ember.RSVP.defer(),
         originalModel = this.get('model');
 
+    var title = "";
+    if(shouldGetVisualExplain){
+      title += "Visual Explain "
+    }else if(shouldExplain){
+      title += "Explain "
+    }
+
+    title += originalModel.get('title');
     job = this.store.createRecord(constants.namingConventions.job, {
-      title: originalModel.get('title'),
+      title: title,
       sessionTag: originalModel.get('sessionTag'),
       dataBase: this.get('selectedDatabase.name'),
       referrer: referrer
@@ -191,7 +200,6 @@ export default Ember.Controller.extend({
     finalQuery = query;
     finalQuery = this.bindQueryParams(finalQuery);
     finalQuery = this.prependGlobalSettings(finalQuery, job);
-
     job.set('forcedContent', finalQuery);
 
     if (shouldGetVisualExplain) {
@@ -227,6 +235,11 @@ export default Ember.Controller.extend({
       self.set('jobSaveSucceeded');
       originalModel.set('isRunning', undefined);
       defer.reject(err);
+
+      if(err.status == 401) {
+          self.send('passwordLDAP', job, originalModel);
+      }
+
     };
 
     job.save().then(function () {
@@ -279,19 +292,23 @@ export default Ember.Controller.extend({
     queries = queryComponents.queryString.split(';');
     queries = queries.filter(Boolean);
 
-    queries = queries.map(function (query) {
-      if (shouldExplain) {
-        query = query.replace(/explain formatted|explain/gi, '');
+    var queriesLength = queries.length;
 
-        if (shouldGetVisualExplain) {
-          return constants.namingConventions.explainFormattedPrefix + query;
-        } else {
-          return constants.namingConventions.explainPrefix + query;
-        }
-      } else {
-        return query.replace(/explain formatted|explain/gi, '');
-      }
+    queries = queries.map(function (q, index) {
+      var newQuery = q.replace(/explain formatted|explain/gi, '');
+      return newQuery;
     });
+
+    var lastQuery = queries[queriesLength - 1];
+
+    if(!Ember.isNone(lastQuery) && shouldExplain) {
+      if (shouldGetVisualExplain) {
+        lastQuery = constants.namingConventions.explainFormattedPrefix + lastQuery;
+      } else {
+        lastQuery = constants.namingConventions.explainPrefix + lastQuery;
+      }
+      queries[queriesLength - 1] = lastQuery;
+    }
 
     if (queryComponents.files.length) {
       finalQuery += queryComponents.files.join("\n") + "\n\n";
@@ -302,7 +319,10 @@ export default Ember.Controller.extend({
     }
 
     finalQuery += queries.join(";");
-    finalQuery += ";";
+    if(!finalQuery.trim().endsWith(';')){
+      finalQuery = finalQuery.trim() + ";";
+    }
+
     return finalQuery.trim();
   },
 
@@ -477,6 +497,40 @@ export default Ember.Controller.extend({
   }.observes('model', 'model.status'),
 
   actions: {
+    passwordLDAP: function(){
+      var job = arguments[0],
+            originalModel = arguments[1],
+            self = this,
+            defer = Ember.RSVP.defer();
+
+      this.send('openModal', 'modal-save', {
+        heading: "modals.authenticationLDAP.heading",
+        text:"",
+        type: "password",
+        defer: defer
+      });
+
+      defer.promise.then(function (text) {
+        var ldapAuthPromise = self.get('ldapAuthenticationService').authenticateLdapPassword(text);
+
+        ldapAuthPromise.then(function (data) {
+          console.log( "LDAP done: " + data );
+          self.get('databaseService').getDatabases().then(function (databases) {
+            var selectedDatabase = self.get('databaseService.selectedDatabase.name') || 'default';
+            self.get('databaseService').setDatabaseByName( selectedDatabase);
+            return self.send('executeQuery', 'job', self.get('openQueries.currentQuery.fileContent') );
+          }).catch(function (error) {
+            self.get('notifyService').error( "Error in accessing databases." );
+          });
+
+        }, function (error) {
+          console.log( "LDAP fail: " + error );
+          self.get('notifyService').error( "Wrong Credentials." );
+        })
+      });
+
+    },
+
     stopCurrentJob: function () {
       this.get('jobService').stopJob(this.get('model'));
     },
@@ -610,6 +664,14 @@ export default Ember.Controller.extend({
 
     executeQuery: function (referrer, query) {
       var self = this;
+
+      var isExplainQuery = (self.get('openQueries.currentQuery.fileContent').toUpperCase().trim().indexOf(constants.namingConventions.explainPrefix) === 0);
+
+      if(isExplainQuery){
+        self.send('explainQuery');
+        return;
+      }
+
       var subroute;
 
       if (query) {

@@ -19,11 +19,25 @@ Ambari Agent
 
 """
 
-from resource_management import *
-import sys
+# Python Imports
 import os
+
+# Ambari Common and Resource Management Imports
+from resource_management.libraries.script.script import Script
+from resource_management.core.resources.service import ServiceConfig
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.is_empty import is_empty
+from resource_management.core.resources.system import Directory
+from resource_management.core.resources.system import File
+from resource_management.libraries.resources.xml_config import XmlConfig
+from resource_management.core.source import InlineTemplate, Template
+from resource_management.core.logger import Logger
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 from ambari_commons import OSConst
+
+from resource_management.libraries.functions.mounted_dirs_helper import handle_mounted_dirs
+
+# Local Imports
 
 
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
@@ -57,10 +71,40 @@ def yarn(name = None):
                   username = params.yarn_user,
                   password = Script.get_password(params.yarn_user))
 
+def create_log_dir(dir_name):
+  import params
+  Directory(dir_name,
+            create_parents = True,
+            cd_access="a",
+            mode=0775,
+            owner=params.yarn_user,
+            group=params.user_group,
+            ignore_failures=True,
+  )
+  
+def create_local_dir(dir_name):
+  import params
+  Directory(dir_name,
+            create_parents = True,
+            cd_access="a",
+            mode=0755,
+            owner=params.yarn_user,
+            group=params.user_group,
+            ignore_failures=True,
+            recursive_mode_flags = {'f': 'a+rw', 'd': 'a+rwx'},
+  )
 
 @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-def yarn(name = None):
+def yarn(name=None, config_dir=None):
+  """
+  :param name: Component name, apptimelineserver, nodemanager, resourcemanager, or None (defaults for client)
+  :param config_dir: Which config directory to write configs to, which could be different during rolling upgrade.
+  """
   import params
+
+  if config_dir is None:
+    config_dir = params.hadoop_conf_dir
+
   if name == "historyserver":
     if params.yarn_log_aggregation_enabled:
       params.HdfsResource(params.yarn_nm_app_log_dir,
@@ -68,9 +112,25 @@ def yarn(name = None):
                            type="directory",
                            owner=params.yarn_user,
                            group=params.user_group,
-                           mode=0777,
+                           mode=01777,
                            recursive_chmod=True
       )
+
+    # create the /tmp folder with proper permissions if it doesn't exist yet
+    if params.entity_file_history_directory.startswith('/tmp'):
+        params.HdfsResource(params.hdfs_tmp_dir,
+                            action="create_on_execute",
+                            type="directory",
+                            owner=params.hdfs_user,
+                            mode=0777,
+        )
+
+    params.HdfsResource(params.entity_file_history_directory,
+                           action="create_on_execute",
+                           type="directory",
+                           owner=params.yarn_user,
+                           group=params.user_group
+    )
     params.HdfsResource("/mapred",
                          type="directory",
                          action="create_on_execute",
@@ -93,15 +153,17 @@ def yarn(name = None):
     Directory(params.jhs_leveldb_state_store_dir,
               owner=params.mapred_user,
               group=params.user_group,
-              recursive=True,
+              create_parents = True,
               cd_access="a",
+              recursive_ownership = True,
               )
 
+  #<editor-fold desc="Node Manager Section">
   if name == "nodemanager":
 
     # First start after enabling/disabling security
     if params.toggle_nm_security:
-      Directory(params.nm_local_dirs.split(',') + params.nm_log_dirs.split(','),
+      Directory(params.nm_local_dirs_list + params.nm_log_dirs_list,
                 action='delete'
       )
 
@@ -113,6 +175,7 @@ def yarn(name = None):
 
       # Setting NM marker file
       if params.security_enabled:
+        Directory(params.nm_security_marker_dir)
         File(params.nm_security_marker,
              content="Marker file to track first start after enabling/disabling security. "
                      "During first start yarn local, log dirs are removed and recreated"
@@ -122,20 +185,29 @@ def yarn(name = None):
 
 
     if not params.security_enabled or params.toggle_nm_security:
-      Directory(params.nm_local_dirs.split(',') + params.nm_log_dirs.split(','),
-                owner=params.yarn_user,
-                group=params.user_group,
-                recursive=True,
-                cd_access="a",
-                ignore_failures=True,
-                mode=0775
-                )
+      # handle_mounted_dirs ensures that we don't create dirs which are temporary unavailable (unmounted), and intended to reside on a different mount.
+      nm_log_dir_to_mount_file_content = handle_mounted_dirs(create_log_dir, params.nm_log_dirs, params.nm_log_dir_to_mount_file, params)
+      # create a history file used by handle_mounted_dirs
+      File(params.nm_log_dir_to_mount_file,
+           owner=params.hdfs_user,
+           group=params.user_group,
+           mode=0644,
+           content=nm_log_dir_to_mount_file_content
+      )
+      nm_local_dir_to_mount_file_content = handle_mounted_dirs(create_local_dir, params.nm_local_dirs, params.nm_local_dir_to_mount_file, params)
+      File(params.nm_local_dir_to_mount_file,
+           owner=params.hdfs_user,
+           group=params.user_group,
+           mode=0644,
+           content=nm_local_dir_to_mount_file_content
+      )
+  #</editor-fold>
 
   if params.yarn_nodemanager_recovery_dir:
     Directory(InlineTemplate(params.yarn_nodemanager_recovery_dir).get_content(),
               owner=params.yarn_user,
               group=params.user_group,
-              recursive=True,
+              create_parents = True,
               mode=0755,
               cd_access = 'a',
     )
@@ -143,25 +215,26 @@ def yarn(name = None):
   Directory([params.yarn_pid_dir_prefix, params.yarn_pid_dir, params.yarn_log_dir],
             owner=params.yarn_user,
             group=params.user_group,
-            recursive=True,
+            create_parents = True,
             cd_access = 'a',
   )
 
   Directory([params.mapred_pid_dir_prefix, params.mapred_pid_dir, params.mapred_log_dir_prefix, params.mapred_log_dir],
             owner=params.mapred_user,
             group=params.user_group,
-            recursive=True,
+            create_parents = True,
             cd_access = 'a',
   )
   Directory([params.yarn_log_dir_prefix],
             owner=params.yarn_user,
-            recursive=True,
+            group=params.user_group,
+            create_parents = True,
             ignore_failures=True,
             cd_access = 'a',
   )
 
   XmlConfig("core-site.xml",
-            conf_dir=params.hadoop_conf_dir,
+            conf_dir=config_dir,
             configurations=params.config['configurations']['core-site'],
             configuration_attributes=params.config['configuration_attributes']['core-site'],
             owner=params.hdfs_user,
@@ -171,10 +244,10 @@ def yarn(name = None):
 
   # During RU, Core Masters and Slaves need hdfs-site.xml
   # TODO, instead of specifying individual configs, which is susceptible to breaking when new configs are added,
-  # RU should rely on all available in /usr/hdp/<version>/hadoop/conf
+  # RU should rely on all available in <stack-root>/<version>/hadoop/conf
   if 'hdfs-site' in params.config['configurations']:
     XmlConfig("hdfs-site.xml",
-              conf_dir=params.hadoop_conf_dir,
+              conf_dir=config_dir,
               configurations=params.config['configurations']['hdfs-site'],
               configuration_attributes=params.config['configuration_attributes']['hdfs-site'],
               owner=params.hdfs_user,
@@ -183,7 +256,7 @@ def yarn(name = None):
     )
 
   XmlConfig("mapred-site.xml",
-            conf_dir=params.hadoop_conf_dir,
+            conf_dir=config_dir,
             configurations=params.config['configurations']['mapred-site'],
             configuration_attributes=params.config['configuration_attributes']['mapred-site'],
             owner=params.yarn_user,
@@ -192,7 +265,7 @@ def yarn(name = None):
   )
 
   XmlConfig("yarn-site.xml",
-            conf_dir=params.hadoop_conf_dir,
+            conf_dir=config_dir,
             configurations=params.config['configurations']['yarn-site'],
             configuration_attributes=params.config['configuration_attributes']['yarn-site'],
             owner=params.yarn_user,
@@ -201,7 +274,7 @@ def yarn(name = None):
   )
 
   XmlConfig("capacity-scheduler.xml",
-            conf_dir=params.hadoop_conf_dir,
+            conf_dir=config_dir,
             configurations=params.config['configurations']['capacity-scheduler'],
             configuration_attributes=params.config['configuration_attributes']['capacity-scheduler'],
             owner=params.yarn_user,
@@ -210,6 +283,15 @@ def yarn(name = None):
   )
 
   if name == 'resourcemanager':
+    Directory(params.rm_nodes_exclude_dir,
+         mode=0755,
+         create_parents=True,
+         cd_access='a',
+    )
+    File(params.rm_nodes_exclude_path,
+         owner=params.yarn_user,
+         group=params.user_group
+    )
     File(params.yarn_job_summary_log,
        owner=params.yarn_user,
        group=params.user_group
@@ -224,41 +306,60 @@ def yarn(name = None):
                            mode=0700
       )
       params.HdfsResource(None, action="execute")
-    if params.toggle_rm_security:
-      Execute('yarn resourcemanager -format-state-store', user = params.yarn_user,
-      )
-      # Setting RM marker file
-      if params.security_enabled:
-        File(params.rm_security_marker,
-             content="Marker file to track first start after enabling/disabling security. "
-                     "During first start ResourceManager state store is formatted"
-        )
-      elif not params.security_enabled:
-        File(params.rm_security_marker, action="delete")
-
 
 
   elif name == 'apptimelineserver':
     Directory(params.ats_leveldb_dir,
        owner=params.yarn_user,
        group=params.user_group,
-       recursive=True,
+       create_parents = True,
        cd_access="a",
     )
 
-    # if HDP stack is greater than/equal to 2.2, mkdir for state store property (added in 2.2)
-    if (Script.is_hdp_stack_greater_or_equal("2.2")):
+    # if stack support application timeline-service state store property (timeline_state_store stack feature)
+    if params.stack_supports_timeline_state_store:
       Directory(params.ats_leveldb_state_store_dir,
        owner=params.yarn_user,
        group=params.user_group,
-       recursive=True,
+       create_parents = True,
        cd_access="a",
       )
-
-  File(params.rm_nodes_exclude_path,
-       owner=params.yarn_user,
-       group=params.user_group
-  )
+    # app timeline server 1.5 directories
+    if not is_empty(params.entity_groupfs_store_dir):
+      parent_path = os.path.dirname(params.entity_groupfs_store_dir)
+      params.HdfsResource(parent_path,
+                          type="directory",
+                          action="create_on_execute",
+                          change_permissions_for_parents=True,
+                          owner=params.yarn_user,
+                          group=params.user_group,
+                          mode=0755
+                          )
+      params.HdfsResource(params.entity_groupfs_store_dir,
+                          type="directory",
+                          action="create_on_execute",
+                          owner=params.yarn_user,
+                          group=params.user_group,
+                          mode=params.entity_groupfs_store_dir_mode
+                          )
+    if not is_empty(params.entity_groupfs_active_dir):
+      parent_path = os.path.dirname(params.entity_groupfs_active_dir)
+      params.HdfsResource(parent_path,
+                          type="directory",
+                          action="create_on_execute",
+                          change_permissions_for_parents=True,
+                          owner=params.yarn_user,
+                          group=params.user_group,
+                          mode=0755
+                          )
+      params.HdfsResource(params.entity_groupfs_active_dir,
+                          type="directory",
+                          action="create_on_execute",
+                          owner=params.yarn_user,
+                          group=params.user_group,
+                          mode=params.entity_groupfs_active_dir_mode
+                          )
+    params.HdfsResource(None, action="execute")
 
   File(format("{limits_conf_dir}/yarn.conf"),
        mode=0644,
@@ -270,7 +371,7 @@ def yarn(name = None):
        content=Template('mapreduce.conf.j2')
   )
 
-  File(format("{hadoop_conf_dir}/yarn-env.sh"),
+  File(os.path.join(config_dir, "yarn-env.sh"),
        owner=params.yarn_user,
        group=params.user_group,
        mode=0755,
@@ -283,7 +384,7 @@ def yarn(name = None):
       mode=params.container_executor_mode
   )
 
-  File(format("{hadoop_conf_dir}/container-executor.cfg"),
+  File(os.path.join(config_dir, "container-executor.cfg"),
       group=params.user_group,
       mode=0644,
       content=Template('container-executor.cfg.j2')
@@ -291,7 +392,7 @@ def yarn(name = None):
 
   Directory(params.cgroups_dir,
             group=params.user_group,
-            recursive=True,
+            create_parents = True,
             mode=0755,
             cd_access="a")
 
@@ -302,8 +403,9 @@ def yarn(name = None):
     tc_mode = None
     tc_owner = params.hdfs_user
 
-  File(format("{hadoop_conf_dir}/mapred-env.sh"),
+  File(os.path.join(config_dir, "mapred-env.sh"),
        owner=tc_owner,
+       mode=0755,
        content=InlineTemplate(params.mapred_env_sh_template)
   )
 
@@ -313,21 +415,21 @@ def yarn(name = None):
          group=params.mapred_tt_group,
          mode=06050
     )
-    File(os.path.join(params.hadoop_conf_dir, 'taskcontroller.cfg'),
+    File(os.path.join(config_dir, 'taskcontroller.cfg'),
          owner = tc_owner,
          mode = tc_mode,
          group = params.mapred_tt_group,
          content=Template("taskcontroller.cfg.j2")
     )
   else:
-    File(os.path.join(params.hadoop_conf_dir, 'taskcontroller.cfg'),
+    File(os.path.join(config_dir, 'taskcontroller.cfg'),
          owner=tc_owner,
          content=Template("taskcontroller.cfg.j2")
     )
 
   if "mapred-site" in params.config['configurations']:
     XmlConfig("mapred-site.xml",
-              conf_dir=params.hadoop_conf_dir,
+              conf_dir=config_dir,
               configurations=params.config['configurations']['mapred-site'],
               configuration_attributes=params.config['configuration_attributes']['mapred-site'],
               owner=params.mapred_user,
@@ -336,7 +438,7 @@ def yarn(name = None):
 
   if "capacity-scheduler" in params.config['configurations']:
     XmlConfig("capacity-scheduler.xml",
-              conf_dir=params.hadoop_conf_dir,
+              conf_dir=config_dir,
               configurations=params.config['configurations'][
                 'capacity-scheduler'],
               configuration_attributes=params.config['configuration_attributes']['capacity-scheduler'],
@@ -345,7 +447,7 @@ def yarn(name = None):
     )
   if "ssl-client" in params.config['configurations']:
     XmlConfig("ssl-client.xml",
-              conf_dir=params.hadoop_conf_dir,
+              conf_dir=config_dir,
               configurations=params.config['configurations']['ssl-client'],
               configuration_attributes=params.config['configuration_attributes']['ssl-client'],
               owner=params.hdfs_user,
@@ -353,7 +455,7 @@ def yarn(name = None):
     )
 
     Directory(params.hadoop_conf_secure_dir,
-              recursive=True,
+              create_parents = True,
               owner='root',
               group=params.user_group,
               cd_access='a',
@@ -369,28 +471,28 @@ def yarn(name = None):
 
   if "ssl-server" in params.config['configurations']:
     XmlConfig("ssl-server.xml",
-              conf_dir=params.hadoop_conf_dir,
+              conf_dir=config_dir,
               configurations=params.config['configurations']['ssl-server'],
               configuration_attributes=params.config['configuration_attributes']['ssl-server'],
               owner=params.hdfs_user,
               group=params.user_group
     )
-  if os.path.exists(os.path.join(params.hadoop_conf_dir, 'fair-scheduler.xml')):
-    File(os.path.join(params.hadoop_conf_dir, 'fair-scheduler.xml'),
+  if os.path.exists(os.path.join(config_dir, 'fair-scheduler.xml')):
+    File(os.path.join(config_dir, 'fair-scheduler.xml'),
          owner=params.mapred_user,
          group=params.user_group
     )
 
   if os.path.exists(
-    os.path.join(params.hadoop_conf_dir, 'ssl-client.xml.example')):
-    File(os.path.join(params.hadoop_conf_dir, 'ssl-client.xml.example'),
+    os.path.join(config_dir, 'ssl-client.xml.example')):
+    File(os.path.join(config_dir, 'ssl-client.xml.example'),
          owner=params.mapred_user,
          group=params.user_group
     )
 
   if os.path.exists(
-    os.path.join(params.hadoop_conf_dir, 'ssl-server.xml.example')):
-    File(os.path.join(params.hadoop_conf_dir, 'ssl-server.xml.example'),
+    os.path.join(config_dir, 'ssl-server.xml.example')):
+    File(os.path.join(config_dir, 'ssl-server.xml.example'),
          owner=params.mapred_user,
          group=params.user_group
     )

@@ -19,150 +19,206 @@ package org.apache.ambari.server.actionmanager;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeMap;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.ClusterNotFoundException;
+import org.apache.ambari.server.agent.AgentCommand.AgentCommandType;
 import org.apache.ambari.server.agent.ExecutionCommand;
 import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.ConfigHelper;
 import org.apache.ambari.server.state.DesiredConfig;
-import org.apache.ambari.server.utils.StageUtils;
-
-import com.google.inject.Inject;
-import com.google.inject.Injector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.Gson;
+import com.google.inject.Inject;
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
+
 public class ExecutionCommandWrapper {
-  @Inject
-  static Injector injector;
+
   private final static Logger LOG = LoggerFactory.getLogger(ExecutionCommandWrapper.class);
-  private static String DELETED = "DELETED_";
   String jsonExecutionCommand = null;
   ExecutionCommand executionCommand = null;
 
-  public ExecutionCommandWrapper(String jsonExecutionCommand) {
+  @Inject
+  Clusters clusters;
+
+  @Inject
+  HostRoleCommandDAO hostRoleCommandDAO;
+
+  @Inject
+  ConfigHelper configHelper;
+
+  @Inject
+  private Gson gson;
+
+  @AssistedInject
+  public ExecutionCommandWrapper(@Assisted String jsonExecutionCommand) {
     this.jsonExecutionCommand = jsonExecutionCommand;
   }
 
-  public ExecutionCommandWrapper(ExecutionCommand executionCommand) {
+  @AssistedInject
+  public ExecutionCommandWrapper(@Assisted ExecutionCommand executionCommand) {
     this.executionCommand = executionCommand;
   }
 
-  @SuppressWarnings("serial")
+  /**
+   * Gets the execution command by either de-serializing the backing JSON
+   * command or returning the encapsulated instance which has already been
+   * de-serialized.
+   * <p/>
+   * If the {@link ExecutionCommand} has configuration tags which need to be
+   * refreshed, then this method will lookup the appropriate configuration tags
+   * before building the final configurations to set ont he command. Therefore,
+   * the {@link ExecutionCommand} is allowed to have no configuration tags as
+   * long as it has been instructed to set updated ones at execution time.
+   *
+   * @return
+   * @see ExecutionCommand#setForceRefreshConfigTagsBeforeExecution(Set)
+   */
   public ExecutionCommand getExecutionCommand() {
     if (executionCommand != null) {
       return executionCommand;
-    } else if (jsonExecutionCommand != null) {
-      executionCommand = StageUtils.getGson().fromJson(jsonExecutionCommand, ExecutionCommand.class);
+    }
 
-      if (injector == null) {
-        throw new RuntimeException("Injector not found, configuration cannot be restored");
-      } else if (executionCommand.getConfigurationTags() != null &&
-          !executionCommand.getConfigurationTags().isEmpty()) {
+    if( null == jsonExecutionCommand ){
+      throw new RuntimeException(
+          "Invalid ExecutionCommandWrapper, both object and string representations are null");
+    }
 
-        // For a configuration type, both tag and an actual configuration can be stored
-        // Configurations from the tag is always expanded and then over-written by the actual
-        // global:version1:{a1:A1,b1:B1,d1:D1} + global:{a1:A2,c1:C1,DELETED_d1:x} ==>
-        // global:{a1:A2,b1:B1,c1:C1}
-        Clusters clusters = injector.getInstance(Clusters.class);
-        HostRoleCommandDAO hostRoleCommandDAO = injector.getInstance(HostRoleCommandDAO.class);
-        Long clusterId = hostRoleCommandDAO.findByPK(
-            executionCommand.getTaskId()).getStage().getClusterId();
+    try {
+      executionCommand = gson.fromJson(jsonExecutionCommand, ExecutionCommand.class);
 
-        try {
-          Cluster cluster = clusters.getClusterById(clusterId);
-          ConfigHelper configHelper = injector.getInstance(ConfigHelper.class);
-          Map<String, Map<String, String>> configurationTags = executionCommand.getConfigurationTags();
-
-          // Execution commands have config-tags already set during their creation. However, these
-          // tags become stale at runtime when other ExecutionCommands run and change the desired
-          // configs (like ConfigureAction). Hence an ExecutionCommand can specify which config-types
-          // should be refreshed at runtime. Specifying <code>*</code> will result in all config-type
-          // tags to be refreshed to the latest cluster desired-configs.
-          Set<String> refreshConfigTagsBeforeExecution = executionCommand.getForceRefreshConfigTagsBeforeExecution();
-          if (refreshConfigTagsBeforeExecution != null && !refreshConfigTagsBeforeExecution.isEmpty()) {
-            Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
-            for (String refreshConfigTag : refreshConfigTagsBeforeExecution) {
-              if ("*".equals(refreshConfigTag)) {
-                // if forcing a refresh of *, then clear out any existing
-                // configurations so that all of the new configurations are
-                // forcefully applied
-                LOG.debug("ExecutionCommandWrapper.getExecutionCommand: refreshConfigTag set to {}, so clearing config for full refresh.", refreshConfigTag);
-                executionCommand.getConfigurations().clear();
-
-                for (final Entry<String, DesiredConfig> desiredConfig : desiredConfigs.entrySet()) {
-                  configurationTags.put(desiredConfig.getKey(), new HashMap<String, String>() {{
-                    put("tag", desiredConfig.getValue().getTag());
-                  }});
-                }
-                break;
-              } else if (configurationTags.containsKey(refreshConfigTag) && desiredConfigs.containsKey(refreshConfigTag)) {
-                configurationTags.get(refreshConfigTag).put("tag", desiredConfigs.get(refreshConfigTag).getTag());
-              }
-            }
-          }
-
-          Map<String, Map<String, String>> configProperties = configHelper
-            .getEffectiveConfigProperties(cluster, configurationTags);
-
-          // Apply the configurations saved with the Execution Cmd on top of
-          // derived configs - This will take care of all the hacks
-          for (Map.Entry<String, Map<String, String>> entry : configProperties.entrySet()) {
-            String type = entry.getKey();
-            Map<String, String> allLevelMergedConfig = entry.getValue();
-
-            if (executionCommand.getConfigurations().containsKey(type)) {
-              Map<String, String> mergedConfig =
-                configHelper.getMergedConfig(allLevelMergedConfig,
-                  executionCommand.getConfigurations().get(type));
-
-              executionCommand.getConfigurations().get(type).clear();
-              executionCommand.getConfigurations().get(type).putAll(mergedConfig);
-
-            } else {
-              executionCommand.getConfigurations().put(type, new HashMap<String, String>());
-              executionCommand.getConfigurations().get(type).putAll(allLevelMergedConfig);
-            }
-          }
-
-          Map<String, Map<String, Map<String, String>>> configAttributes = configHelper.getEffectiveConfigAttributes(cluster,
-              executionCommand.getConfigurationTags());
-
-          for (Map.Entry<String, Map<String, Map<String, String>>> attributesOccurrence : configAttributes.entrySet()) {
-            String type = attributesOccurrence.getKey();
-            Map<String, Map<String, String>> attributes = attributesOccurrence.getValue();
-
-            if (executionCommand.getConfigurationAttributes() != null) {
-              if (!executionCommand.getConfigurationAttributes().containsKey(type)) {
-                executionCommand.getConfigurationAttributes().put(type, new TreeMap<String, Map<String, String>>());
-              }
-              configHelper.cloneAttributesMap(attributes, executionCommand.getConfigurationAttributes().get(type));
-            }
-          }
-
-        } catch (AmbariException e) {
-          throw new RuntimeException(e);
-        }
+      // sanity; if no configurations, just initialize to prevent NPEs
+      if (null == executionCommand.getConfigurations()) {
+        executionCommand.setConfigurations(new TreeMap<String, Map<String, String>>());
       }
 
+      Map<String, Map<String, String>> configurations = executionCommand.getConfigurations();
+
+      // For a configuration type, both tag and an actual configuration can be stored
+      // Configurations from the tag is always expanded and then over-written by the actual
+      // global:version1:{a1:A1,b1:B1,d1:D1} + global:{a1:A2,c1:C1,DELETED_d1:x} ==>
+      // global:{a1:A2,b1:B1,c1:C1}
+      Long clusterId = hostRoleCommandDAO.findByPK(
+          executionCommand.getTaskId()).getStage().getClusterId();
+
+      Cluster cluster = clusters.getClusterById(clusterId);
+
+      // Execution commands may have config-tags already set during their creation.
+      // However, these tags become stale at runtime when other
+      // ExecutionCommands run and change the desired configs (like
+      // ConfigureAction). Hence an ExecutionCommand can specify which
+      // config-types should be refreshed at runtime. Specifying <code>*</code>
+      // will result in all config-type tags to be refreshed to the latest
+      // cluster desired-configs. Additionally, there may be no configuration
+      // tags set but refresh might be set to *. In this case, they should still
+      // be refreshed with the latest.
+      boolean refreshConfigTagsBeforeExecution = executionCommand.getForceRefreshConfigTagsBeforeExecution();
+      if (refreshConfigTagsBeforeExecution) {
+        Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
+
+        Map<String, Map<String, String>> configurationTags = configHelper.getEffectiveDesiredTags(
+            cluster, executionCommand.getHostname(), desiredConfigs);
+
+        LOG.debug(
+            "While scheduling task {} on cluster {}, configurations are being refreshed using desired configurations of {}",
+            executionCommand.getTaskId(), cluster.getClusterName(), desiredConfigs);
+
+        // then clear out any existing configurations so that all of the new
+        // configurations are forcefully applied
+        configurations.clear();
+        executionCommand.setConfigurationTags(configurationTags);
+      }
+
+      // now that the tags have been updated (if necessary), fetch the
+      // configurations
+      Map<String, Map<String, String>> configurationTags = executionCommand.getConfigurationTags();
+      if (null != configurationTags && !configurationTags.isEmpty()) {
+        Map<String, Map<String, String>> configProperties = configHelper
+            .getEffectiveConfigProperties(cluster, configurationTags);
+
+        // Apply the configurations saved with the Execution Cmd on top of
+        // derived configs - This will take care of all the hacks
+        for (Map.Entry<String, Map<String, String>> entry : configProperties.entrySet()) {
+          String type = entry.getKey();
+          Map<String, String> allLevelMergedConfig = entry.getValue();
+
+          if (configurations.containsKey(type)) {
+            Map<String, String> mergedConfig = configHelper.getMergedConfig(allLevelMergedConfig,
+                configurations.get(type));
+
+            configurations.get(type).clear();
+            configurations.get(type).putAll(mergedConfig);
+
+          } else {
+            configurations.put(type, new HashMap<String, String>());
+            configurations.get(type).putAll(allLevelMergedConfig);
+          }
+        }
+
+        Map<String, Map<String, Map<String, String>>> configAttributes = configHelper.getEffectiveConfigAttributes(
+            cluster, executionCommand.getConfigurationTags());
+
+        for (Map.Entry<String, Map<String, Map<String, String>>> attributesOccurrence : configAttributes.entrySet()) {
+          String type = attributesOccurrence.getKey();
+          Map<String, Map<String, String>> attributes = attributesOccurrence.getValue();
+
+          if (executionCommand.getConfigurationAttributes() != null) {
+            if (!executionCommand.getConfigurationAttributes().containsKey(type)) {
+              executionCommand.getConfigurationAttributes().put(type,
+                  new TreeMap<String, Map<String, String>>());
+            }
+            configHelper.cloneAttributesMap(attributes,
+                executionCommand.getConfigurationAttributes().get(type));
+            }
+        }
+      }
+    } catch (ClusterNotFoundException cnfe) {
+      // it's possible that there are commands without clusters; in such cases,
+      // just return the de-serialized command and don't try to read configs
+      LOG.warn(
+          "Unable to lookup the cluster byt ID; assuming that there is no cluster and therefore no configs for this execution command: {}",
+          cnfe.getMessage());
+
       return executionCommand;
-    } else {
-      throw new RuntimeException(
-          "Invalid ExecutionCommandWrapper, both object and string"
-              + " representations are null");
+    } catch (AmbariException e) {
+      throw new RuntimeException(e);
     }
+
+    return executionCommand;
+  }
+
+  /**
+   * Gets the type of command by deserializing the JSON and invoking
+   * {@link ExecutionCommand#getCommandType()}.
+   *
+   * @return
+   */
+  public AgentCommandType getCommandType() {
+    if (executionCommand != null) {
+      return executionCommand.getCommandType();
+    }
+
+    if (null == jsonExecutionCommand) {
+      throw new RuntimeException(
+          "Invalid ExecutionCommandWrapper, both object and string" + " representations are null");
+    }
+
+    return gson.fromJson(jsonExecutionCommand,
+        ExecutionCommand.class).getCommandType();
   }
 
   public String getJson() {
     if (jsonExecutionCommand != null) {
       return jsonExecutionCommand;
     } else if (executionCommand != null) {
-      jsonExecutionCommand = StageUtils.getGson().toJson(executionCommand);
+      jsonExecutionCommand = gson.toJson(executionCommand);
       return jsonExecutionCommand;
     } else {
       throw new RuntimeException(

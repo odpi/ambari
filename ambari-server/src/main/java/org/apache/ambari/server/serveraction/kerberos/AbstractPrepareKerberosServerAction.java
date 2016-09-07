@@ -36,11 +36,13 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Type;
-import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public abstract class AbstractPrepareKerberosServerAction extends KerberosServerAction {
   private final static Logger LOG = LoggerFactory.getLogger(AbstractPrepareKerberosServerAction.class);
@@ -61,7 +63,11 @@ public abstract class AbstractPrepareKerberosServerAction extends KerberosServer
 
   protected void processServiceComponentHosts(Cluster cluster, KerberosDescriptor kerberosDescriptor, List<ServiceComponentHost> schToProcess,
                                               Collection<String> identityFilter, String dataDirectory,
-                                              Map<String, Map<String, String>> kerberosConfigurations) throws AmbariException {
+                                              Map<String, Map<String, String>> kerberosConfigurations,
+                                              Map<String, Map<String, String>> propertiesToInsert,
+                                              Map<String, Set<String>> propertiesToRemove,
+                                              boolean kerberosEnabled, boolean includeAmbariIdentity) throws
+    AmbariException {
 
     actionLog.writeStdOut("Processing Kerberos identities and configurations");
 
@@ -75,80 +81,96 @@ public abstract class AbstractPrepareKerberosServerAction extends KerberosServer
       // Create the file used to store details about principals and keytabs to create
       File identityDataFile = new File(dataDirectory, KerberosIdentityDataFileWriter.DATA_FILE_NAME);
 
-      // Group ServiceComponentHosts with their relevant hosts so we can create the relevant host-based
-      // configurations once per host, rather than for every ServiceComponentHost we encounter
-      Map<String, List<ServiceComponentHost>> hostServiceComponentHosts = new HashMap<String, List<ServiceComponentHost>>();
-      for (ServiceComponentHost sch : schToProcess) {
-        String hostName = sch.getHostName();
-        List<ServiceComponentHost> serviceComponentHosts = hostServiceComponentHosts.get(hostName);
+      Map<String, String> kerberosDescriptorProperties = kerberosDescriptor.getProperties();
+      KerberosIdentityDataFileWriter kerberosIdentityDataFileWriter;
 
-        if (serviceComponentHosts == null) {
-          serviceComponentHosts = new ArrayList<ServiceComponentHost>();
-          hostServiceComponentHosts.put(hostName, serviceComponentHosts);
-        }
+      // Calculate the current host-specific configurations. These will be used to replace
+      // variables within the Kerberos descriptor data
+      Map<String, Map<String, String>> configurations = kerberosHelper.calculateConfigurations(cluster, null, kerberosDescriptorProperties);
 
-        serviceComponentHosts.add(sch);
+      // Create the context to use for filtering Kerberos Identities based on the state of the cluster
+      Map<String, Object> filterContext = new HashMap<String, Object>();
+      filterContext.put("configurations", configurations);
+      filterContext.put("services", cluster.getServices().keySet());
+
+      actionLog.writeStdOut(String.format("Writing Kerberos identity data metadata file to %s", identityDataFile.getAbsolutePath()));
+      try {
+        kerberosIdentityDataFileWriter = kerberosIdentityDataFileWriterFactory.createKerberosIdentityDataFileWriter(identityDataFile);
+      } catch (IOException e) {
+        String message = String.format("Failed to write index file - %s", identityDataFile.getAbsolutePath());
+        LOG.error(message, e);
+        actionLog.writeStdOut(message);
+        actionLog.writeStdErr(message + "\n" + e.getLocalizedMessage());
+        throw new AmbariException(message, e);
       }
 
-      Map<String, String> kerberosDescriptorProperties = kerberosDescriptor.getProperties();
-      KerberosIdentityDataFileWriter kerberosIdentityDataFileWriter = null;
-
       try {
-        for (Map.Entry<String, List<ServiceComponentHost>> entry : hostServiceComponentHosts.entrySet()) {
-          String hostName = entry.getKey();
-          List<ServiceComponentHost> serviceComponentHosts = entry.getValue();
+        Set<String> services = cluster.getServices().keySet();
+        Map<String, Set<String>> propertiesToIgnore = null;
 
-          // Calculate the current host-specific configurations. These will be used to replace
-          // variables within the Kerberos descriptor data
-          Map<String, Map<String, String>> configurations = kerberosHelper.calculateConfigurations(cluster, hostName, kerberosDescriptorProperties);
+        try {
 
-          try {
-            // Iterate over the components installed on the current host to get the service and
-            // component-level Kerberos descriptors in order to determine which principals,
-            // keytab files, and configurations need to be created or updated.
-            for (ServiceComponentHost sch : serviceComponentHosts) {
-              String serviceName = sch.getServiceName();
-              String componentName = sch.getServiceComponentName();
+          // Iterate over the components installed on the current host to get the service and
+          // component-level Kerberos descriptors in order to determine which principals,
+          // keytab files, and configurations need to be created or updated.
+          for (ServiceComponentHost sch : schToProcess) {
+            String hostName = sch.getHostName();
 
-              KerberosServiceDescriptor serviceDescriptor = kerberosDescriptor.getService(serviceName);
+            String serviceName = sch.getServiceName();
+            String componentName = sch.getServiceComponentName();
 
-              if (serviceDescriptor != null) {
-                List<KerberosIdentityDescriptor> serviceIdentities = serviceDescriptor.getIdentities(true);
+            KerberosServiceDescriptor serviceDescriptor = kerberosDescriptor.getService(serviceName);
 
-                // Lazily create the KerberosIdentityDataFileWriter instance...
-                if (kerberosIdentityDataFileWriter == null) {
-                  actionLog.writeStdOut(String.format("Writing Kerberos identity data metadata file to %s", identityDataFile.getAbsolutePath()));
-                  kerberosIdentityDataFileWriter = kerberosIdentityDataFileWriterFactory.createKerberosIdentityDataFileWriter(identityDataFile);
-                }
+            if (serviceDescriptor != null) {
+              List<KerberosIdentityDescriptor> serviceIdentities = serviceDescriptor.getIdentities(true, filterContext);
 
-                // Add service-level principals (and keytabs)
-                kerberosHelper.addIdentities(kerberosIdentityDataFileWriter, serviceIdentities,
+              // Add service-level principals (and keytabs)
+              kerberosHelper.addIdentities(kerberosIdentityDataFileWriter, serviceIdentities,
+                  identityFilter, hostName, serviceName, componentName, kerberosConfigurations, configurations);
+              propertiesToIgnore = gatherPropertiesToIgnore(serviceIdentities, propertiesToIgnore);
+
+              KerberosComponentDescriptor componentDescriptor = serviceDescriptor.getComponent(componentName);
+
+              if (componentDescriptor != null) {
+                List<KerberosIdentityDescriptor> componentIdentities = componentDescriptor.getIdentities(true, filterContext);
+
+                // Calculate the set of configurations to update and replace any variables
+                // using the previously calculated Map of configurations for the host.
+                kerberosHelper.mergeConfigurations(kerberosConfigurations,
+                    componentDescriptor.getConfigurations(true), configurations);
+
+                // Add component-level principals (and keytabs)
+                kerberosHelper.addIdentities(kerberosIdentityDataFileWriter, componentIdentities,
                     identityFilter, hostName, serviceName, componentName, kerberosConfigurations, configurations);
-
-                KerberosComponentDescriptor componentDescriptor = serviceDescriptor.getComponent(componentName);
-
-                if (componentDescriptor != null) {
-                  List<KerberosIdentityDescriptor> componentIdentities = componentDescriptor.getIdentities(true);
-
-                  // Calculate the set of configurations to update and replace any variables
-                  // using the previously calculated Map of configurations for the host.
-                  kerberosHelper.mergeConfigurations(kerberosConfigurations,
-                      componentDescriptor.getConfigurations(true), configurations);
-
-                  // Add component-level principals (and keytabs)
-                  kerberosHelper.addIdentities(kerberosIdentityDataFileWriter, componentIdentities,
-                      identityFilter, hostName, serviceName, componentName, kerberosConfigurations, configurations);
-                }
+                propertiesToIgnore = gatherPropertiesToIgnore(componentIdentities, propertiesToIgnore);
               }
             }
-          } catch (IOException e) {
-            String message = String.format("Failed to write index file - %s", identityDataFile.getAbsolutePath());
-            LOG.error(message, e);
-            actionLog.writeStdOut(message);
-            actionLog.writeStdErr(message + "\n" + e.getLocalizedMessage());
-            throw new AmbariException(message, e);
           }
+
+          // Add ambari-server principal (and keytab) only if 'kerberos-env.create_ambari_principal = true'
+          Map<String, String> kerberosEnvProperties = configurations.get("kerberos-env");
+          if (kerberosEnvProperties != null && kerberosEnvProperties.get(KerberosHelper.CREATE_AMBARI_PRINCIPAL) != null
+            && "true".equalsIgnoreCase(kerberosEnvProperties.get(KerberosHelper.CREATE_AMBARI_PRINCIPAL))
+              && includeAmbariIdentity) {
+            KerberosIdentityDescriptor ambariServerIdentity = kerberosDescriptor.getIdentity(KerberosHelper.AMBARI_IDENTITY_NAME);
+            if (ambariServerIdentity != null) {
+              List<KerberosIdentityDescriptor> componentIdentities = Collections.singletonList(ambariServerIdentity);
+              kerberosHelper.addIdentities(kerberosIdentityDataFileWriter, componentIdentities,
+                identityFilter, KerberosHelper.AMBARI_SERVER_HOST_NAME, "AMBARI_SEVER", "AMBARI_SEVER", kerberosConfigurations, configurations);
+              propertiesToIgnore = gatherPropertiesToIgnore(componentIdentities, propertiesToIgnore);
+            }
+          }
+
+        } catch (IOException e) {
+          String message = String.format("Failed to write index file - %s", identityDataFile.getAbsolutePath());
+          LOG.error(message, e);
+          actionLog.writeStdOut(message);
+          actionLog.writeStdErr(message + "\n" + e.getLocalizedMessage());
+          throw new AmbariException(message, e);
         }
+
+        kerberosHelper.applyStackAdvisorUpdates(cluster, services, configurations, kerberosConfigurations,
+            propertiesToIgnore, propertiesToInsert, propertiesToRemove, kerberosEnabled);
       }
       finally {
         if (kerberosIdentityDataFileWriter != null) {
@@ -178,6 +200,18 @@ public abstract class AbstractPrepareKerberosServerAction extends KerberosServer
     }
   }
 
+  protected Set<String> getHostFilter() {
+    String serializedValue = getCommandParameterValue(HOST_FILTER);
+
+    if(serializedValue != null) {
+      Type type = new TypeToken<Set<String>>() {}.getType();
+      return StageUtils.getGson().fromJson(serializedValue, type);
+    }
+    else {
+      return null;
+    }
+  }
+
   protected Collection<String> getIdentityFilter() {
     String serializedValue = getCommandParameterValue(IDENTITY_FILTER);
 
@@ -188,5 +222,31 @@ public abstract class AbstractPrepareKerberosServerAction extends KerberosServer
     else {
       return null;
     }
+  }
+
+  private Map<String, Set<String>> gatherPropertiesToIgnore(List<KerberosIdentityDescriptor> identities,
+                                                            Map<String, Set<String>> propertiesToIgnore) {
+    Map<String,Map<String,String>> identityConfigurations = kerberosHelper.getIdentityConfigurations(identities);
+    if ((identityConfigurations != null) && !identityConfigurations.isEmpty()) {
+      if(propertiesToIgnore == null) {
+        propertiesToIgnore = new HashMap<String, Set<String>>();
+      }
+
+      for (Map.Entry<String, Map<String, String>> entry : identityConfigurations.entrySet()) {
+        String configType = entry.getKey();
+        Map<String, String> properties = entry.getValue();
+
+        if ((properties != null) && !properties.isEmpty()) {
+          Set<String> propertyNames = propertiesToIgnore.get(configType);
+          if (propertyNames == null) {
+            propertyNames = new HashSet<String>();
+            propertiesToIgnore.put(configType, propertyNames);
+          }
+          propertyNames.addAll(properties.keySet());
+        }
+      }
+    }
+
+    return propertiesToIgnore;
   }
 }

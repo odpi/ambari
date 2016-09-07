@@ -18,8 +18,7 @@
 
 var App = require('app');
 var filters = require('views/common/filter_view'),
-  sort = require('views/common/sort_view'),
-  date = require('utils/date');
+  sort = require('views/common/sort_view');
 
 App.MainAlertDefinitionsView = App.TableView.extend({
 
@@ -40,6 +39,16 @@ App.MainAlertDefinitionsView = App.TableView.extend({
     if (!this.get('controller.showFilterConditionsFirstLoad')) {
       this.clearFilterConditionsFromLocalStorage();
     }
+    // on load alters should be sorted by status
+    var controllerName = this.get('controller.name'),
+      savedSortConditions = App.db.getSortingStatuses(controllerName) || [];
+    if (savedSortConditions.everyProperty('status', 'sorting')) {
+      savedSortConditions.push({
+        name: "summary",
+        status: "sorting_asc"
+      });
+      App.db.setSortingStatuses(controllerName, savedSortConditions);
+    }
     this._super();
   },
 
@@ -53,6 +62,7 @@ App.MainAlertDefinitionsView = App.TableView.extend({
   },
 
   willDestroyElement: function () {
+    $(".timeago").tooltip('destroy');
     this.removeObserver('pageContent.length', this, 'tooltipsUpdater');
   },
 
@@ -75,31 +85,9 @@ App.MainAlertDefinitionsView = App.TableView.extend({
   /**
    * @type {number}
    */
-  totalCount: function () {
-    return this.get('content.length');
-  }.property('content.length'),
+  totalCount: Em.computed.alias('content.length'),
 
   colPropAssoc: ['', 'label', 'summary', 'serviceName', 'type', 'lastTriggered', 'enabled', 'groups'],
-
-  /**
-   * @type {string}
-   */
-  enabledTooltip: Em.I18n.t('alerts.table.state.enabled.tooltip'),
-
-  /**
-   * @type {string}
-   */
-  disabledTooltip: Em.I18n.t('alerts.table.state.disabled.tooltip'),
-
-  /**
-   * @type {string}
-   */
-  enabledDisplay: Em.I18n.t('alerts.table.state.enabled'),
-
-  /**
-   * @type {string}
-   */
-  disabledDisplay: Em.I18n.t('alerts.table.state.disabled'),
 
   sortView: sort.wrapperView,
 
@@ -231,24 +219,7 @@ App.MainAlertDefinitionsView = App.TableView.extend({
   serviceFilterView: filters.createSelectView({
     column: 3,
     fieldType: 'filter-input-width',
-    content: function () {
-      return [
-        {
-          value: '',
-          label: Em.I18n.t('common.all')
-        }
-      ].concat(App.Service.find().map(function (service) {
-        return {
-          value: service.get('serviceName'),
-          label: service.get('displayName')
-        }
-      }).concat([
-        {
-          value: 'AMBARI',
-          label: Em.I18n.t('app.name')
-        }
-      ]));
-    }.property('App.router.clusterController.isLoaded'),
+    content: filters.getComputedServicesList(),
     onChangeValue: function () {
       this.get('parentView').updateFilter(this.get('column'), this.get('value'), 'select');
     }
@@ -289,6 +260,10 @@ App.MainAlertDefinitionsView = App.TableView.extend({
       {
         value: 'SERVER',
         label: 'SERVER'
+      },
+      {
+        value: 'RECOVERY',
+        label: 'RECOVERY'
       }
     ],
     onChangeValue: function(){
@@ -376,7 +351,7 @@ App.MainAlertDefinitionsView = App.TableView.extend({
     template: Ember.Handlebars.compile(
       '<div class="btn-group display-inline-block">' +
         '<a class="btn dropdown-toggle" data-toggle="dropdown" href="#">' +
-          '<span class="filters-label">Groups:&nbsp;&nbsp;</span>' +
+          '<span class="filters-label">{{t common.groups}}:  </span>' +
           '<span>{{view.selected.label}}&nbsp;<span class="caret"></span></span>' +
         '</a>' +
           '<ul class="dropdown-menu alert-groups-dropdown">' +
@@ -437,7 +412,7 @@ App.MainAlertDefinitionsView = App.TableView.extend({
 
     onValueChange: function () {
       var value = this.get('value');
-      if (value != undefined) {
+      if (value !== undefined) {
         this.get('content').setEach('selected', false);
         this.set('selected', this.get('content').findProperty('value', value));
         var selectEntry = this.get('content').findProperty('value', value);
@@ -456,9 +431,7 @@ App.MainAlertDefinitionsView = App.TableView.extend({
    * Filtered number of all content number information displayed on the page footer bar
    * @returns {String}
    */
-  filteredContentInfo: function () {
-    return this.t('alerts.filters.filteredAlertsInfo').format(this.get('filteredCount'), this.get('totalCount'));
-  }.property('filteredCount', 'totalCount'),
+  filteredContentInfo: Em.computed.i18nFormat('alerts.filters.filteredAlertsInfo', 'filteredCount', 'totalCount'),
 
   /**
    * Determines how display "back"-link - as link or text
@@ -476,7 +449,7 @@ App.MainAlertDefinitionsView = App.TableView.extend({
    * @type {string}
    */
   paginationRightClass: function () {
-    if ((this.get("endIndex")) < this.get("filteredCount")) {
+    if (this.get("endIndex") < this.get("filteredCount")) {
       return "paginate_next";
     }
     return "paginate_disabled_next";
@@ -510,7 +483,7 @@ App.MainAlertDefinitionsView = App.TableView.extend({
    */
   tooltipsUpdater: function () {
     Em.run.next(this, function () {
-      App.tooltip($(".enable-disable-button, .timeago"));
+      App.tooltip($(".timeago"));
     });
   },
 

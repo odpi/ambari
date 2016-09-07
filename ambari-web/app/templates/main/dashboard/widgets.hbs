@@ -17,10 +17,10 @@
 }}
 {{#if view.isDataLoaded}}
 
-  <div id="widgets-options-menu" class="dropdown">
+  <div id="widgets-options-menu" class="dropdown btn-group pull-left">
     <a class="btn dropdown-toggle" data-toggle="dropdown" href="#">
-        <span>Metric Actions</span>
-        <span class="caret"></span>
+      <span>{{t dashboard.widgets.actions.title}}</span>
+      <span class="caret"></span>
     </a>
     <ul class="dropdown-menu">
       <li class="dropdown-submenu add-widgets-text">
@@ -35,17 +35,12 @@
               <i class="icon-refresh"></i> &nbsp; {{t dashboard.button.reset}}
             </a>
           </li>
-          {{#if App.router.clusterController.isGangliaInstalled}}
-            <li>
-              <a target="_blank" {{bindAttr href="view.gangliaUrl"}}>
-                <i class="icon-share"></i> &nbsp; {{t dashboard.button.gangliaLink}}
-              </a>
-            </li>
-          {{/if}}
         </ul>
       </li>
     </ul>
   </div>
+  {{view view.timeRangeListView}}
+  <div class="clearfix"></div>
 
   <div class="dashboard-widgets-box">
     <div id="dashboard-widgets"  class="widgets-container">

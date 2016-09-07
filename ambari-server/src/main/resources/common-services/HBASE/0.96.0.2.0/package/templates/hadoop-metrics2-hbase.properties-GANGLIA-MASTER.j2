@@ -51,6 +51,7 @@ hbase.extendedperiod = 3600
 
 *.timeline.plugin.urls=file:///usr/lib/ambari-metrics-hadoop-sink/ambari-metrics-hadoop-sink.jar
 *.sink.timeline.slave.host.name={{hostname}}
+
 hbase.class=org.apache.hadoop.metrics2.sink.timeline.HadoopTimelineMetricsSink
 hbase.period={{metrics_collection_period}}
 hbase.collector={{metric_collector_host}}:{{metric_collector_port}}
@@ -66,9 +67,17 @@ rpc.collector={{metric_collector_host}}:{{metric_collector_port}}
 hbase.sink.timeline.class=org.apache.hadoop.metrics2.sink.timeline.HadoopTimelineMetricsSink
 hbase.sink.timeline.period={{metrics_collection_period}}
 hbase.sink.timeline.sendInterval={{metrics_report_interval}}000
-hbase.sink.timeline.collector={{metric_collector_host}}:{{metric_collector_port}}
+hbase.sink.timeline.collector={{metric_collector_hosts}}
+hbase.sink.timeline.protocol={{metric_collector_protocol}}
 
-{% else %}
+# HTTPS properties
+hbase.sink.timeline.truststore.path = {{metric_truststore_path}}
+hbase.sink.timeline.truststore.type = {{metric_truststore_type}}
+hbase.sink.timeline.truststore.password = {{metric_truststore_password}}
+
+{% endif %}
+
+{% if has_ganglia_server %}
 
 # Configuration of the "hbase" context for ganglia
 # Pick one: Ganglia 3.0 (former) or Ganglia 3.1 (latter)
@@ -106,5 +115,5 @@ hbase.sink.ganglia.servers={{ganglia_server_host}}:8663
 {% endif %}
 
 # Disable HBase metrics for regions/tables/regionservers by default.
-*.source.filter.class=org.apache.hadoop.metrics2.filter.GlobFilter
-hbase.*.source.filter.exclude=*Regions*
+*.source.filter.class=org.apache.hadoop.metrics2.filter.RegexFilter
+hbase.*.source.filter.exclude=.*(Regions|Users|Tables).*

@@ -22,17 +22,16 @@ limitations under the License.
   <parent>
     <artifactId>ambari-metrics</artifactId>
     <groupId>org.apache.ambari</groupId>
-    <version>2.0.0-SNAPSHOT</version>
+    <version>2.0.0.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>ambari-metrics-storm-sink</artifactId>
-  <version>2.0.0-SNAPSHOT</version>
+  <version>2.0.0.0-SNAPSHOT</version>
   <name>Ambari Metrics Storm Sink</name>
   <packaging>jar</packaging>
 
   <properties>
-    <!--<storm.version>0.9.3.2.2.1.0-2340</storm.version>-->
-    <storm.version>0.10.0.2.3.2.0-2650</storm.version>
+    <storm.version>1.1.0-SNAPSHOT</storm.version>
   </properties>
 
   <build>
@@ -61,8 +60,8 @@ limitations under the License.
             <configuration>
               <name>ambariVersion</name>
               <value>${project.version}</value>
-              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
-              <replacement>$1.$2.$3</replacement>
+              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
+              <replacement>$1.$2.$3.$4</replacement>
               <failIfNoMatch>false</failIfNoMatch>
             </configuration>
           </execution>
@@ -102,7 +101,6 @@ limitations under the License.
               <include>org.codehaus.jackson:jackson-core-asl</include>
               <include>org.codehaus.jackson:jackson-xc</include>
               <include>org.apache.hadoop:hadoop-annotations</include>
-              <include>commons-httpclient:commons-httpclient</include>
               <include>commons-logging:commons-logging</include>
               <include>org.apache.commons:commons-lang3</include>
               <include>commons-codec:commons-codec</include>
@@ -112,10 +110,6 @@ limitations under the License.
             <relocation>
               <pattern>org.apache.commons.logging</pattern>
               <shadedPattern>org.apache.hadoop.metrics2.sink.relocated.commons.logging</shadedPattern>
-            </relocation>
-            <relocation>
-              <pattern>org.apache.commons.httpclient</pattern>
-              <shadedPattern>org.apache.hadoop.metrics2.sink.relocated.commons.httpclient</shadedPattern>
             </relocation>
             <relocation>
               <pattern>org.apache.hadoop.classification</pattern>
@@ -134,6 +128,27 @@ limitations under the License.
               <shadedPattern>org.apache.hadoop.metrics2.sink.relocated.commons.codec</shadedPattern>
             </relocation>
           </relocations>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.vafer</groupId>
+        <artifactId>jdeb</artifactId>
+        <version>1.0.1</version>
+        <executions>
+          <execution>
+            <!--Stub execution on direct plugin call - workaround for ambari deb build process-->
+            <id>stub-execution</id>
+            <phase>none</phase>
+            <goals>
+              <goal>jdeb</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <skip>true</skip>
+          <attach>false</attach>
+          <submodules>false</submodules>
+          <controlDir>${project.basedir}/../src/main/package/deb/control</controlDir>
         </configuration>
       </plugin>
     </plugins>

@@ -46,16 +46,29 @@ public class RequestFactory {
                                ResourceInstance resource) {
     switch (requestType) {
       case GET:
-        return new GetRequest(headers, body, uriInfo, resource);
+        return createGetRequest(headers, body, uriInfo, resource);
       case PUT:
         return createPutRequest(headers, body, uriInfo, resource);
       case DELETE:
-        return new DeleteRequest(headers, body, uriInfo, resource);
+        return createDeleteRequest(headers, body, uriInfo, resource);
       case POST:
         return createPostRequest(headers, body, uriInfo, resource);
       default:
         throw new IllegalArgumentException("Invalid request type: " + requestType);
     }
+  }
+
+  /**
+   * Create a GET request.  This will apply any eligible directives supplied in the URI.
+   *
+   * @param headers  http headers
+   * @param uriInfo  uri information
+   * @param resource associated resource instance
+   * @return new post request
+   */
+  private Request createGetRequest(HttpHeaders headers, RequestBody body, UriInfo uriInfo, ResourceInstance resource) {
+    applyDirectives(Request.Type.GET, body, uriInfo, resource);
+    return new GetRequest(headers, body, uriInfo, resource);
   }
 
   /**
@@ -85,6 +98,13 @@ public class RequestFactory {
     return new PutRequest(headers, body, uriInfo, resource);
   }
 
+  /**
+   * Creates a DELETE request. It will apply any eligible directives supplied in the URI
+   */
+  private DeleteRequest createDeleteRequest(HttpHeaders headers, RequestBody body, UriInfo uriInfo, ResourceInstance resource) {
+    applyDirectives(Request.Type.DELETE, body, uriInfo, resource);
+    return new DeleteRequest(headers, body, uriInfo, resource);
+  }
 
   /**
    * Gather query parameters from uri and body query string.
@@ -144,6 +164,12 @@ public class RequestFactory {
           break;
         case POST:
           directives = resourceDefinition.getCreateDirectives();
+          break;
+        case GET:
+          directives = resourceDefinition.getReadDirectives();
+          break;
+        case DELETE:
+          directives = resourceDefinition.getDeleteDirectives();
           break;
         default:
           // not yet implemented for other types

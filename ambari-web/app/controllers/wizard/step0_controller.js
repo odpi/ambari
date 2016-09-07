@@ -65,15 +65,25 @@ App.WizardStep0Controller = Em.Controller.extend({
   },
 
   /**
+   * @type {boolean}
+   */
+  isSubmitDisabled: Em.computed.or('invalidClusterName', 'App.router.btnClickInProgress'),
+
+  /**
    * Onclick handler for <code>next</code> button
+   * Disable 'Next' button while it is already under process. (using Router's property 'nextBtnClickInProgress')
    * @method submit
    */
   submit: function () {
+    if(App.get('router.nextBtnClickInProgress')){
+      return;
+    }
     this.set('hasSubmitted', true);
     if (!this.get('invalidClusterName')) {
       App.clusterStatus.set('clusterName', this.get('content.cluster.name'));
       this.set('content.cluster.status', 'PENDING');
       this.set('content.cluster.isCompleted', false);
+      App.set('router.nextBtnClickInProgress', true);
       App.router.send('next');
     }
   }

@@ -17,6 +17,7 @@
  */
 package org.apache.ambari.server.checks;
 
+import java.util.Arrays;
 import java.util.Map;
 
 import org.apache.ambari.server.AmbariException;
@@ -36,7 +37,7 @@ import com.google.inject.Singleton;
  * Metastore instances in the cluster.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.MULTIPLE_COMPONENT_WARNING, order = 1.0f)
+@UpgradeCheck(group = UpgradeCheckGroup.MULTIPLE_COMPONENT_WARNING, order = 20.1f)
 public class HiveMultipleMetastoreCheck extends AbstractCheckDescriptor {
 
   /**
@@ -51,17 +52,7 @@ public class HiveMultipleMetastoreCheck extends AbstractCheckDescriptor {
    */
   @Override
   public boolean isApplicable(PrereqCheckRequest request) throws AmbariException {
-    if (!super.isApplicable(request)) {
-      return false;
-    }
-
-    final Cluster cluster = clustersProvider.get().getCluster(request.getClusterName());
-    Map<String, Service> services = cluster.getServices();
-    if (!services.containsKey("HIVE")) {
-      return false;
-    }
-
-    return true;
+    return super.isApplicable(request, Arrays.asList("HIVE"), true);
   }
 
   /**

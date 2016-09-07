@@ -17,12 +17,18 @@ limitations under the License.
 
 """
 
-from resource_management import *
+from resource_management.libraries.script.script import Script
 from resource_management.core.shell import as_user
 from ambari_commons.os_family_impl import OsFamilyImpl
 from ambari_commons import OSConst
 from resource_management.libraries.functions.curl_krb_request import curl_krb_request
+from resource_management.libraries import functions
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.resources.execute_hadoop import ExecuteHadoop
 from resource_management.core.logger import Logger
+from resource_management.core.source import StaticFile
+from resource_management.core.resources.system import Execute, File
+
 
 class HdfsServiceCheck(Script):
   pass
@@ -34,7 +40,7 @@ class HdfsServiceCheckDefault(HdfsServiceCheck):
 
     env.set_params(params)
     unique = functions.get_unique_id_and_date()
-    dir = '/tmp'
+    dir = params.hdfs_tmp_dir
     tmp_file = format("{dir}/{unique}")
 
     safemode_command = format("dfsadmin -fs {namenode_address} -safemode get | grep OFF")
@@ -86,7 +92,7 @@ class HdfsServiceCheckDefault(HdfsServiceCheck):
         checkWebUIFileName = "checkWebUI.py"
         checkWebUIFilePath = format("{tmp_dir}/{checkWebUIFileName}")
         comma_sep_jn_hosts = ",".join(params.journalnode_hosts)
-        checkWebUICmd = format("python {checkWebUIFilePath} -m {comma_sep_jn_hosts} -p {journalnode_port} -s {https_only}")
+        checkWebUICmd = format("ambari-python-wrap {checkWebUIFilePath} -m {comma_sep_jn_hosts} -p {journalnode_port} -s {https_only}")
         File(checkWebUIFilePath,
              content=StaticFile(checkWebUIFileName),
              mode=0775)
@@ -119,7 +125,7 @@ class HdfsServiceCheckWindows(HdfsServiceCheck):
     unique = functions.get_unique_id_and_date()
 
     #Hadoop uses POSIX-style paths, separator is always /
-    dir = '/tmp'
+    dir = params.hdfs_tmp_dir
     tmp_file = dir + '/' + unique
 
     #commands for execution

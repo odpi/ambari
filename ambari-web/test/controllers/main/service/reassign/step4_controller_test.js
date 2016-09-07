@@ -16,9 +16,10 @@
  * limitations under the License.
  */
 
-App = require('app');
+var App = require('app');
 
 require('controllers/main/service/reassign/step4_controller');
+var testHelpers = require('test/helpers');
 
 describe('App.ReassignMasterWizardStep4Controller', function () {
 
@@ -29,14 +30,15 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
     })
   });
 
-  beforeEach(function () {
-    sinon.stub(App.ajax, 'send', Em.K);
-  });
-  afterEach(function () {
-    App.ajax.send.restore();
-  });
-
   describe('#setAdditionalConfigs()', function () {
+
+    beforeEach(function () {
+      sinon.stub(App, 'get').withArgs('isHaEnabled').returns(true);
+    });
+
+    afterEach(function () {
+      App.get.restore();
+    });
 
     it('Component is absent', function () {
       controller.set('additionalConfigsMap', []);
@@ -73,6 +75,24 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
         }
       });
     });
+
+    it('ignore some configs for NameNode after HA', function () {
+      controller.set('additionalConfigsMap', [
+        {
+          componentName: 'NAMENODE',
+          configs: {
+            'test-site': {
+              'fs.defaultFS': '<replace-value>:1111',
+              'dfs.namenode.rpc-address': '<replace-value>:1111'
+            }
+          }
+        }
+      ]);
+      var configs = {'test-site': {}};
+
+      expect(controller.setAdditionalConfigs(configs, 'NAMENODE', 'host1')).to.be.true;
+      expect(configs).to.eql({'test-site': {}});
+    });
   });
 
   describe('#getHostComponentsNames()', function () {
@@ -104,19 +124,27 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       App.router.get.restore();
     });
 
-    it('tests database connection', function() {
-      sinon.stub(controller, 'prepareDBCheckAction', Em.K);
+    describe('tests database connection', function() {
 
-      controller.testDBConnection();
-      expect(controller.prepareDBCheckAction.calledOnce).to.be.true;
+      beforeEach(function () {
+        sinon.stub(controller, 'prepareDBCheckAction', Em.K);
+      });
 
-      controller.prepareDBCheckAction.restore();
+      afterEach(function () {
+        controller.prepareDBCheckAction.restore();
+      });
+
+      it('prepareDBCheckAction is called once', function() {
+        controller.testDBConnection();
+        expect(controller.prepareDBCheckAction.calledOnce).to.be.true;
+      });
+
     });
 
     it('tests prepareDBCheckAction', function() {
       controller.prepareDBCheckAction();
-
-      expect(App.ajax.send.calledOnce).to.be.true;
+      var args = testHelpers.findAjaxRequest('name', 'cluster.custom_action.create');
+      expect(args).exists;
     });
 
   });
@@ -258,6 +286,42 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.removeUnneededTasks();
       expect(controller.get('tasks').mapProperty('id')).to.eql([1,2,3,4,5,6,7,8,9,10,11,12]);
     });
+
+    it('reassign component is Metrics Collector', function () {
+      controller.set('content.hasManualSteps', false);
+      controller.set('content.databaseType', 'mysql');
+      controller.set('content.reassign.component_name', 'METRICS_COLLECTOR');
+      isHaEnabled = false;
+
+      controller.set('tasks', commandsForDB);
+      controller.removeUnneededTasks();
+      expect(controller.get('tasks').mapProperty('id')).to.eql([1,2,5,6,8,9,10,12]);
+    });
+
+    it('reassign component is Mysql Server', function () {
+      controller.set('content.hasManualSteps', false);
+      controller.set('content.databaseType', 'mysql');
+      controller.set('content.reassign.component_name', 'MYSQL_SERVER');
+      isHaEnabled = false;
+
+      controller.set('tasks', commandsForDB);
+      controller.removeUnneededTasks();
+      expect(controller.get('tasks').mapProperty('id')).to.eql([1,2,3,4,5,6,8,9,10,11,12]);
+    });
+  });
+
+  describe("#stopRequiredServices()", function() {
+    before(function () {
+      sinon.stub(controller, 'stopServices', Em.K);
+    });
+    after(function () {
+      controller.stopServices.restore();
+    });
+    it('stopServices is called with valid list of services', function() {
+      controller.set('content.reassign.component_name', 'JOBTRACKER');
+      controller.stopRequiredServices();
+      expect(controller.stopServices.calledWith(['PIG', 'OOZIE'], true)).to.be.true;
+    });
   });
 
   describe('#initializeTasks()', function () {
@@ -265,18 +329,31 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.set('tasks', []);
       sinon.stub(controller, 'getHostComponentsNames', Em.K);
       sinon.stub(controller, 'removeUnneededTasks', Em.K);
+      this.mock = sinon.stub(controller, 'isComponentWithDB');
     });
     afterEach(function () {
       controller.removeUnneededTasks.restore();
       controller.getHostComponentsNames.restore();
+      this.mock.restore();
     });
-    it('No commands', function () {
+    it('No commands (isComponentWithDB = false)', function () {
       controller.set('commands', []);
       controller.set('commandsForDB', []);
+      this.mock.returns(false);
       controller.initializeTasks();
 
       expect(controller.get('tasks')).to.be.empty;
     });
+
+    it('No commands (isComponentWithDB = true)', function () {
+      controller.set('commands', []);
+      controller.set('commandsForDB', []);
+      this.mock.returns(true);
+      controller.initializeTasks();
+
+      expect(controller.get('tasks')).to.be.empty;
+    });
+
     it('One command', function () {
       controller.set('commands', ['COMMAND1']);
       controller.set('commandsForDB', ['COMMAND1']);
@@ -313,24 +390,17 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.onTaskCompleted.restore();
     });
 
-    it('No host-components', function () {
-      controller.set('multiTaskCounter', 0);
-      controller.set('hostComponents', []);
-      controller.onComponentsTasksSuccess();
-      expect(controller.get('multiTaskCounter')).to.equal(1);
-      expect(controller.onTaskCompleted.calledOnce).to.be.true;
-    });
     it('One host-component', function () {
-      controller.set('multiTaskCounter', 0);
+      controller.set('multiTaskCounter', 1);
       controller.set('hostComponents', [
         {}
       ]);
       controller.onComponentsTasksSuccess();
-      expect(controller.get('multiTaskCounter')).to.equal(1);
+      expect(controller.get('multiTaskCounter')).to.equal(0);
       expect(controller.onTaskCompleted.calledOnce).to.be.true;
     });
     it('two host-components', function () {
-      controller.set('multiTaskCounter', 0);
+      controller.set('multiTaskCounter', 2);
       controller.set('hostComponents', [
         {},
         {}
@@ -342,9 +412,10 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
   });
 
   describe('#stopServices()', function () {
-    it('', function () {
+    it('request is sent', function () {
       controller.stopServices();
-      expect(App.ajax.send.calledOnce).to.be.true;
+      var args = testHelpers.findAjaxRequest('name', 'common.services.update');
+      expect(args).exists;
     });
   });
 
@@ -356,14 +427,6 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.createComponent.restore();
     });
 
-    it('No host-components', function () {
-      controller.set('hostComponents', []);
-
-      controller.createHostComponents();
-
-      expect(controller.get('multiTaskCounter')).to.equal(0);
-      expect(controller.createComponent.called).to.be.false;
-    });
     it('One host-component', function () {
       controller.set('hostComponents', ['COMP1']);
       controller.set('content.reassignHosts.target', 'host1');
@@ -371,17 +434,24 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
 
       controller.createHostComponents();
 
-      expect(controller.get('multiTaskCounter')).to.equal(0);
+      expect(controller.get('multiTaskCounter')).to.equal(1);
       expect(controller.createComponent.calledWith('COMP1', 'host1', 'SERVICE1')).to.be.true;
     });
   });
 
   describe('#onCreateComponent()', function () {
-    it('', function () {
+
+    beforeEach(function () {
       sinon.stub(controller, 'onComponentsTasksSuccess', Em.K);
+    });
+
+    afterEach(function () {
+      controller.onComponentsTasksSuccess.restore();
+    });
+
+    it('onComponentsTasksSuccess is called once', function () {
       controller.onCreateComponent();
       expect(controller.onComponentsTasksSuccess.calledOnce).to.be.true;
-      controller.onComponentsTasksSuccess.restore();
     });
   });
 
@@ -396,14 +466,16 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
     it('No host-components', function () {
       controller.set('hostComponents', []);
       controller.putHostComponentsInMaintenanceMode();
-      expect(App.ajax.send.called).to.be.false;
+      var args = testHelpers.findAjaxRequest('name', 'common.host.host_component.passive');
+      expect(args).not.exists;
       expect(controller.get('multiTaskCounter')).to.equal(0);
     });
     it('One host-components', function () {
       controller.set('hostComponents', [{}]);
       controller.putHostComponentsInMaintenanceMode();
-      expect(App.ajax.send.calledOnce).to.be.true;
-      expect(controller.get('multiTaskCounter')).to.equal(0);
+      var args = testHelpers.findAjaxRequest('name', 'common.host.host_component.passive');
+      expect(args).exists;
+      expect(controller.get('multiTaskCounter')).to.equal(1);
     });
   });
 
@@ -430,29 +502,37 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
 
       controller.installHostComponents();
 
-      expect(controller.get('multiTaskCounter')).to.equal(0);
+      expect(controller.get('multiTaskCounter')).to.equal(1);
       expect(controller.updateComponent.calledWith('COMP1', 'host1', 'SERVICE1', 'Install', 1)).to.be.true;
     });
   });
 
   describe('#reconfigure()', function () {
-    it('', function () {
+
+    beforeEach(function () {
       sinon.stub(controller, 'loadConfigsTags', Em.K);
+    });
+
+    afterEach(function () {
+      controller.loadConfigsTags.restore();
+    });
+
+    it('loadConfigsTags is called once', function () {
       controller.reconfigure();
       expect(controller.loadConfigsTags.calledOnce).to.be.true;
-      controller.loadConfigsTags.restore();
     });
   });
 
   describe('#loadConfigsTags()', function () {
-    it('', function () {
+    it('request is sent', function () {
       controller.loadConfigsTags();
-      expect(App.ajax.send.calledOnce).to.be.true;
+      var args = testHelpers.findAjaxRequest('name', 'config.tags');
+      expect(args).exists;
     });
   });
 
   describe('#getConfigUrlParams()', function () {
-    var testCases  = [
+    var testCases = [
       {
         componentName: 'NAMENODE',
         result: [
@@ -483,20 +563,53 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
         componentName: 'APP_TIMELINE_SERVER',
         result: [
           "(type=yarn-site&tag=5)",
-          "(type=yarn-env&tag=8)",
+          "(type=yarn-env&tag=8)"
         ]
       },
       {
         componentName: 'OOZIE_SERVER',
         result: [
           "(type=oozie-site&tag=6)",
-          "(type=core-site&tag=2)"
+          "(type=core-site&tag=2)",
+          "(type=oozie-env&tag=2)"
         ]
       },
       {
         componentName: 'WEBHCAT_SERVER',
         result: [
-          "(type=webhcat-site&tag=7)"
+          "(type=hive-env&tag=11)",
+          "(type=webhcat-site&tag=7)",
+          "(type=core-site&tag=2)"
+        ]
+      },
+      {
+        componentName: 'HIVE_SERVER',
+        result: [
+          '(type=hive-site&tag=10)',
+          '(type=webhcat-site&tag=7)',
+          '(type=hive-env&tag=11)',
+          '(type=core-site&tag=2)'
+        ]
+      },
+      {
+        componentName: 'HIVE_METASTORE',
+        result: [
+          '(type=hive-site&tag=10)',
+          '(type=webhcat-site&tag=7)',
+          '(type=hive-env&tag=11)',
+          '(type=core-site&tag=2)'
+        ]
+      },
+      {
+        componentName: 'MYSQL_SERVER',
+        result: [
+          '(type=hive-site&tag=10)'
+        ]
+      },
+      {
+        componentName: 'HISTORYSERVER',
+        result: [
+          '(type=mapred-site&tag=4)'
         ]
       }
     ];
@@ -510,9 +623,12 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
           'mapred-site': {tag: 4},
           'yarn-site': {tag: 5},
           'oozie-site': {tag: 6},
+          'oozie-env': {tag: 2},
           'webhcat-site': {tag: 7},
           'yarn-env': {tag: 8},
-          'accumulo-site': {tag: 9}
+          'accumulo-site': {tag: 9},
+          'hive-site': {tag: 10},
+          'hive-env': {tag: 11}
         }
       }
     };
@@ -562,90 +678,31 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
   });
 
   describe('#onLoadConfigsTags()', function () {
-    it('', function () {
+    var dummyData = {
+      Clusters: {
+        desired_configs : {}
+      }
+    };
+
+    beforeEach(function () {
       sinon.stub(controller, 'getConfigUrlParams', function () {
         return [];
       });
       controller.set('content.reassign.component_name', 'COMP1');
+      controller.onLoadConfigsTags(dummyData);
+      this.args = testHelpers.findAjaxRequest('name', 'reassign.load_configs');
+    });
 
-      controller.onLoadConfigsTags({});
-      expect(App.ajax.send.calledOnce).to.be.true;
-      expect(controller.getConfigUrlParams.calledWith('COMP1', {})).to.be.true;
-
+    afterEach(function () {
       controller.getConfigUrlParams.restore();
     });
-  });
 
-  describe('#onLoadConfigs()', function () {
-    beforeEach(function () {
-      sinon.stub(controller, 'setAdditionalConfigs', Em.K);
-      sinon.stub(controller, 'setSecureConfigs', Em.K);
-      sinon.stub(controller, 'setSpecificNamenodeConfigs', Em.K);
-      sinon.stub(controller, 'setSpecificResourceMangerConfigs', Em.K);
-      sinon.stub(controller, 'getWebAddressPort', Em.K);
-      sinon.stub(controller, 'getComponentDir', Em.K);
-      sinon.stub(controller, 'saveClusterStatus', Em.K);
-      sinon.stub(controller, 'saveConfigsToServer', Em.K);
-      sinon.stub(controller, 'saveServiceProperties', Em.K);
-      controller.set('content.reassignHosts.target', 'host1');
-    });
-    afterEach(function () {
-      controller.setAdditionalConfigs.restore();
-      controller.setSecureConfigs.restore();
-      controller.setSpecificNamenodeConfigs.restore();
-      controller.setSpecificResourceMangerConfigs.restore();
-      controller.getWebAddressPort.restore();
-      controller.getComponentDir.restore();
-      controller.saveClusterStatus.restore();
-      controller.saveConfigsToServer.restore();
-      controller.saveServiceProperties.restore();
+    it('request is sent', function () {
+      expect(this.args).exists;
     });
 
-    it('component is not NAMENODE', function () {
-      controller.set('content.reassign.component_name', 'COMP1');
-
-      controller.onLoadConfigs({items: []});
-      expect(controller.setAdditionalConfigs.calledWith({}, 'COMP1', 'host1')).to.be.true;
-      expect(controller.setSecureConfigs.calledWith([], {}, 'COMP1')).to.be.true;
-      expect(controller.setSpecificNamenodeConfigs.called).to.be.false;
-      expect(controller.getComponentDir.calledWith({}, 'COMP1')).to.be.true;
-      expect(controller.saveClusterStatus.calledWith([])).to.be.true;
-      expect(controller.saveConfigsToServer.calledWith({})).to.be.true;
-      expect(controller.saveServiceProperties.calledWith({})).to.be.true;
-    });
-    it('component is NAMENODE, has configs', function () {
-      controller.set('content.reassign.component_name', 'NAMENODE');
-
-      controller.onLoadConfigs({items: [
-        {
-          type: 'hdfs-site',
-          properties: {}
-        }
-      ]});
-      expect(controller.setAdditionalConfigs.calledWith({'hdfs-site': {}}, 'NAMENODE', 'host1')).to.be.true;
-      expect(controller.setSecureConfigs.calledWith([], {'hdfs-site': {}}, 'NAMENODE')).to.be.true;
-      expect(controller.setSpecificNamenodeConfigs.calledWith({'hdfs-site': {}}, 'host1')).to.be.true;
-      expect(controller.getComponentDir.calledWith({'hdfs-site': {}}, 'NAMENODE')).to.be.true;
-      expect(controller.saveClusterStatus.calledWith([])).to.be.true;
-      expect(controller.saveConfigsToServer.calledWith({'hdfs-site': {}})).to.be.true;
-      expect(controller.saveServiceProperties.calledWith({'hdfs-site': {}})).to.be.true;
-    });
-    it('component is RESOURCEMANAGER, has configs', function () {
-      controller.set('content.reassign.component_name', 'RESOURCEMANAGER');
-
-      controller.onLoadConfigs({items: [
-        {
-          type: 'hdfs-site',
-          properties: {}
-        }
-      ]});
-      expect(controller.setAdditionalConfigs.calledWith({'hdfs-site': {}}, 'RESOURCEMANAGER', 'host1')).to.be.true;
-      expect(controller.setSecureConfigs.calledWith([], {'hdfs-site': {}}, 'RESOURCEMANAGER')).to.be.true;
-      expect(controller.setSpecificResourceMangerConfigs.calledWith({'hdfs-site': {}}, 'host1')).to.be.true;
-      expect(controller.getComponentDir.calledWith({'hdfs-site': {}}, 'RESOURCEMANAGER')).to.be.true;
-      expect(controller.saveClusterStatus.calledWith([])).to.be.true;
-      expect(controller.saveConfigsToServer.calledWith({'hdfs-site': {}})).to.be.true;
-      expect(controller.saveServiceProperties.calledWith({'hdfs-site': {}})).to.be.true;
+    it('getConfigUrlParams is called with correct data', function () {
+      expect(controller.getConfigUrlParams.calledWith('COMP1', dummyData)).to.be.true;
     });
   });
 
@@ -700,230 +757,61 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
     });
   });
 
-
   describe('#saveConfigsToServer()', function () {
     beforeEach(function () {
       sinon.stub(controller, 'getServiceConfigData', Em.K);
+      controller.saveConfigsToServer([1]);
+      this.args = testHelpers.findAjaxRequest('name', 'common.across.services.configurations');
     });
     afterEach(function () {
       controller.getServiceConfigData.restore();
     });
-    it('', function () {
-      controller.saveConfigsToServer([1]);
+    it('getServiceConfigData is called with valid data', function () {
       expect(controller.getServiceConfigData.calledWith([1])).to.be.true;
-      expect(App.ajax.send.calledOnce).to.be.true;
+    });
+    it('request is sent', function () {
+      expect(this.args).exists;
     });
   });
 
-  describe('#setSpecificNamenodeConfigs()', function () {
-    var isHaEnabled = false;
-    var service = Em.Object.create();
-    beforeEach(function () {
-      sinon.stub(App, 'get', function () {
-        return isHaEnabled;
-      });
-      sinon.stub(App.Service, 'find', function () {
-        return service;
-      });
-      controller.set('content.reassignHosts.source', 'host1');
-    });
-    afterEach(function () {
-      App.get.restore();
-      App.Service.find.restore();
-    });
-    it('HA isn\'t enabled and no HBASE or ACCUMULO service', function () {
-      isHaEnabled = false;
-      var configs = {};
-      controller.setSpecificNamenodeConfigs(configs, 'host1');
-      expect(configs).to.eql({});
-    });
-    it('HA isn\'t enabled and HBASE and ACCUMULO service', function () {
-      isHaEnabled = false;
-      service = Em.Object.create({
-        isLoaded: true
-      });
-      var configs = {
-        'hbase-site': {
-          'hbase.rootdir': 'hdfs://localhost:8020/apps/hbase/data'
-        },
-        'accumulo-site': {
-          'instance.volumes': 'hdfs://localhost:8020/apps/accumulo/data'
-        }
-      };
-      controller.setSpecificNamenodeConfigs(configs, 'host1');
-      expect(configs['hbase-site']['hbase.rootdir']).to.equal('hdfs://host1:8020/apps/hbase/data');
-      expect(configs['accumulo-site']['instance.volumes']).to.equal('hdfs://host1:8020/apps/accumulo/data');
-    });
-    it('HA enabled and namenode 1', function () {
-      isHaEnabled = true;
-      var configs = {
-        'hdfs-site': {
-          'dfs.nameservices': 's',
-          'dfs.namenode.http-address.s.nn1': 'host1:50070',
-          'dfs.namenode.https-address.s.nn1': '',
-          'dfs.namenode.rpc-address.s.nn1': ''
-        }
-      };
-      controller.setSpecificNamenodeConfigs(configs, 'host2');
-      expect(configs['hdfs-site']).to.eql({
-        "dfs.nameservices": "s",
-        "dfs.namenode.http-address.s.nn1": "host2:50070",
-        "dfs.namenode.https-address.s.nn1": "host2:50470",
-        "dfs.namenode.rpc-address.s.nn1": "host2:8020"
-      });
-    });
-    it('HA enabled and namenode 2', function () {
-      isHaEnabled = true;
-      var configs = {
-        'hdfs-site': {
-          'dfs.nameservices': 's',
-          'dfs.namenode.http-address.s.nn2': 'host2:50070',
-          'dfs.namenode.https-address.s.nn2': '',
-          'dfs.namenode.rpc-address.s.nn2': ''
-        }
-      };
-      controller.setSpecificNamenodeConfigs(configs, 'host1');
-      expect(configs['hdfs-site']).to.eql({
-        "dfs.nameservices": "s",
-        "dfs.namenode.http-address.s.nn2": "host1:50070",
-        "dfs.namenode.https-address.s.nn2": "host1:50470",
-        "dfs.namenode.rpc-address.s.nn2": "host1:8020"
-      });
-    });
-  });
-
-  describe('#setSpecificResourceMangerConfigs()', function () {
-    var isRMHaEnabled = false;
-    var service = Em.Object.create();
-    beforeEach(function () {
-      sinon.stub(App, 'get', function () {
-        return isRMHaEnabled;
-      });
-      controller.set('content.reassignHosts.source', 'host1');
-    });
-    afterEach(function () {
-      App.get.restore();
-    });
-
-    it('HA isn\'t enabled', function () {
-      isRMHaEnabled = false;
-      var configs = {};
-      controller.setSpecificResourceMangerConfigs(configs, 'host1');
-      expect(configs).to.eql({});
-    });
-    it('HA enabled and resource manager 1', function () {
-      isRMHaEnabled = true;
-      var configs = {
-        'yarn-site': {
-          'yarn.resourcemanager.hostname.rm1': 'host1',
-          'yarn.resourcemanager.webapp.address.rm1': 'host1:8088',
-          'yarn.resourcemanager.webapp.https.address.rm1': 'host1:8443'
-        }
-      };
-      controller.setSpecificResourceMangerConfigs(configs, 'host2');
-      expect(configs['yarn-site']).to.eql({
-        'yarn.resourcemanager.hostname.rm1': 'host2',
-        'yarn.resourcemanager.webapp.address.rm1': 'host2:8088',
-        'yarn.resourcemanager.webapp.https.address.rm1': 'host2:8443'
-      });
-    });
-    it('HA enabled and resource manager 2', function () {
-      isRMHaEnabled = true;
-      var configs = {
-        'yarn-site': {
-          'yarn.resourcemanager.hostname.rm2': 'host2',
-          'yarn.resourcemanager.webapp.address.rm2': 'host2:8088',
-          'yarn.resourcemanager.webapp.https.address.rm2': 'host2:8443'
-        }
-      };
-      controller.setSpecificResourceMangerConfigs(configs, 'host1');
-      expect(configs['yarn-site']).to.eql({
-        'yarn.resourcemanager.hostname.rm2': 'host1',
-        'yarn.resourcemanager.webapp.address.rm2': 'host1:8088',
-        'yarn.resourcemanager.webapp.https.address.rm2': 'host1:8443'
-      });
-    });
-  });
-
-  describe('#getWebAddressPort', function(){
-    var configs = {
-        'yarn-site': {
-          'yarn.resourcemanager.hostname.rm2': 'host2',
-          'yarn.resourcemanager.webapp.address.rm2': 'host2:8088',
-          'yarn.resourcemanager.webapp.https.address.rm2': 'host2:8443'
-        }
-    };
-    
-    var httpPort = controller.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.address.rm2');
-    expect(httpPort).to.eql('8088');
-    
-    var httpsPort = controller.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.https.address.rm2');
-    expect(httpsPort).to.eql('8443');
-
-    configs = {
-        'yarn-site': {
-          'yarn.resourcemanager.hostname.rm2': 'host2',
-          'yarn.resourcemanager.webapp.address.rm2': 'host2:',
-          'yarn.resourcemanager.webapp.https.address.rm2': 'host2:  '
-        }
-    };
-    
-    //check for falsy conditions
-    httpPort = controller.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.address.rm2');
-    var flag = "falsy"
-    if (httpPort)
-      flag = "truthy"
-    expect(flag).to.eql('falsy')
-
-    httpsPort = controller.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.https.address.rm2');
-    flag = "falsy"
-    if (httpsPort)
-      flag = "truthy"
-    expect(flag).to.eql("falsy")
-
-    configs = {
-        'yarn-site': {
-          'yarn.resourcemanager.hostname.rm2': 'host2'
-        }
-    };
-
-   httpPort = controller.getWebAddressPort(configs, 'yarn.resourcemanager.webapp.address.rm2');
-   var flag = "falsy"
-   if (httpPort != null) //check for null, still part of the falsy condition checks.
-      flag = "truthy"
-    expect(flag).to.eql('falsy')
-  });
-  
   describe('#setSecureConfigs()', function () {
+
+    beforeEach(function () {
+      this.stub = sinon.stub(App, 'get');
+    });
+
+    afterEach(function () {
+      Em.tryInvoke(App.get, 'restore');
+    });
+
     it('undefined component and security disabled', function () {
       var secureConfigs = [];
-      sinon.stub(App, 'get').withArgs('isKerberosEnabled').returns(false);
+      this.stub.withArgs('isKerberosEnabled').returns(false);
       controller.set('secureConfigsMap', []);
       expect(controller.setSecureConfigs(secureConfigs, {}, 'COMP1')).to.be.false;
       expect(secureConfigs).to.eql([]);
-      App.get.restore();
     });
+
     it('component exist and security disabled', function () {
       var secureConfigs = [];
-      sinon.stub(App, 'get').withArgs('isKerberosEnabled').returns(false);
+      this.stub.withArgs('isKerberosEnabled').returns(false);
       controller.set('secureConfigsMap', [{
         componentName: 'COMP1'
       }]);
       expect(controller.setSecureConfigs(secureConfigs, {}, 'COMP1')).to.be.false;
       expect(secureConfigs).to.eql([]);
-      App.get.restore();
     });
+
     it('undefined component and security enabled', function () {
       var secureConfigs = [];
-      sinon.stub(App, 'get').withArgs('isKerberosEnabled').returns(true);
+      this.stub.withArgs('isKerberosEnabled').returns(true);
       controller.set('secureConfigsMap', []);
       expect(controller.setSecureConfigs(secureConfigs, {}, 'COMP1')).to.be.false;
       expect(secureConfigs).to.eql([]);
-      App.get.restore();
     });
     it('component exist and security enabled', function () {
       var secureConfigs = [];
-      sinon.stub(App, 'get').withArgs('isKerberosEnabled').returns(true);
+      this.stub.withArgs('isKerberosEnabled').returns(true);
       var configs = {'s1': {
         'k1': 'kValue',
         'p1': 'pValue'
@@ -943,7 +831,6 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
           "principal": "pValue"
         }
       ]);
-      App.get.restore();
     });
   });
 
@@ -1018,7 +905,7 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.onTaskCompleted.restore();
     });
 
-    it('', function () {
+    it('onTaskCompleted called once', function () {
       controller.onSaveConfigs();
       expect(controller.onTaskCompleted.calledOnce).to.be.true;
     });
@@ -1032,7 +919,7 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.updateComponent.restore();
     });
 
-    it('', function () {
+    it('updateComponent called with valid arguments', function () {
       controller.set('content.masterComponentHosts', [{
         component: 'ZOOKEEPER_SERVER',
         hostName: 'host1'
@@ -1045,44 +932,49 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
   describe('#startNameNode()', function () {
     beforeEach(function () {
       sinon.stub(controller, 'updateComponent', Em.K);
+      controller.set('content.masterComponentHosts', [
+        {
+          component: 'NAMENODE',
+          hostName: 'host1'
+        },
+        {
+          component: 'NAMENODE',
+          hostName: 'host2'
+        }
+      ]);
     });
     afterEach(function () {
       controller.updateComponent.restore();
     });
 
     it('reassign host does not match current', function () {
-      controller.set('content.masterComponentHosts', [{
-        component: 'NAMENODE',
-        hostName: 'host1'
-      }]);
-      controller.set('content.reassignHosts.source', 'host2');
+      controller.set('content.reassignHosts.source', 'host3');
+      controller.set('content.reassignHosts.target', 'host2');
       controller.startNameNode();
-      expect(controller.updateComponent.getCall(0).args[1][0]).to.equal('host1');
-      expect(controller.updateComponent.getCall(0).args[0]).to.equal('NAMENODE');
-      expect(controller.updateComponent.getCall(0).args[2]).to.equal('HDFS');
-      expect(controller.updateComponent.getCall(0).args[3]).to.equal('Start');
+      expect(controller.updateComponent.getCall(0).args[0]).to.be.equal('NAMENODE');
+      expect(controller.updateComponent.getCall(0).args[1][0]).to.be.equal('host1');
+      expect(controller.updateComponent.getCall(0).args[2]).to.be.equal('HDFS');
+      expect(controller.updateComponent.getCall(0).args[3]).to.be.equal('Start');
     });
+
     it('reassign host matches current', function () {
-      controller.set('content.masterComponentHosts', [{
-        component: 'NAMENODE',
-        hostName: 'host1'
-      }]);
-      controller.set('content.reassignHosts.source', 'host1');
+      controller.set('content.reassignHosts.target', 'host2');
       controller.startNameNode();
-      expect(controller.updateComponent.calledWith('NAMENODE', [], 'HDFS', 'Start')).to.be.true;
+      expect(controller.updateComponent.calledWith('NAMENODE', ['host1'], 'HDFS', 'Start')).to.be.true;
     });
   });
 
   describe('#startServices()', function () {
-    before(function () {
+    beforeEach(function () {
       sinon.stub(App.router, 'get').returns({"skip.service.checks": "false"});
+      controller.startServices();
+      this.args = testHelpers.findAjaxRequest('name', 'common.services.update');
     });
-    after(function () {
+    afterEach(function () {
       App.router.get.restore();
     });
-    it('', function () {
-      controller.startServices();
-      expect(App.ajax.send.calledOnce).to.be.true;
+    it('request is sent', function () {
+      expect(this.args).exists;
     });
   });
 
@@ -1092,17 +984,20 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.set('hostComponents', []);
       controller.set('content.reassignHosts.source', 'host1');
       controller.deleteHostComponents();
-      expect(App.ajax.send.called).to.be.false;
+      var args = testHelpers.findAjaxRequest('name', 'common.delete.host_component');
+      expect(args).not.exists;
     });
     it('delete two components', function () {
       controller.set('hostComponents', [1, 2]);
       controller.set('content.reassignHosts.source', 'host1');
       controller.deleteHostComponents();
-      expect(App.ajax.send.getCall(0).args[0].data).to.eql({
+      var args = testHelpers.filterAjaxRequests('name', 'common.delete.host_component');
+      expect(args).to.have.property('length').equal(2);
+      expect(args[0][0].data).to.eql({
         "hostName": "host1",
         "componentName": 1
       });
-      expect(App.ajax.send.getCall(1).args[0].data).to.eql({
+      expect(args[1][0].data).to.eql({
         "hostName": "host1",
         "componentName": 2
       });
@@ -1122,14 +1017,14 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
     it('task success', function () {
       var error = {
         responseText: 'org.apache.ambari.server.controller.spi.NoSuchResourceException'
-      }
+      };
       controller.onDeleteHostComponentsError(error);
       expect(controller.onComponentsTasksSuccess.calledOnce).to.be.true;
     });
     it('unknown error', function () {
       var error = {
         responseText: ''
-      }
+      };
       controller.onDeleteHostComponentsError(error);
       expect(controller.onTaskError.calledOnce).to.be.true;
     });
@@ -1193,7 +1088,7 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.set('content.reassign.component_name', 'COMP1');
       expect(controller.getServiceConfigData([])).to.eql([]);
     });
-    it('Services in stackServicesm but configTypesRendered is empty', function () {
+    it('Services in stackServices, but configTypesRendered is empty', function () {
       services = [Em.Object.create({serviceName: 'S1'})];
       stackServices = [Em.Object.create({
         serviceName: 'S1',
@@ -1202,7 +1097,7 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.set('content.reassign.component_name', 'COMP1');
       expect(controller.getServiceConfigData([])[0]).to.equal("{\"Clusters\":{\"desired_config\":[]}}");
     });
-    it('Services in stackServicesm and configTypesRendered has data, but configs is empty', function () {
+    it('Services in stackServices, and configTypesRendered has data, but configs is empty', function () {
       services = [Em.Object.create({serviceName: 'S1'})];
       stackServices = [
         Em.Object.create({
@@ -1213,7 +1108,7 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
       controller.set('content.reassign.component_name', 'COMP1');
       expect(controller.getServiceConfigData([])[0]).to.equal("{\"Clusters\":{\"desired_config\":[]}}");
     });
-    it('Services in stackServicesm and configTypesRendered has data, and configs present', function () {
+    it('Services in stackServices, and configTypesRendered has data, and configs present', function () {
       services = [Em.Object.create({serviceName: 'S1'})];
       stackServices = [
         Em.Object.create({
@@ -1231,31 +1126,523 @@ describe('App.ReassignMasterWizardStep4Controller', function () {
     });
   });
 
-  describe('#testsMySqlServer()', function () {
+  describe('#cleanMySqlServer()', function () {
     beforeEach(function() {
       sinon.stub(App.HostComponent, 'find', function() {
         return Em.A([
           Em.Object.create({
             'componentName': 'MYSQL_SERVER',
-            'hostName': 'c6401.ambari.apache.org'
+            'hostName': 'host1'
           })
         ]);
       });
     });
-
     afterEach(function() {
       App.HostComponent.find.restore();
     });
 
-    it('Cleans MySql Server', function () {
+    it('component_name is C1', function () {
+      controller.set('content.reassign.component_name', 'C1');
       controller.cleanMySqlServer();
-      expect(App.ajax.send.calledOnce).to.be.true;
+      var args = testHelpers.findAjaxRequest('name', 'service.mysql.clean');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(controller);
+      expect(args[0].data).to.be.eql({
+        host: 'host1'
+      });
     });
 
-    it('Configures MySql Server', function () {
+    it('component_name is MYSQL_SERVER', function () {
+      controller.set('content.reassign.component_name', 'MYSQL_SERVER');
+      controller.set('content.reassignHosts.target', 'host2');
+      controller.cleanMySqlServer();
+      var args = testHelpers.findAjaxRequest('name', 'service.mysql.clean');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(controller);
+      expect(args[0].data).to.be.eql({
+        host: 'host2'
+      });
+    });
+  });
+
+  describe('#configureMySqlServer()', function () {
+    beforeEach(function() {
+      sinon.stub(App.HostComponent, 'find', function() {
+        return Em.A([
+          Em.Object.create({
+            'componentName': 'MYSQL_SERVER',
+            'hostName': 'host1'
+          })
+        ]);
+      });
+    });
+    afterEach(function() {
+      App.HostComponent.find.restore();
+    });
+
+    it('component_name is C1', function () {
+      controller.set('content.reassign.component_name', 'C1');
       controller.configureMySqlServer();
-      expect(App.ajax.send.calledOnce).to.be.true;
+      var args = testHelpers.findAjaxRequest('name', 'service.mysql.configure');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(controller);
+      expect(args[0].data).to.be.eql({
+        host: 'host1'
+      });
     });
 
+    it('component_name is MYSQL_SERVER', function () {
+      controller.set('content.reassign.component_name', 'MYSQL_SERVER');
+      controller.set('content.reassignHosts.target', 'host2');
+      controller.configureMySqlServer();
+      var args = testHelpers.findAjaxRequest('name', 'service.mysql.configure');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(controller);
+      expect(args[0].data).to.be.eql({
+        host: 'host2'
+      });
+    });
+  });
+
+  describe("#startRequiredServices()", function() {
+    beforeEach(function () {
+      sinon.stub(controller, 'startServices', Em.K);
+    });
+    afterEach(function () {
+      controller.startServices.restore();
+    });
+    it("component has related services", function() {
+      controller.set('content.reassign.component_name', 'JOBTRACKER');
+      controller.startRequiredServices();
+      expect(controller.startServices.calledWith(false, ['PIG', 'OOZIE'], true)).to.be.true;
+    });
+    it("component does not have related services", function() {
+      controller.set('content.reassign.component_name', 'C1');
+      controller.startRequiredServices();
+      expect(controller.startServices.calledWith(true)).to.be.true;
+    });
+  });
+
+  describe("#startMySqlServer()", function() {
+    beforeEach(function () {
+      sinon.stub(App.HostComponent, 'find').returns([
+        Em.Object.create({
+          componentName: 'MYSQL_SERVER',
+          hostName: 'host1'
+        })
+      ]);
+    });
+    afterEach(function () {
+      App.HostComponent.find.restore();
+    });
+    it("valid request is sent", function() {
+      controller.startMySqlServer();
+      var args = testHelpers.findAjaxRequest('name', 'common.host.host_component.update');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(controller);
+      expect(args[0].data).to.be.eql({
+        context: "Start MySQL Server",
+        hostName: 'host1',
+        serviceName: "HIVE",
+        componentName: "MYSQL_SERVER",
+        HostRoles: {
+          state: "STARTED"
+        }
+      });
+    });
+  });
+
+  describe("#restartMySqlServer()", function() {
+    beforeEach(function () {
+      sinon.stub(App.HostComponent, 'find').returns([
+        Em.Object.create({
+          componentName: 'MYSQL_SERVER',
+          hostName: 'host1'
+        })
+      ]);
+    });
+    afterEach(function () {
+      App.HostComponent.find.restore();
+    });
+    it("valid request is sent", function() {
+      controller.set('content', Em.Object.create({
+        cluster: Em.Object.create({
+          name: 'cl1'
+        })
+      }));
+      controller.restartMySqlServer();
+      var args = testHelpers.findAjaxRequest('name', 'restart.hostComponents');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(controller);
+      expect(args[0].data).to.be.eql({
+        context: 'Restart MySql Server',
+        resource_filters: [{
+          component_name: "MYSQL_SERVER",
+          hosts: 'host1',
+          service_name: "HIVE"
+        }],
+        operation_level: {
+          level: "HOST_COMPONENT",
+          cluster_name: 'cl1',
+          service_name: "HIVE",
+          hostcomponent_name: "MYSQL_SERVER"
+        }
+      });
+    });
+  });
+
+  describe("#startNewMySqlServer()", function() {
+
+    beforeEach(function () {
+      controller.set('content', Em.Object.create({
+        reassignHosts: Em.Object.create({
+          target: 'host1'
+        })
+      }));
+      controller.startNewMySqlServer();
+      this.args = testHelpers.findAjaxRequest('name', 'common.host.host_component.update');
+    });
+
+    it('valid request is sent', function() {
+      expect(this.args[0]).exists;
+      expect(this.args[0].sender).to.be.eql(controller);
+      expect(this.args[0].data).to.be.eql({
+        context: "Start MySQL Server",
+        hostName: 'host1',
+        serviceName: "HIVE",
+        componentName: "MYSQL_SERVER",
+        HostRoles: {
+          state: "STARTED"
+        }
+      });
+    });
+  });
+
+  describe("#setDynamicConfigs HIVE", function() {
+    beforeEach(function () {
+      controller.set('content.masterComponentHosts', [
+        {component: 'HIVE_METASTORE', hostName: 'host1'},
+        {component: 'HIVE_METASTORE', hostName: 'host3'},
+        {component: 'HIVE_SERVER', hostName: 'host4'}
+      ]);
+      controller.set('content.reassignHosts.source', 'host1');
+      controller.set('content.reassignHosts.target', 'host2');
+    });
+    it("reassign component is HIVE_METASTORE", function() {
+      var configs = {
+        'hive-env': {
+          'hive_user': 'hive_user'
+        },
+        'hive-site': {
+          'hive.metastore.uris': ''
+        },
+        'webhcat-site': {
+          'templeton.hive.properties': 'thrift'
+        },
+        'core-site': {
+          'hadoop.proxyuser.hive_user.hosts': ''
+        }
+      };
+      App.MoveHmConfigInitializer.setup(controller._getHiveInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveHmConfigInitializer);
+      expect(configs['hive-site']['hive.metastore.uris']).to.equal('thrift://host3:9083,thrift://host2:9083');
+      expect(configs['webhcat-site']['templeton.hive.properties']).to.equal('thrift');
+      expect(configs['core-site']['hadoop.proxyuser.hive_user.hosts']).to.equal('host2,host3,host4');
+    });
+
+    it("reassign component is HIVE_SERVER", function() {
+      controller.get('content.masterComponentHosts').pushObject({component: 'HIVE_SERVER', hostName: 'host1'});
+      var configs = {
+        'hive-env': {
+          'hive_user': 'hive_user'
+        },
+        'hive-site': {
+          'hive.metastore.uris': ''
+        },
+        'webhcat-site': {
+          'templeton.hive.properties': 'thrift'
+        },
+        'core-site': {
+          'hadoop.proxyuser.hive_user.hosts': ''
+        }
+      };
+      App.MoveHsConfigInitializer.setup(controller._getHiveInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveHsConfigInitializer);
+      expect(configs['core-site']['hadoop.proxyuser.hive_user.hosts']).to.equal('host1,host2,host3,host4');
+    });
+
+    it("reassign component is WEBHCAT_SERVER", function() {
+      controller.get('content.masterComponentHosts').pushObject({component: 'WEBHCAT_SERVER', hostName: 'host1'});
+      var configs = {
+        'hive-env': {
+          'webhcat_user': 'webhcat_user'
+        },
+        'hive-site': {
+          'hive.metastore.uris': ''
+        },
+        'webhcat-site': {
+          'templeton.hive.properties': 'thrift'
+        },
+        'core-site': {
+          'hadoop.proxyuser.webhcat_user.hosts': ''
+        }
+      };
+      App.MoveWsConfigInitializer.setup(controller._getWsInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveWsConfigInitializer);
+      expect(configs['core-site']['hadoop.proxyuser.webhcat_user.hosts']).to.equal('host2');
+    });
+  });
+
+  describe('#setDynamicConfigs RESOURCEMANAGER', function () {
+    beforeEach(function () {
+      sinon.stub(App, 'get').withArgs('isRMHaEnabled').returns(true);
+    });
+    afterEach(function () {
+      App.get.restore();
+      App.MoveRmConfigInitializer.cleanup();
+    });
+
+    it('HA enabled and resource manager 1', function () {
+      controller.set('content.reassignHosts.source', 'host1');
+      controller.set('content.reassignHosts.target', 'host3');
+      var configs = {
+        'yarn-site': {
+          'yarn.resourcemanager.hostname.rm1': 'host1',
+          'yarn.resourcemanager.webapp.address.rm1': 'host1:8088',
+          'yarn.resourcemanager.webapp.https.address.rm1': 'host1:8443',
+          'yarn.resourcemanager.hostname.rm2': 'host2',
+          'yarn.resourcemanager.webapp.address.rm2': 'host2:8088',
+          'yarn.resourcemanager.webapp.https.address.rm2': 'host2:8443'
+        }
+      };
+      var additionalDependencies = controller._getRmAdditionalDependencies(configs);
+      App.MoveRmConfigInitializer.setup(controller._getRmInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveRmConfigInitializer, additionalDependencies);
+      expect(configs['yarn-site']).to.eql({
+        'yarn.resourcemanager.hostname.rm1': 'host3',
+        'yarn.resourcemanager.webapp.address.rm1': 'host3:8088',
+        'yarn.resourcemanager.webapp.https.address.rm1': 'host3:8443',
+        'yarn.resourcemanager.hostname.rm2': 'host2',
+        'yarn.resourcemanager.webapp.address.rm2': 'host2:8088',
+        'yarn.resourcemanager.webapp.https.address.rm2': 'host2:8443'
+      });
+    });
+
+    it('HA enabled and resource manager 2', function () {
+      controller.set('content.reassignHosts.source', 'host2');
+      controller.set('content.reassignHosts.target', 'host3');
+      var configs = {
+        'yarn-site': {
+          'yarn.resourcemanager.hostname.rm1': 'host1',
+          'yarn.resourcemanager.webapp.address.rm1': 'host1:8088',
+          'yarn.resourcemanager.webapp.https.address.rm1': 'host1:8443',
+          'yarn.resourcemanager.hostname.rm2': 'host2',
+          'yarn.resourcemanager.webapp.address.rm2': 'host2:8088',
+          'yarn.resourcemanager.webapp.https.address.rm2': 'host2:8443'
+        }
+      };
+      var additionalDependencies = controller._getRmAdditionalDependencies(configs);
+      App.MoveRmConfigInitializer.setup(controller._getRmInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveRmConfigInitializer, additionalDependencies);
+
+      expect(configs['yarn-site']).to.eql({
+        'yarn.resourcemanager.hostname.rm1': 'host1',
+        'yarn.resourcemanager.webapp.address.rm1': 'host1:8088',
+        'yarn.resourcemanager.webapp.https.address.rm1': 'host1:8443',
+        'yarn.resourcemanager.hostname.rm2': 'host3',
+        'yarn.resourcemanager.webapp.address.rm2': 'host3:8088',
+        'yarn.resourcemanager.webapp.https.address.rm2': 'host3:8443'
+      });
+    });
+  });
+
+  describe('#setDynamicConfigs NAMENODE', function () {
+    var isHaEnabled = false;
+
+    beforeEach(function () {
+      sinon.stub(App, 'get', function () {
+        return isHaEnabled;
+      });
+      sinon.stub(App.Service, 'find', function () {
+        return [
+          {serviceName: 'HDFS'},
+          {serviceName: 'ACCUMULO'},
+          {serviceName: 'HBASE'},
+          {serviceName: 'HAWQ'}
+        ];
+      });
+      controller.set('content.reassignHosts.source', 'host1');
+    });
+
+    afterEach(function () {
+      App.get.restore();
+      App.Service.find.restore();
+      App.MoveNameNodeConfigInitializer.cleanup();
+    });
+
+    it('HA isn\'t enabled and HBASE, HAWQ and ACCUMULO service', function () {
+      isHaEnabled = false;
+      var configs = {
+        'hbase-site': {
+          'hbase.rootdir': 'hdfs://localhost:8020/apps/hbase/data'
+        },
+        'accumulo-site': {
+          'instance.volumes': 'hdfs://localhost:8020/apps/accumulo/data',
+          'instance.volumes.replacements': ''
+        },
+        'hawq-site': {
+          'hawq_dfs_url': 'localhost:8020/hawq/data'
+        }
+      };
+
+      controller.set('content.reassignHosts.target', 'host2');
+
+      App.MoveNameNodeConfigInitializer.setup(controller._getNnInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveNameNodeConfigInitializer);
+
+      expect(configs['hbase-site']['hbase.rootdir']).to.equal('hdfs://host2:8020/apps/hbase/data');
+      expect(configs['accumulo-site']['instance.volumes']).to.equal('hdfs://host2:8020/apps/accumulo/data');
+      expect(configs['accumulo-site']['instance.volumes.replacements']).to.equal('hdfs://host1:8020/apps/accumulo/data hdfs://host2:8020/apps/accumulo/data');
+      expect(configs['hawq-site'].hawq_dfs_url).to.equal('host2:8020/hawq/data');
+    });
+
+    it('HA enabled and namenode 1', function () {
+      isHaEnabled = true;
+      var configs = {
+        'hdfs-site': {
+          'dfs.nameservices': 's',
+          'dfs.namenode.http-address.s.nn1': 'host1:50070',
+          'dfs.namenode.https-address.s.nn1': 'host1:50470',
+          'dfs.namenode.rpc-address.s.nn1': 'host1:8020'
+        },
+        'hdfs-client': {
+          'dfs.namenode.rpc-address.s.nn1': '',
+          'dfs.namenode.http-address.s.nn1': 'host1:50070'
+        }
+      };
+
+      controller.set('content.reassignHosts.target', 'host2');
+      App.MoveNameNodeConfigInitializer.setup(controller._getNnInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveNameNodeConfigInitializer);
+      expect(configs['hdfs-site']).to.eql({
+        "dfs.nameservices": "s",
+        "dfs.namenode.http-address.s.nn1": "host2:50070",
+        "dfs.namenode.https-address.s.nn1": "host2:50470",
+        "dfs.namenode.rpc-address.s.nn1": "host2:8020"
+      });
+      expect(configs['hdfs-client']).to.eql({
+        "dfs.namenode.http-address.s.nn1": "host2:50070",
+        "dfs.namenode.rpc-address.s.nn1": "host2:8020"
+      });
+    });
+
+    it('HA enabled and namenode 2', function () {
+      isHaEnabled = true;
+      var configs = {
+        'hdfs-site': {
+          'dfs.nameservices': 's',
+          "dfs.namenode.http-address.s.nn1": "host1:50070",
+          'dfs.namenode.http-address.s.nn2': 'host2:50070',
+          'dfs.namenode.https-address.s.nn2': 'host2:50470',
+          'dfs.namenode.rpc-address.s.nn2': 'host2:8020'
+        },
+        'hdfs-client': {
+          'dfs.namenode.rpc-address.s.nn2': '',
+          'dfs.namenode.http-address.s.nn2': 'host2:50070'
+        }
+      };
+      controller.set('content.reassignHosts.source', 'host2');
+      controller.set('content.reassignHosts.target', 'host3');
+
+      App.MoveNameNodeConfigInitializer.setup(controller._getNnInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveNameNodeConfigInitializer);
+
+      expect(configs['hdfs-site']).to.eql({
+        "dfs.nameservices": "s",
+        "dfs.namenode.http-address.s.nn1": "host1:50070",
+        "dfs.namenode.http-address.s.nn2": "host3:50070",
+        "dfs.namenode.https-address.s.nn2": "host3:50470",
+        "dfs.namenode.rpc-address.s.nn2": "host3:8020"
+      });
+      expect(configs['hdfs-client']).to.eql({
+        "dfs.namenode.http-address.s.nn2": "host3:50070",
+        "dfs.namenode.rpc-address.s.nn2": "host3:8020"
+      });
+    });
+
+  });
+
+  describe('#setDynamicConfigs OOZIE_SERVER', function () {
+
+    it('should upodate hadoop.proxyuser.${oozie_user}.hosts', function () {
+
+      var configs = {
+        'oozie-env': {
+          'oozie_user': 'cool_dude'
+        },
+        'core-site': {
+          'hadoop.proxyuser.cool_dude.hosts': ''
+        }
+      };
+
+      controller.set('content.masterComponentHosts', [
+        {component: 'OOZIE_SERVER', hostName: 'host2'},
+        {component: 'OOZIE_SERVER', hostName: 'host3'},
+        {component: 'OOZIE_SERVER', hostName: 'host1'}
+      ]);
+
+      controller.set('content.reassignHosts.source', 'host1');
+      controller.set('content.reassignHosts.target', 'host4');
+
+      App.MoveOSConfigInitializer.setup(controller._getOsInitializerSettings(configs));
+      configs = controller.setDynamicConfigs(configs, App.MoveOSConfigInitializer);
+      App.MoveOSConfigInitializer.cleanup();
+
+      expect(configs['core-site']['hadoop.proxyuser.cool_dude.hosts']).to.equal('host2,host3,host4');
+
+    });
+
+  });
+
+  describe.skip("#prepareDBCheckAction()", function() {
+    beforeEach(function () {
+      sinon.stub(App.router, 'get').returns({
+        'jdk_location': 'jdk_location',
+        'jdk.name': 'jdk.name',
+        'java.home': 'java.home'
+      });
+      sinon.stub(controller, 'getConnectionProperty').returns('prop1');
+      controller.set('content.reassignHosts', Em.Object.create({target: 'host1'}));
+      controller.reopen({
+        dbType: 'type1',
+        requiredProperties: [],
+        preparedDBProperties: {}
+      });
+      controller.prepareDBCheckAction();
+      this.args = testHelpers.findAjaxRequest('name', 'cluster.custom_action.create');
+    });
+    afterEach(function () {
+      App.router.get.restore();
+      controller.getConnectionProperty.restore();
+    });
+    it('valid request is sent', function () {
+      expect(this.args[0]).exists;
+      expect(this.args[0].data).to.eql({
+        requestInfo: {
+          "context": "Check host",
+          "action": "check_host",
+          "parameters": {
+            "db_name": "type1",
+            "jdk_location": "jdk_location",
+            "jdk_name": "jdk.name",
+            "java_home": "java.home",
+            "threshold": 60,
+            "ambari_server_host": "",
+            "check_execute_list": "db_connection_check"
+          }
+        },
+        filteredHosts: ['host1']
+      });
+    });
   });
 });

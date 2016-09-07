@@ -19,12 +19,13 @@ limitations under the License.
 
 from kerberos_common import *
 from resource_management.libraries.functions.security_commons import cached_kinit_executor
+from resource_management.core.exceptions import ClientComponentHasNoStatus
 
 class KerberosClient(KerberosScript):
   def install(self, env):
     install_packages = default('/configurations/kerberos-env/install_packages', "true")
     if install_packages:
-      self.install_packages(env, ['krb5-server', 'krb5-libs', 'krb5-auth-dialog', 'krb5', 'krb5-kdc', 'krb5-admin-server'])
+      self.install_packages(env)
     else:
       print "Kerberos client packages are not being installed, manual installation is required."
 
@@ -36,6 +37,8 @@ class KerberosClient(KerberosScript):
     env.set_params(params)
     if params.manage_krb5_conf:
       self.write_krb5_conf()
+    #delete krb cache to prevent using old krb tickets on fresh kerberos setup
+    self.clear_tmp_cache()
 
     self.setup_jce()
 

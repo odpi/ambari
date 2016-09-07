@@ -18,55 +18,54 @@ limitations under the License.
 
 """
 
-from resource_management import *
-from resource_management.libraries.functions import conf_select
-from resource_management.libraries.functions import hdp_select
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions import conf_select, stack_select
+from resource_management.libraries.functions.constants import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
 from slider import slider
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
+from resource_management.core.exceptions import ClientComponentHasNoStatus
 
 class SliderClient(Script):
+  def status(self, env):
+    raise ClientComponentHasNoStatus()
 
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-  def get_stack_to_component(self):
-    return {"HDP": "slider-client"}
+@OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
+class SliderClientLinux(SliderClient):
+  def get_component_name(self):
+    return "slider-client"
 
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
-  def pre_rolling_restart(self, env):
+  def pre_upgrade_restart(self, env,  upgrade_type=None):
     import params
     env.set_params(params)
 
-    if params.version and compare_versions(format_hdp_stack_version(params.version), '2.2.0.0') >= 0:
+    if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version):
       conf_select.select(params.stack_name, "slider", params.version)
-      hdp_select.select("slider-client", params.version)
+      stack_select.select("slider-client", params.version)
 
       # also set all of the hadoop clients since slider client is upgraded as
       # part of the final "CLIENTS" group and we need to ensure that
       # hadoop-client is also set
       conf_select.select(params.stack_name, "hadoop", params.version)
-      hdp_select.select("hadoop-client", params.version)
+      stack_select.select("hadoop-client", params.version)
 
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
   def install(self, env):
     self.install_packages(env)
     self.configure(env)
 
-  @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
-  def install(self, env):
-    import params
-    if params.slider_home is None:
-      self.install_packages(env)
-    self.configure(env)
-
-  @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
   def configure(self, env):
     import params
     env.set_params(params)
     slider()
 
-  def status(self, env):
-    raise ClientComponentHasNoStatus()
-
+@OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
+class SliderClientWindows(SliderClient):
+  def install(self, env):
+    import params
+    if params.slider_home is None:
+      self.install_packages(env)
+    self.configure(env)
 
 if __name__ == "__main__":
   SliderClient().execute()

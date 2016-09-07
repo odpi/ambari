@@ -21,9 +21,12 @@ limitations under the License.
 import urllib2
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import logging
+import traceback
 
 from ambari_commons.urllib_handlers import RefreshHeaderProcessor
 from resource_management.libraries.functions.curl_krb_request import curl_krb_request
+from resource_management.libraries.functions.curl_krb_request import DEFAULT_KERBEROS_KINIT_TIMER_MS
+from resource_management.libraries.functions.curl_krb_request import KERBEROS_KINIT_TIMER_PARAMETER
 from resource_management.core.environment import Environment
 
 ERROR_LABEL = '{0} NodeManager{1} {2} unhealthy.'
@@ -42,7 +45,10 @@ EXECUTABLE_SEARCH_PATHS = '{{kerberos-env/executable_search_paths}}'
 CONNECTION_TIMEOUT_KEY = 'connection.timeout'
 CONNECTION_TIMEOUT_DEFAULT = 5.0
 
-logger = logging.getLogger()
+LOGGER_EXCEPTION_MESSAGE = "[Alert] NodeManager Health Summary on {0} fails:"
+logger = logging.getLogger('ambari_alerts')
+
+QRY = "Hadoop:service=ResourceManager,name=RMNMInfo"
 
 def get_tokens():
   """
@@ -105,6 +111,8 @@ def execute(configurations={}, parameters={}, host_name=None):
   if CONNECTION_TIMEOUT_KEY in parameters:
     connection_timeout = float(parameters[CONNECTION_TIMEOUT_KEY])
 
+  kinit_timer_ms = parameters.get(KERBEROS_KINIT_TIMER_PARAMETER, DEFAULT_KERBEROS_KINIT_TIMER_MS)
+
   # determine the right URI and whether to use SSL
   uri = http_uri
   if http_policy == 'HTTPS_ONLY':
@@ -114,7 +122,7 @@ def execute(configurations={}, parameters={}, host_name=None):
       uri = https_uri
 
   uri = str(host_name) + ":" + uri.split(":")[1]
-  live_nodemanagers_qry = "{0}://{1}/jmx?qry=Hadoop:service=ResourceManager,name=RMNMInfo".format(scheme, uri)
+  live_nodemanagers_qry = "{0}://{1}/jmx?qry={2}".format(scheme, uri, QRY)
   convert_to_json_failed = False
   response_code = None
   try:
@@ -126,21 +134,22 @@ def execute(configurations={}, parameters={}, host_name=None):
 
       url_response, error_msg, time_millis  = curl_krb_request(env.tmp_dir, kerberos_keytab, kerberos_principal,
         live_nodemanagers_qry, "nm_health_summary_alert", executable_paths, False,
-        "NodeManager Health Summary", smokeuser, connection_timeout=curl_connection_timeout)
+        "NodeManager Health Summary", smokeuser, connection_timeout=curl_connection_timeout,
+        kinit_timer_ms = kinit_timer_ms)
 
       try:
         url_response_json = json.loads(url_response)
-        live_nodemanagers = json.loads(url_response_json["beans"][0]["LiveNodeManagers"])
+        live_nodemanagers = json.loads(find_value_in_jmx(url_response_json, "LiveNodeManagers", live_nodemanagers_qry))
       except ValueError, error:
         convert_to_json_failed = True
-        if logger.isEnabledFor(logging.DEBUG):
-          logger.exception("[Alert][{0}] Convert response to json failed or json doesn't contain needed data: {1}".
-          format("NodeManager Health Summary", str(error)))
+        logger.exception("[Alert][{0}] Convert response to json failed or json doesn't contain needed data: {1}".
+        format("NodeManager Health Summary", str(error)))
 
       if convert_to_json_failed:
         response_code, error_msg, time_millis  = curl_krb_request(env.tmp_dir, kerberos_keytab, kerberos_principal,
           live_nodemanagers_qry, "nm_health_summary_alert", executable_paths, True,
-          "NodeManager Health Summary", smokeuser, connection_timeout=curl_connection_timeout)
+          "NodeManager Health Summary", smokeuser, connection_timeout=curl_connection_timeout,
+          kinit_timer_ms = kinit_timer_ms)
     else:
       live_nodemanagers = json.loads(get_value_from_jmx(live_nodemanagers_qry,
       "LiveNodeManagers", connection_timeout))
@@ -169,8 +178,8 @@ def execute(configurations={}, parameters={}, host_name=None):
       else:
         label = ERROR_LABEL.format(unhealthy_count, 's', 'are')
 
-  except Exception, e:
-    label = str(e)
+  except:
+    label = traceback.format_exc()
     result_code = 'UNKNOWN'
 
   return (result_code, [label])
@@ -187,10 +196,24 @@ def get_value_from_jmx(query, jmx_property, connection_timeout):
 
     data = response.read()
     data_dict = json.loads(data)
-    return data_dict["beans"][0][jmx_property]
+    return find_value_in_jmx(data_dict, jmx_property, query)
   finally:
     if response is not None:
       try:
         response.close()
       except:
         pass
+
+
+def find_value_in_jmx(data_dict, jmx_property, query):
+  json_data = data_dict["beans"][0]
+
+  if jmx_property not in json_data:
+    beans = data_dict['beans']
+    for jmx_prop_list_item in beans:
+      if "name" in jmx_prop_list_item and jmx_prop_list_item["name"] == QRY:
+        if jmx_property not in jmx_prop_list_item:
+          raise Exception("Unable to find {0} in JSON from {1} ".format(jmx_property, query))
+        json_data = jmx_prop_list_item
+
+  return json_data[jmx_property]

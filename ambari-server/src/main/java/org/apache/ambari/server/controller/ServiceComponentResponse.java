@@ -19,6 +19,8 @@
 package org.apache.ambari.server.controller;
 
 
+import java.util.Map;
+
 public class ServiceComponentResponse {
 
   private Long clusterId; // REF
@@ -29,36 +31,36 @@ public class ServiceComponentResponse {
 
   private String componentName;
 
+  private String displayName;
+
   private String desiredStackVersion;
 
   private String desiredState;
 
   private String category;
 
-  private int totalCount;
+  Map<String, Integer> serviceComponentStateCount;
 
-  private int startedCount;
-
-  private int installedCount;
+  private boolean recoveryEnabled;
 
   public ServiceComponentResponse(Long clusterId, String clusterName,
                                   String serviceName,
                                   String componentName,
                                   String desiredStackVersion,
                                   String desiredState,
-                                  int totalCount,
-                                  int startedCount,
-                                  int installedCount) {
+                                  Map<String, Integer> serviceComponentStateCount,
+                                  boolean recoveryEnabled,
+                                  String displayName) {
     super();
     this.clusterId = clusterId;
     this.clusterName = clusterName;
     this.serviceName = serviceName;
     this.componentName = componentName;
+    this.displayName = displayName;
     this.desiredStackVersion = desiredStackVersion;
     this.desiredState = desiredState;
-    this.totalCount = totalCount;
-    this.startedCount = startedCount;
-    this.installedCount = installedCount;
+    this.serviceComponentStateCount = serviceComponentStateCount;
+    this.recoveryEnabled = recoveryEnabled;
   }
 
   /**
@@ -87,6 +89,13 @@ public class ServiceComponentResponse {
    */
   public void setComponentName(String componentName) {
     this.componentName = componentName;
+  }
+
+  /**
+   * @return the displayName
+   */
+  public String getDisplayName() {
+    return displayName;
   }
 
   /**
@@ -164,51 +173,27 @@ public class ServiceComponentResponse {
   }
 
   /**
-   * Get the number of started SCH's
-   * @return number of started SCH's
+   * Get the count of service component for each state
+   * @return number of service component for each state
    */
-  public int getStartedCount() {
-    return startedCount;
+  public Map<String, Integer> getServiceComponentStateCount() {
+    return serviceComponentStateCount;
   }
 
   /**
-   * Set the number of started SCH's
-   * @param startedCount
+   * Get a true or false value indicating if the service component is auto start enabled
+   * @return true or false
    */
-  public void setStartedCount(int startedCount) {
-    this.startedCount = startedCount;
+  public boolean isRecoveryEnabled() {
+    return recoveryEnabled;
   }
 
   /**
-   * Get the number of installed SCH's
-   * @return number of installed SCH's
+   * Set a true or false value indicating whether the service component is auto start enabled
+   * @param recoveryEnabled
    */
-  public int getInstalledCount() {
-    return installedCount;
-  }
-
-  /**
-   * Set the number of installed SCH's
-   * @param installedCount
-   */
-  public void setInstalledCount(int installedCount) {
-    this.installedCount = installedCount;
-  }
-
-  /**
-   * Get the total number of SCH's
-   * @return
-   */
-  public int getTotalCount() {
-    return totalCount;
-  }
-
-  /**
-   * Set the total number of SCH's
-   * @param totalCount
-   */
-  public void setTotalCount(int totalCount) {
-    this.totalCount = totalCount;
+  public void setRecoveryEnabled(boolean recoveryEnabled) {
+    this.recoveryEnabled = recoveryEnabled;
   }
 
   @Override

@@ -24,35 +24,39 @@ import os
 import re
 from alerts.base_alert import BaseAlert
 from resource_management.core.environment import Environment
-from resource_management.core.logger import Logger
+from resource_management.libraries.functions.curl_krb_request import KERBEROS_KINIT_TIMER_PARAMETER
 from ambari_agent import Constants
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ambari_alerts")
 
 class ScriptAlert(BaseAlert):
+
   def __init__(self, alert_meta, alert_source_meta, config):
+
     """ ScriptAlert reporting structure is output from the script itself """
-    
+
     alert_source_meta['reporting'] = {
       'ok': { 'text': '{0}' },
       'warning': { 'text': '{0}' },
       'critical': { 'text': '{0}' },
       'unknown': { 'text': '{0}' }
     }
-    
-    super(ScriptAlert, self).__init__(alert_meta, alert_source_meta)
-    
-    self.config = config
+
+    super(ScriptAlert, self).__init__(alert_meta, alert_source_meta, config)
+
     self.path = None
     self.stacks_dir = None
     self.common_services_dir = None
     self.host_scripts_dir = None
     self.path_to_script = None
     self.parameters = {}
-    
+
+    # will force a kinit even if klist says there are valid tickets (4 hour default)
+    self.kinit_timeout = long(config.get('agent', 'alert_kinit_timeout', BaseAlert._DEFAULT_KINIT_TIMEOUT))
+
     if 'path' in alert_source_meta:
       self.path = alert_source_meta['path']
-      
+
     if 'common_services_directory' in alert_source_meta:
       self.common_services_dir = alert_source_meta['common_services_directory']
 
@@ -74,6 +78,9 @@ class ScriptAlert(BaseAlert):
         parameter_name = parameter['name']
         parameter_value = parameter['value']
         self.parameters[parameter_name] = parameter_value
+
+    # pass in some basic parameters to the scripts
+    self.parameters[KERBEROS_KINIT_TIMER_PARAMETER] = self.kinit_timeout
 
   def _collect(self):
     cmd_module = self._load_source()
@@ -100,13 +107,23 @@ class ScriptAlert(BaseAlert):
       matchObj = re.match( r'((.*)services(.*)package)', self.path_to_script)
       if matchObj:
         basedir = matchObj.group(1)
-        with Environment(basedir, tmp_dir=Constants.AGENT_TMP_DIR) as env:
-          return cmd_module.execute(configurations, self.parameters, self.host_name)
+        with Environment(basedir, tmp_dir=Constants.AGENT_TMP_DIR, logger=logging.getLogger('ambari_alerts')) as env:
+          result = cmd_module.execute(configurations, self.parameters, self.host_name)
       else:
-        return cmd_module.execute(configurations, self.parameters, self.host_name)
+        result = cmd_module.execute(configurations, self.parameters, self.host_name)
+
+      loggerMsg = "[Alert][{0}] Failed with result {2}: {3}".format(
+        self.get_name(), self.path_to_script, result[0], result[1])
+
+      if result[0] == self.RESULT_CRITICAL:
+        logger.error(loggerMsg)
+      elif result[0] == self.RESULT_WARNING or result[0] == self.RESULT_UNKNOWN:
+        logger.debug(loggerMsg)
+
+      return result
     else:
       return (self.RESULT_UNKNOWN, ["Unable to execute script {0}".format(self.path)])
-    
+
 
   def _load_source(self):
     if self.path is None and self.stack_path is None and self.host_scripts_dir is None:
@@ -114,7 +131,7 @@ class ScriptAlert(BaseAlert):
 
     paths = self.path.split('/')
     self.path_to_script = self.path
-    
+
     # if the path doesn't exist and stacks dir is defined, try that
     if not os.path.exists(self.path_to_script) and self.stacks_dir is not None:
       self.path_to_script = os.path.join(self.stacks_dir, *paths)
@@ -127,7 +144,7 @@ class ScriptAlert(BaseAlert):
     if not os.path.exists(self.path_to_script) and self.host_scripts_dir is not None:
       self.path_to_script = os.path.join(self.host_scripts_dir, *paths)
 
-    # if the path can't be evaluated, throw exception      
+    # if the path can't be evaluated, throw exception
     if not os.path.exists(self.path_to_script) or not os.path.isfile(self.path_to_script):
       raise Exception(
         "Unable to find '{0}' as an absolute path or part of {1} or {2}".format(self.path,

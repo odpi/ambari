@@ -44,14 +44,14 @@ def to_number(s):
   except ValueError:
     return None
 
-def format_Xmx_size_to_bytes(value):
+def format_Xmx_size_to_bytes(value, default='b'):
   strvalue = str(value).lower()
   if len(strvalue) == 0:
     return 0
   modifier = strvalue[-1]
 
   if modifier == ' ' or modifier in "0123456789":
-    modifier = 'b'
+    modifier = default
 
   m = {
     modifier == 'b': b_bytes,
@@ -88,29 +88,30 @@ class FindSplitPointsForAMSRegions():
 
   def initialize_region_counts(self):
     try:
-      xmx_master_bytes = format_Xmx_size_to_bytes(self.ams_hbase_env['hbase_master_heapsize'])
+      xmx_master_bytes = format_Xmx_size_to_bytes(self.ams_hbase_env['hbase_master_heapsize'], 'm')
       xmx_region_bytes = 0
       if "hbase_regionserver_heapsize" in self.ams_hbase_env:
-        xmx_region_bytes = format_Xmx_size_to_bytes(self.ams_hbase_env['hbase_regionserver_heapsize'])
+        xmx_region_bytes = format_Xmx_size_to_bytes(self.ams_hbase_env['hbase_regionserver_heapsize'], 'm')
       xmx_bytes = xmx_master_bytes + xmx_region_bytes
       if self.mode == 'distributed':
         xmx_bytes = xmx_region_bytes
 
-      memstore_max_mem = float(self.ams_hbase_site['hbase.regionserver.global.memstore.lowerLimit']) * xmx_bytes
+      memstore_max_mem = float(self.ams_hbase_site['hbase.regionserver.global.memstore.upperLimit']) * xmx_bytes
       memstore_flush_size = format_Xmx_size_to_bytes(self.ams_hbase_site['hbase.hregion.memstore.flush.size'])
 
       max_inmemory_regions = (memstore_max_mem / memstore_flush_size) - other_region_static_count
       print 'max_inmemory_regions: %s' % max_inmemory_regions
 
       if max_inmemory_regions > 2:
-        # Lets say total = 12, so we have 7 regions to allocate between
-        # METRIC_RECORD and METRIC_AGGREGATE tables, desired = (5, 2)
-        self.desired_precision_region_count = int(math.floor(0.8 * max_inmemory_regions))
-        self.desired_aggregate_region_count = int(max_inmemory_regions - self.desired_precision_region_count)
+        # Lets say total = 25, so we have 20 regions to allocate between
+        # METRIC_RECORD, METRIC_AGGREGATE & METRIC_RECORD_MINUTE tables, desired = (14, 3, 3)
+        # 70 % to METRIC_RECORD
+        self.desired_precision_region_count = max(2, int(math.floor(0.70 * max_inmemory_regions)))
+        # 15% each to METRIC_AGGREGATE & METRIC_RECORD_MINUTE
+        self.desired_aggregate_region_count = max(2, int(math.floor(0.15 * max_inmemory_regions)))
       else:
-        self.desired_precision_region_count = 1
-        self.desired_aggregate_region_count = 1
-
+        self.desired_precision_region_count = 2
+        self.desired_aggregate_region_count = 2
     except:
       print('Bad config settings, could not calculate max regions available.')
     pass

@@ -47,6 +47,8 @@ public class StackServiceResponse {
 
   private List<String> requiredServices;
 
+  private Map<String, String> serviceProperties;
+
   /**
    * A File pointing to the service-level Kerberos descriptor file
    *
@@ -84,6 +86,8 @@ public class StackServiceResponse {
     }
 
     kerberosDescriptorFile = service.getKerberosDescriptorFile();
+
+    serviceProperties = service.getServiceProperties();
   }
 
   public String getStackName() {
@@ -109,7 +113,7 @@ public class StackServiceResponse {
   public void setServiceName(String serviceName) {
     this.serviceName = serviceName;
   }
-  
+
   public String getServiceType() {
 	return serviceType;
   }
@@ -157,7 +161,7 @@ public String getServiceDisplayName() {
   public Set<String> getExcludedConfigTypes() {
     return excludedConfigTypes;
   }
-  
+
   public List<String> getRequiredServices() {
     return requiredServices;
   }
@@ -207,4 +211,13 @@ public String getServiceDisplayName() {
   public List<String> getCustomCommands() {
     return customCommands;
   }
+
+  /**
+   * Get the service properties of this service.
+   * @return the properties or an empty map (never {@code null}).
+   */
+  public Map<String, String> getServiceProperties() {
+    return serviceProperties;
+  }
+
 }

@@ -23,13 +23,9 @@ App.ReassignMasterWizardStep3View = Em.View.extend({
 
   templateName: require('templates/main/service/reassign/step3'),
 
-  sourceHost: function(){
-    return this.get('controller.content.reassignHosts.source');
-  }.property('controller.content.reassignHosts.source'),
+  sourceHost: Em.computed.alias('controller.content.reassignHosts.source'),
 
-  targetHost: function(){
-    return this.get('controller.content.reassignHosts.target');
-  }.property('controller.content.reassignHosts.target'),
+  targetHost: Em.computed.alias('controller.content.reassignHosts.target'),
 
   printReview: function () {
     $("#step8-info").jqprint();
@@ -45,5 +41,5 @@ App.ReassignMasterWizardStep3View = Em.View.extend({
     }
 
     return false;
-  }.property('controller.content.reassign.display_name, controller.content.databaseType')
+  }.property('controller.content.reassign.display_name', 'controller.content.databaseType')
 });

@@ -53,6 +53,8 @@ module.exports = {
 
       classNames: [ 'sixty-percent-width-modal' ],
 
+      elementId: 'host-selection-dialog',
+
       header: popupDescription.header,
 
       dialogMessage: popupDescription.dialogMessage,
@@ -72,9 +74,7 @@ module.exports = {
         this.hide();
       },
 
-      disablePrimary: function () {
-        return !this.get('isLoaded');
-      }.property('isLoaded'),
+      disablePrimary: Em.computed.not('isLoaded'),
 
       onSecondary: function () {
         callback(null);
@@ -122,9 +122,7 @@ module.exports = {
 
         filterComponent: null,
 
-        isDisabled: function () {
-          return !this.get('parentView.isLoaded');
-        }.property('parentView.isLoaded'),
+        isDisabled: Em.computed.not('parentView.isLoaded'),
 
         didInsertElement: function() {
           var defaultFilterColumn = this.get('filterColumns').findProperty('selected');
@@ -153,15 +151,11 @@ module.exports = {
 
             host.set('filterColumnValue', value);
 
-            if (!skip && filterText) {
-              if ((value == null || !value.toString().match(filterText)) && !host.get('host.publicHostName').match(filterText)) {
-                skip = true;
-              }
+            if (!skip && filterText && (value == null || !value.toString().match(filterText)) && !host.get('host.publicHostName').match(filterText)) {
+              skip = true;
             }
-            if (!skip && filterComponent) {
-              if (hostComponentNames.length > 0) {
+            if (!skip && filterComponent && hostComponentNames.length > 0) {
                 skip = !hostComponentNames.contains(filterComponent.get('componentName'));
-              }
             }
             host.set('filtered', !skip);
           }, this);

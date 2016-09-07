@@ -47,14 +47,33 @@ public class StackServiceDirectory extends ServiceDirectory {
 
   @Override
   /**
-   * Parse stack service directory.
+   * Obtain the advisor name.
+   *
+   * @return advisor name
+   */
+  public String getAdvisorName(String serviceName) {
+    if (getAdvisorFile() == null || serviceName == null)
+      return null;
+
+    File serviceDir = new File(getAbsolutePath());
+    File stackVersionDir = serviceDir.getParentFile().getParentFile();
+    File stackDir = stackVersionDir.getParentFile();
+
+    String stackName = stackDir.getName();
+    String versionString = stackVersionDir.getName().replaceAll("\\.", "");
+
+    return stackName + versionString + serviceName + "ServiceAdvisor";
+  }
+
+  @Override
+  /**
+   * Calculate the stack service directories.
    * packageDir Format: stacks/<stackName>/<stackVersion>/services/<serviceName>/package
    * Example:
    *  directory: "/var/lib/ambari-server/resources/stacks/HDP/2.0.6/services/HDFS"
    *  packageDir: "stacks/HDP/2.0.6/services/HDFS/package"
-   * @throws AmbariException if unable to parse the service directory
    */
-  protected void parsePath() throws AmbariException {
+  protected void calculateDirectories() {
     File serviceDir = new File(getAbsolutePath());
     File stackVersionDir = serviceDir.getParentFile().getParentFile();
     File stackDir = stackVersionDir.getParentFile();
@@ -67,17 +86,34 @@ public class StackServiceDirectory extends ServiceDirectory {
       int fileCount = files.length;
       if (fileCount > 0) {
         packageDir = absPackageDir.getPath().substring(stackDir.getParentFile().getParentFile().getPath().length() + 1);
-        LOG.debug(String.format("Service package folder for service %s for stack %s has been resolved to %s",
-                serviceDir.getName(), stackId, packageDir));
+        LOG.debug("Service package folder for service %s for stack %s has been resolved to %s",
+                serviceDir.getName(), stackId, packageDir);
       }
       else {
-        LOG.debug(String.format("Service package folder %s for service %s for stack %s is empty.",
-                absPackageDir, serviceDir.getName(), stackId));
+        LOG.debug("Service package folder %s for service %s for stack %s is empty.",
+                absPackageDir, serviceDir.getName(), stackId);
       }
     } else {
-      LOG.debug(String.format("Service package folder %s for service %s for stack %s does not exist.",
-              absPackageDir, serviceDir.getName(), stackId));
+      LOG.debug("Service package folder %s for service %s for stack %s does not exist.",
+              absPackageDir, serviceDir.getName(), stackId);
     }
-    parseMetaInfoFile();
+
+    File absUpgradesDir = new File(getAbsolutePath() + File.separator + UPGRADES_FOLDER_NAME);
+    if (absUpgradesDir.isDirectory()) {
+      String[] files = absUpgradesDir.list();
+      int fileCount = files.length;
+      if (fileCount > 0) {
+        upgradesDir = absUpgradesDir;
+        LOG.debug("Service upgrades folder for service %s for stack %s has been resolved to %s",
+                serviceDir.getName(), stackId, packageDir);
+      }
+      else {
+        LOG.debug("Service upgrades folder %s for service %s for stack %s is empty.",
+                absUpgradesDir, serviceDir.getName(), stackId);
+      }
+    } else {
+      LOG.debug("Service upgrades folder %s for service %s for stack %s does not exist.",
+              absUpgradesDir, serviceDir.getName(), stackId);
+    }
   }
 }

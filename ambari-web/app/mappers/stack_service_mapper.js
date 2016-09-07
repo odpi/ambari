@@ -51,6 +51,11 @@ App.stackServiceMapper = App.QuickDataMapper.create({
     display_name: 'display_name',
     cardinality: 'cardinality',
     custom_commands: 'custom_commands',
+    reassign_allowed : 'reassign_allowed',
+    decommission_allowed: 'decommission_allowed',
+    has_bulk_commands_definition: 'has_bulk_commands_definition',
+    bulk_commands_display_name: 'bulk_commands_display_name',
+    bulk_commands_master_component_name: 'bulk_commands_master_component_name',
     service_name: 'service_name',
     component_category: 'component_category',
     is_master: 'is_master',
@@ -108,6 +113,9 @@ App.stackServiceMapper = App.QuickDataMapper.create({
       // @todo: replace with server response value after API implementation
       if (nonInstallableServices.contains(stackService.service_name)) {
         stackService.is_installable = false;
+        stackService.is_selected = false;
+      }
+      if (App.StackService.unSelectByDefault.contains(stackService.service_name)) {
         stackService.is_selected = false;
       }
       result.push(this.parseIt(stackService, this.get('config')));

@@ -18,21 +18,19 @@
 package org.apache.ambari.server.orm.dao;
 
 import java.text.MessageFormat;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 
 import javax.persistence.TypedQuery;
 
-import com.google.inject.persist.Transactional;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.orm.RequiresSession;
 import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.orm.entities.StackEntity;
+import org.apache.ambari.server.state.RepositoryType;
 import org.apache.ambari.server.state.StackId;
-import org.apache.ambari.server.utils.VersionUtils;
 
 import com.google.inject.Singleton;
+import com.google.inject.persist.Transactional;
 
 /**
  * DAO for repository versions.
@@ -45,6 +43,18 @@ public class RepositoryVersionDAO extends CrudDAO<RepositoryVersionEntity, Long>
    */
   public RepositoryVersionDAO() {
     super(RepositoryVersionEntity.class);
+  }
+
+
+  /**
+   * Creates entity.
+   *
+   * @param entity entity to create
+   */
+  @Override
+  @Transactional
+  public void create(RepositoryVersionEntity entity){
+    super.create(entity);
   }
 
   /**
@@ -129,15 +139,32 @@ public class RepositoryVersionDAO extends CrudDAO<RepositoryVersionEntity, Long>
    * @param stackEntity Stack entity.
    * @param version Stack version, e.g., 2.2 or 2.2.0.1-885
    * @param displayName Unique display name
-   * @param upgradePack Optional upgrade pack, e.g, upgrade-2.2
    * @param operatingSystems JSON structure of repository URLs for each OS
+   * @return Returns the object created if successful, and throws an exception otherwise.
+   * @throws AmbariException
+   */
+  public RepositoryVersionEntity create(StackEntity stackEntity,
+      String version, String displayName,
+      String operatingSystems) throws AmbariException {
+      return create(stackEntity, version, displayName, operatingSystems,
+          RepositoryType.STANDARD);
+  }
+
+  /**
+   * Validates and creates an object.
+   * The version must be unique within this stack name (e.g., HDP, HDPWIN, BIGTOP).
+   * @param stackEntity Stack entity.
+   * @param version Stack version, e.g., 2.2 or 2.2.0.1-885
+   * @param displayName Unique display name
+   * @param operatingSystems JSON structure of repository URLs for each OS
+   * @param type  the repository type
    * @return Returns the object created if successful, and throws an exception otherwise.
    * @throws AmbariException
    */
   @Transactional
   public RepositoryVersionEntity create(StackEntity stackEntity,
-      String version, String displayName, String upgradePack,
-      String operatingSystems) throws AmbariException {
+      String version, String displayName,
+      String operatingSystems, RepositoryType type) throws AmbariException {
 
     if (stackEntity == null || version == null || version.isEmpty()
         || displayName == null || displayName.isEmpty()) {
@@ -164,8 +191,21 @@ public class RepositoryVersionDAO extends CrudDAO<RepositoryVersionEntity, Long>
     }
 
     RepositoryVersionEntity newEntity = new RepositoryVersionEntity(
-        stackEntity, version, displayName, upgradePack, operatingSystems);
+        stackEntity, version, displayName, operatingSystems);
+    newEntity.setType(type);
     this.create(newEntity);
     return newEntity;
+  }
+
+  /**
+   * Retrieves repository version when they are loaded by a version definition file
+   *
+   * @return a list of entities, or an empty list when there are none
+   */
+  @RequiresSession
+  public List<RepositoryVersionEntity> findAllDefinitions() {
+    final TypedQuery<RepositoryVersionEntity> query = entityManagerProvider.get().createNamedQuery(
+        "repositoryVersionsFromDefinition", RepositoryVersionEntity.class);
+    return daoUtils.selectList(query);
   }
 }

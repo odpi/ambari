@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -36,9 +36,6 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
-
-import junit.framework.Assert;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.actionmanager.ActionDBAccessor;
@@ -60,6 +57,7 @@ import org.apache.ambari.server.state.scheduler.RequestExecution;
 import org.apache.ambari.server.state.scheduler.RequestExecutionFactory;
 import org.apache.ambari.server.state.scheduler.Schedule;
 import org.easymock.Capture;
+import org.easymock.EasyMock;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -88,6 +86,8 @@ import com.google.inject.persist.PersistService;
 import com.google.inject.persist.Transactional;
 import com.google.inject.util.Modules;
 
+import junit.framework.Assert;
+
 public class ExecutionScheduleManagerTest {
   private Clusters clusters;
   private Cluster cluster;
@@ -98,7 +98,6 @@ public class ExecutionScheduleManagerTest {
   private RequestExecutionFactory requestExecutionFactory;
   private ExecutionScheduler executionScheduler;
   private Scheduler scheduler;
-  Properties properties;
 
   private static final Logger LOG =
     LoggerFactory.getLogger(ExecutionScheduleManagerTest.class);
@@ -106,7 +105,6 @@ public class ExecutionScheduleManagerTest {
   @Before
   public void setup() throws Exception {
     InMemoryDefaultTestModule defaultTestModule = new InMemoryDefaultTestModule();
-    properties = defaultTestModule.getProperties();
     injector  = Guice.createInjector(Modules.override(defaultTestModule)
       .with(new ExecutionSchedulerTestModule()));
     injector.getInstance(GuiceJpaInitializer.class);
@@ -164,7 +162,7 @@ public class ExecutionScheduleManagerTest {
   }
 
   @Transactional
-  private RequestExecution createRequestExecution(boolean addSchedule)
+  RequestExecution createRequestExecution(boolean addSchedule)
       throws Exception {
     Batch batches = new Batch();
     Schedule schedule = new Schedule();
@@ -357,6 +355,7 @@ public class ExecutionScheduleManagerTest {
     String uri = "clusters";
     String type = "post";
     String body = "body";
+    Integer userId = 1;
     Map<Long, RequestExecution> executionMap = new HashMap<Long, RequestExecution>();
     executionMap.put(executionId, requestExecutionMock);
 
@@ -365,13 +364,13 @@ public class ExecutionScheduleManagerTest {
     batchRequestResponse.setRequestId(requestId);
     batchRequestResponse.setReturnCode(202);
 
-    ExecutionScheduleManager scheduleManager = createMockBuilder(ExecutionScheduleManager.class).
-      withConstructor(configurationMock, executionSchedulerMock, tokenStorageMock, clustersMock,
-        actionDBAccessorMock, gson).
-      addMockedMethods("performApiRequest", "updateBatchRequest").createNiceMock();
+    EasyMock.expect(configurationMock.getApiSSLAuthentication()).andReturn(Boolean.FALSE);
+    EasyMock.replay(configurationMock);
 
-    //interesting easymock behavior, workaround to not to expect method called in constructor
-    expectLastCall().anyTimes();
+    ExecutionScheduleManager scheduleManager = createMockBuilder(ExecutionScheduleManager.class).
+        withConstructor(configurationMock, executionSchedulerMock, tokenStorageMock, clustersMock,
+            actionDBAccessorMock, gson).
+        addMockedMethods("performApiRequest", "updateBatchRequest").createNiceMock();
 
     expect(clustersMock.getCluster(clusterName)).andReturn(clusterMock).anyTimes();
     expect(clusterMock.getAllRequestExecutions()).andReturn(executionMap).anyTimes();
@@ -379,11 +378,12 @@ public class ExecutionScheduleManagerTest {
 
     expect(requestExecutionMock.getBatchRequest(eq(batchId))).andReturn(batchRequestMock).once();
     expect(requestExecutionMock.getRequestBody(eq(batchId))).andReturn(body).once();
+    expect(requestExecutionMock.getAuthenticatedUserId()).andReturn(userId).once();
 
     expect(batchRequestMock.getUri()).andReturn(uri).once();
     expect(batchRequestMock.getType()).andReturn(type).once();
 
-    expect(scheduleManager.performApiRequest(eq(uri), eq(body), eq(type))).andReturn(batchRequestResponse).once();
+    expect(scheduleManager.performApiRequest(eq(uri), eq(body), eq(type), eq(userId))).andReturn(batchRequestResponse).once();
 
     scheduleManager.updateBatchRequest(eq(executionId), eq(batchId), eq(clusterName), eq(batchRequestResponse), eq(false));
     expectLastCall().once();
@@ -391,13 +391,13 @@ public class ExecutionScheduleManagerTest {
     actionDBAccessorMock.setSourceScheduleForRequest(eq(requestId), eq(executionId));
     expectLastCall().once();
 
-    replay(clusterMock, clustersMock, configurationMock, requestExecutionMock, executionSchedulerMock,
-      tokenStorageMock, batchRequestMock, scheduleManager, actionDBAccessorMock);
+    replay(clusterMock, clustersMock, requestExecutionMock, executionSchedulerMock,
+        tokenStorageMock, batchRequestMock, scheduleManager, actionDBAccessorMock);
 
     scheduleManager.executeBatchRequest(executionId, batchId, clusterName);
 
     verify(clusterMock, clustersMock, configurationMock, requestExecutionMock, executionSchedulerMock,
-      tokenStorageMock, batchRequestMock, scheduleManager, actionDBAccessorMock);
+        tokenStorageMock, batchRequestMock, scheduleManager, actionDBAccessorMock);
 
   }
 
@@ -426,13 +426,13 @@ public class ExecutionScheduleManagerTest {
     batchRequestResponse.setRequestId(requestId);
     batchRequestResponse.setReturnCode(202);
 
-    ExecutionScheduleManager scheduleManager = createMockBuilder(ExecutionScheduleManager.class).
-      withConstructor(configurationMock, executionSchedulerMock, tokenStorageMock, clustersMock,
-        actionDBAccessorMock, gson).
-      addMockedMethods("performApiRequest").createNiceMock();
+    EasyMock.expect(configurationMock.getApiSSLAuthentication()).andReturn(Boolean.FALSE);
+    EasyMock.replay(configurationMock);
 
-    //interesting easymock behavior, workaround to not to expect method called in constructor
-    expectLastCall().anyTimes();
+    ExecutionScheduleManager scheduleManager = createMockBuilder(ExecutionScheduleManager.class).
+        withConstructor(configurationMock, executionSchedulerMock, tokenStorageMock, clustersMock,
+            actionDBAccessorMock, gson).
+        addMockedMethods("performApiRequest").createNiceMock();
 
     expect(clustersMock.getCluster(clusterName)).andReturn(clusterMock).anyTimes();
     expect(clusterMock.getAllRequestExecutions()).andReturn(executionMap).anyTimes();
@@ -441,13 +441,13 @@ public class ExecutionScheduleManagerTest {
     expectLastCall().once();
 
 
-    replay(clusterMock, clustersMock, configurationMock, requestExecutionMock, executionSchedulerMock,
-      tokenStorageMock, batchRequestMock, scheduleManager);
+    replay(clusterMock, clustersMock, requestExecutionMock, executionSchedulerMock,
+        tokenStorageMock, batchRequestMock, scheduleManager);
 
     scheduleManager.updateBatchRequest(executionId, batchId, clusterName, batchRequestResponse, true);
 
     verify(clusterMock, clustersMock, configurationMock, requestExecutionMock, executionSchedulerMock,
-      tokenStorageMock, batchRequestMock, scheduleManager);
+        tokenStorageMock, batchRequestMock, scheduleManager);
 
   }
 
@@ -464,31 +464,30 @@ public class ExecutionScheduleManagerTest {
     long requestId = 5L;
     String clusterName = "mycluster";
     String apiUri = "api/v1/clusters/mycluster/requests/5";
-    Capture<String> uriCapture= new Capture<String>();
+    Capture<String> uriCapture = new Capture<String>();
 
     BatchRequestResponse batchRequestResponse = new BatchRequestResponse();
     batchRequestResponse.setStatus(HostRoleStatus.IN_PROGRESS.toString());
     batchRequestResponse.setRequestId(requestId);
     batchRequestResponse.setReturnCode(202);
 
+    EasyMock.expect(configurationMock.getApiSSLAuthentication()).andReturn(Boolean.FALSE);
+    EasyMock.replay(configurationMock);
+
     ExecutionScheduleManager scheduleManager = createMockBuilder(ExecutionScheduleManager.class).
-      withConstructor(configurationMock, executionSchedulerMock, tokenStorageMock, clustersMock,
-        actionDBAccessorMock, gson).
-      addMockedMethods("performApiGetRequest").createNiceMock();
-
-    //interesting easymock behavior, workaround to not to expect method called in constructor
-    expectLastCall().anyTimes();
-
+        withConstructor(configurationMock, executionSchedulerMock, tokenStorageMock, clustersMock,
+            actionDBAccessorMock, gson).
+        addMockedMethods("performApiGetRequest").createNiceMock();
 
     expect(scheduleManager.performApiGetRequest(capture(uriCapture), eq(true))).andReturn(batchRequestResponse).once();
 
-    replay(clusterMock, clustersMock, configurationMock, executionSchedulerMock,
-      tokenStorageMock, scheduleManager);
+    replay(clusterMock, clustersMock, executionSchedulerMock,
+        tokenStorageMock, scheduleManager);
 
     scheduleManager.getBatchRequestResponse(requestId, clusterName);
 
     verify(clusterMock, clustersMock, configurationMock, executionSchedulerMock,
-      tokenStorageMock, scheduleManager);
+        tokenStorageMock, scheduleManager);
 
     assertEquals(apiUri, uriCapture.getValue());
   }
@@ -520,11 +519,11 @@ public class ExecutionScheduleManagerTest {
     expect(batchMock.getBatchSettings()).andReturn(batchSettings).anyTimes();
 
     replay(clustersMock, clusterMock, configurationMock, requestExecutionMock,
-      executionSchedulerMock, batchMock);
+        executionSchedulerMock, batchMock);
 
     ExecutionScheduleManager scheduleManager =
-      new ExecutionScheduleManager(configurationMock, executionSchedulerMock,
-        tokenStorageMock, clustersMock, actionDBAccessorMock, gson);
+        new ExecutionScheduleManager(configurationMock, executionSchedulerMock,
+            tokenStorageMock, clustersMock, actionDBAccessorMock, gson);
 
     HashMap<String, Integer> taskCounts = new HashMap<String, Integer>() {{
       put(BatchRequestJob.BATCH_REQUEST_FAILED_TASKS_KEY, 2);
@@ -564,50 +563,51 @@ public class ExecutionScheduleManagerTest {
     Map<Long, RequestExecution> executionMap = new HashMap<Long, RequestExecution>();
     executionMap.put(executionId, requestExecutionMock);
 
-    ExecutionScheduleManager scheduleManager =
-      createMockBuilder(ExecutionScheduleManager.class).withConstructor
-        (configurationMock, executionSchedulerMock, tokenStorageMock,
-          clustersMock, actionDBAccessorMock, gson).createMock();
+    EasyMock.expect(configurationMock.getApiSSLAuthentication()).andReturn(Boolean.FALSE);
+    EasyMock.replay(configurationMock);
 
-    expectLastCall().anyTimes();
+    ExecutionScheduleManager scheduleManager =
+        createMockBuilder(ExecutionScheduleManager.class)
+            .withConstructor(configurationMock, executionSchedulerMock, tokenStorageMock,
+                clustersMock, actionDBAccessorMock, gson).createMock();
 
     expect(clustersMock.getCluster(clusterName)).andReturn(clusterMock).anyTimes();
     expect(clusterMock.getAllRequestExecutions()).andReturn(executionMap).anyTimes();
     expect(requestExecutionMock.getBatch()).andReturn(batchMock).anyTimes();
     expect(batchMock.getBatchRequests()).andReturn
-      (new ArrayList<BatchRequest>() {{
-        add(batchRequestMock);
-      }});
+        (new ArrayList<BatchRequest>() {{
+          add(batchRequestMock);
+        }});
     expect(batchRequestMock.getOrderId()).andReturn(1L).anyTimes();
     expect(executionSchedulerMock.getJobDetail((JobKey) anyObject()))
-      .andReturn(jobDetailMock).anyTimes();
+        .andReturn(jobDetailMock).anyTimes();
     expect((List<Trigger>) executionSchedulerMock
-      .getTriggersForJob((JobKey) anyObject())).andReturn(triggers).anyTimes();
+        .getTriggersForJob((JobKey) anyObject())).andReturn(triggers).anyTimes();
     expect(triggerMock.mayFireAgain()).andReturn(true).anyTimes();
     expect(triggerMock.getFinalFireTime()).andReturn(pastDate).anyTimes();
 
     requestExecutionMock.updateStatus(RequestExecution.Status.COMPLETED);
     expectLastCall();
 
-    replay(clustersMock, clusterMock, configurationMock, requestExecutionMock,
-      executionSchedulerMock, scheduleManager, batchMock, batchRequestMock,
-      triggerMock, jobDetailMock, actionDBAccessorMock);
+    replay(clustersMock, clusterMock, requestExecutionMock,
+        executionSchedulerMock, scheduleManager, batchMock, batchRequestMock,
+        triggerMock, jobDetailMock, actionDBAccessorMock);
 
     scheduleManager.finalizeBatch(executionId, clusterName);
 
     verify(clustersMock, clusterMock, configurationMock, requestExecutionMock,
-      executionSchedulerMock, scheduleManager, batchMock, batchRequestMock,
-      triggerMock, jobDetailMock, actionDBAccessorMock);
+        executionSchedulerMock, scheduleManager, batchMock, batchRequestMock,
+        triggerMock, jobDetailMock, actionDBAccessorMock);
   }
 
   @Test
   public void testFinalizeBeforeExit() throws Exception {
     ExecutionScheduleManager scheduleManagerMock = createMock(ExecutionScheduleManager.class);
     AbstractLinearExecutionJob executionJob =
-      createMockBuilder(AbstractLinearExecutionJob.class)
-      .addMockedMethods("finalizeExecution", "doWork")
-      .withConstructor(scheduleManagerMock)
-      .createMock();
+        createMockBuilder(AbstractLinearExecutionJob.class)
+            .addMockedMethods("finalizeExecution", "doWork")
+            .withConstructor(scheduleManagerMock)
+            .createMock();
     JobExecutionContext context = createMock(JobExecutionContext.class);
     JobDetail jobDetail = createMock(JobDetail.class);
     JobDataMap jobDataMap = createMock(JobDataMap.class);

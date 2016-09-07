@@ -247,6 +247,7 @@ App.QueuesController = Ember.ArrayController.extend({
           return +queue.get('capacity') + prev;
         },0);
 
+      total = parseFloat(total.toFixed(3));
       leaf.setEach('overCapacity',total != 100);
     }.bind(this));
   }.observes('content.length','content.@each.capacity'),
@@ -336,7 +337,7 @@ App.QueuesController = Ember.ArrayController.extend({
    * check if can save configs
    * @type {bool}
    */
-  canNotSave: cmp.any('hasOverCapacity', 'hasUncompetedAddings','hasNotValid','hasNotValidLabels'),
+  canNotSave: cmp.any('hasOverCapacity', 'hasUncompetedAddings','hasNotValid','hasNotValidLabels','hasInvalidQueueMappings'),
 
   /**
    * List of not valid queues.
@@ -384,5 +385,49 @@ App.QueuesController = Ember.ArrayController.extend({
    * True if uncompetedAddings is not empty.
    * @type {Boolean}
    */
-  hasUncompetedAddings:cmp.notEmpty('uncompetedAddings.[]')
+  hasUncompetedAddings:cmp.notEmpty('uncompetedAddings.[]'),
+
+  /**
+   * True if queue_mapping is not valid
+   * @type {Boolean}
+   */
+  hasInvalidQueueMappings : function() {
+    var mappings = this.get('scheduler.queue_mappings') || '',
+      queues = this.get('content.content'),
+      hasInvalidMapping = false;
+
+    if(mappings == '' || mappings == 'u:%user:%primary_group' || mappings == 'u:%user:%user') {
+      return false;
+    }
+
+    mappings.split(',').forEach(function(item) {
+      // item should be in format [u or g]:[name]:[queue_name]
+      var mapping= item.split(":");
+
+      if(mapping.length!=3 || (mapping[0] != 'u'&& mapping[0] != 'g')) {
+        hasInvalidMapping = true;
+      }else{
+        hasInvalidMapping = queues.filter(function(queue){
+            return !queue.get("queues"); //get all leaf queues
+          }).map(function(queue){
+            return queue.get("name");
+          }).indexOf(mapping[2]) == -1;
+      }
+
+    })
+
+    return hasInvalidMapping;
+  }.property('scheduler.queue_mappings','content.length','content.@each.capacity'),
+
+  /**
+   * Resource calculator dropdown options
+   */
+  resourceCalculatorValues: [{
+    label: 'Default Resource Calculator',
+    value: 'org.apache.hadoop.yarn.util.resource.DefaultResourceCalculator'
+  }, {
+    label: 'Dominant Resource Calculator',
+    value: 'org.apache.hadoop.yarn.util.resource.DominantResourceCalculator'
+  }]
+
 });

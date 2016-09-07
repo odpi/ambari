@@ -137,15 +137,11 @@ module.exports = {
    * @returns {object}
    */
   blueprintToObject: function(blueprint, field) {
-    var ret = {};
     var valueToMap = Em.get(blueprint, field);
     if (!Array.isArray(valueToMap)) {
-      return ret;
+      return {};
     }
-    valueToMap.forEach(function(n) {
-      ret[Em.get(n, 'name')] = n;
-    });
-    return ret;
+    return valueToMap.toMapByProperty('name');
   },
 
   matchGroups: function(masterBlueprint, slaveBlueprint) {
@@ -303,7 +299,6 @@ module.exports = {
   /**
    * @method buildConfigsJSON - generates JSON according to blueprint format
    * @param {Em.Array} stepConfigs - array of Ember Objects
-   * @param {Array} services
    * @returns {Object}
    * Example:
    * {
@@ -321,26 +316,18 @@ module.exports = {
    *   }
    * }
    */
-  buildConfigsJSON: function(services, stepConfigs) {
+  buildConfigsJSON: function (stepConfigs) {
     var configurations = {};
-    services.forEach(function(service) {
-      var config = stepConfigs.findProperty('serviceName', service.get('serviceName'));
-      if (config && service.get('configTypes')) {
-        Object.keys(service.get('configTypes')).forEach(function(type) {
-          if(!configurations[type]){
-            configurations[type] = {
-              properties: {}
-            }
+    stepConfigs.forEach(function (stepConfig) {
+      stepConfig.get('configs').forEach(function (config) {
+        if (config.get('filename') === 'cluster-env.xml' || config.get('isRequiredByAgent')) {
+          var type = App.config.getConfigTagFromFileName(config.get('filename'));
+          if (!configurations[type]) {
+            configurations[type] = {properties: {}}
           }
-        });
-        config.get('configs').forEach(function(property){
-          if (configurations[property.get('filename').replace('.xml','')]){
-            configurations[property.get('filename').replace('.xml','')]['properties'][property.get('name')] = property.get('value');
-          } else {
-            console.warn(property.get('name') + " from " + property.get('filename') + " can't be validate");
-          }
-        });
-      }
+          configurations[type]['properties'][config.get('name')] = config.get('value');
+        }
+      });
     });
     return configurations;
   },
@@ -385,39 +372,120 @@ module.exports = {
   },
 
   /**
+   * Small helper method to update hostMap
+   * it perform update of object only
+   * if unique component per host is added
+   *
+   * @param {Object} hostMapObject
+   * @param {string[]} hostNames
+   * @param {string} componentName
+   * @returns {Object}
+   * @private
+   */
+  _generateHostMap: function(hostMapObject, hostNames, componentName) {
+    Em.assert('hostMapObject, hostNames, componentName should be defined', !!hostMapObject && !!hostNames && !!componentName);
+    if (!hostNames.length) return hostMapObject;
+    hostNames.forEach(function(hostName) {
+      if (!hostMapObject[hostName])
+        hostMapObject[hostName] = [];
+
+      if (!hostMapObject[hostName].contains(componentName))
+        hostMapObject[hostName].push(componentName);
+    });
+    return hostMapObject;
+  },
+
+  /**
+   * Clean up host groups from components that should be removed
+   *
+   * @param hostGroups
+   * @param serviceNames
+   */
+  removeDeletedComponents: function(hostGroups, serviceNames) {
+    var components = [];
+    App.StackService.find().forEach(function(s) {
+      if (serviceNames.contains(s.get('serviceName'))) {
+        components = components.concat(s.get('serviceComponents').mapProperty('componentName'));
+      }
+    });
+
+    hostGroups.blueprint.host_groups.forEach(function(hg) {
+      hg.components = hg.components.filter(function(c) {
+        return !components.contains(c.name);
+      })
+    });
+    return hostGroups;
+  },
+
+  /**
    * collect all component names that are present on hosts
    * @returns {object}
    */
   getComponentForHosts: function() {
     var hostsMap = {};
-    App.ClientComponent.find().forEach(function(c) {
-      var componentName = c.get('componentName');
-      c.get('hostNames').forEach(function(hostName){
-        if (hostsMap[hostName]) {
-          hostsMap[hostName].push(componentName);
-        } else {
-          hostsMap[hostName] = [componentName];
-        }
-      });
-    });
-    App.SlaveComponent.find().forEach(function (c) {
-      var componentName = c.get('componentName');
-      c.get('hostNames').forEach(function (hostName) {
-        if (hostsMap[hostName]) {
-          hostsMap[hostName].push(componentName);
-        } else {
-          hostsMap[hostName] = [componentName];
-        }
-      });
-    });
-    App.HostComponent.find().forEach(function (c) {
-      var hostName = c.get('hostName');
-      if (hostsMap[hostName]) {
-        hostsMap[hostName].push(c.get('componentName'));
-      } else {
-        hostsMap[hostName] = [c.get('componentName')];
-      }
-    });
+    var componentModels = [App.ClientComponent, App.SlaveComponent, App.MasterComponent];
+    componentModels.forEach(function(_model){
+      _model.find().forEach(function(c) {
+        hostsMap = this._generateHostMap(hostsMap, c.get('hostNames'), c.get('componentName'));
+      }, this);  
+    }, this);
+
+    this.changeHostsMapForConfigActions(hostsMap);
     return hostsMap;
+  },
+
+  /**
+   * Adds or removes the component name entry as saved in App.componentToBeAdded and App.componentToBeDeleted from the 'hostsMap'
+   * @param hostsMap {object}
+   * @private
+   * @method {changeHostsMapForConfigActions}
+   */
+  changeHostsMapForConfigActions: function(hostsMap) {
+    var componentToBeAdded =  App.get('componentToBeAdded');
+    var componentToBeDeleted =  App.get('componentToBeDeleted');
+    if (!App.isEmptyObject(componentToBeAdded)) {
+      hostsMap = this._generateHostMap(hostsMap, componentToBeAdded.get('hostNames'), componentToBeAdded.get('componentName'));
+    } else if (!App.isEmptyObject(componentToBeDeleted) && hostsMap[componentToBeDeleted.hostName]) {
+      var index = hostsMap[componentToBeDeleted.hostName].indexOf(componentToBeDeleted.componentName);
+      if (index > -1) {
+        hostsMap[componentToBeDeleted.hostName].splice(index, 1);
+      }
+    }
+  },
+  /**
+   * Returns host-group name by fqdn.
+   * Returns <code>null</code> when not found.
+   *
+   * @param  {object} blueprint
+   * @param  {string} fqdn
+   * @returns {string|null}
+   */
+  getHostGroupByFqdn: function(blueprint, fqdn) {
+    return Em.getWithDefault(blueprint || {}, 'blueprint_cluster_binding.host_groups', [])
+      .filter(function(i) {
+        return Em.getWithDefault(i, 'hosts', []).mapProperty('fqdn').contains(fqdn);
+      })
+      .mapProperty('name')[0] || null;
+  },
+
+  /**
+   * Add component to specified host group.
+   *
+   * @param  {object} blueprint
+   * @param  {string} componentName
+   * @param  {string} hostGroupName
+   * @return {object}
+   */
+  addComponentToHostGroup: function(blueprint, componentName, hostGroupName) {
+    var hostGroup = blueprint.blueprint.host_groups.findProperty('name', hostGroupName);
+    if (hostGroup) {
+      if (!hostGroup.hasOwnProperty('components')) {
+        hostGroup.components = [];
+      }
+      if (!hostGroup.components.someProperty('name', componentName)) {
+        hostGroup.components.pushObject({name: componentName});
+      }
+    }
+    return blueprint;
   }
 };

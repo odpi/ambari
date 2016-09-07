@@ -34,24 +34,28 @@ class TestPackageResource(TestCase):
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'ubuntu')
   def test_action_install_ubuntu_update(self, shell_mock, call_mock):
-    call_mock.return_value= (1, None)
+    shell_mock.return_value= (0, '')
+    call_mock.return_value= (1, '')
     with Environment('/') as env:
       Package("some_package",
+        logoutput = False
       )
     call_mock.assert_has_calls([call("dpkg --get-selections | grep -v deinstall | awk '{print $1}' | grep ^some-package$"),
  call(['/usr/bin/apt-get', '-q', '-o', 'Dpkg::Options::=--force-confdef', '--allow-unauthenticated', '--assume-yes', 'install', 'some-package'], logoutput=False, sudo=True, env={'DEBIAN_FRONTEND': 'noninteractive'}),
  call(['/usr/bin/apt-get', 'update', '-qq'], logoutput=False, sudo=True)])
     
     shell_mock.assert_has_calls([call(['/usr/bin/apt-get', '-q', '-o', 'Dpkg::Options::=--force-confdef', 
-                                       '--allow-unauthenticated', '--assume-yes', 'install', 'some-package'], logoutput=False, sudo=True)])
+                                       '--allow-unauthenticated', '--assume-yes', 'install', 'some-package'], logoutput=False, sudo=True,  env={'DEBIAN_FRONTEND': 'noninteractive'})])
   
   @patch.object(shell, "call")
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'ubuntu')
   def test_action_install_ubuntu(self, shell_mock, call_mock):
-    call_mock.side_effect = [(1, None), (0, None)]
+    call_mock.side_effect = [(1, ''), (0, '')]
+    shell_mock.return_value = (0, '')
     with Environment('/') as env:
       Package("some_package",
+        logoutput = False
       )
     call_mock.assert_has_calls([call("dpkg --get-selections | grep -v deinstall | awk '{print $1}' | grep ^some-package$"),
  call(['/usr/bin/apt-get', '-q', '-o', 'Dpkg::Options::=--force-confdef', '--allow-unauthenticated', '--assume-yes', 'install', 'some-package'], logoutput=False, sudo=True, env={'DEBIAN_FRONTEND': 'noninteractive'})])
@@ -89,11 +93,13 @@ class TestPackageResource(TestCase):
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'redhat')
   def test_action_install_rhel(self, shell_mock):
+    shell_mock.return_value = (0,'')
     sys.modules['rpm'] = MagicMock()
     sys.modules['rpm'].TransactionSet.return_value = MagicMock()
     sys.modules['rpm'].TransactionSet.return_value.dbMatch.return_value = [{'name':'some_packag'}]
     with Environment('/') as env:
       Package("some_package",
+        logoutput = False
       )
     self.assertTrue(sys.modules['rpm'].TransactionSet.return_value.dbMatch.called)
     shell_mock.assert_called_with(['/usr/bin/yum', '-d', '0', '-e', '0', '-y', 'install', 'some_package'], logoutput=False, sudo=True)
@@ -101,34 +107,40 @@ class TestPackageResource(TestCase):
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'redhat')
   def test_action_install_pattern_rhel(self, shell_mock):
+    shell_mock.return_value = (0,'')
     sys.modules['rpm'] = MagicMock()
     sys.modules['rpm'].TransactionSet.return_value = MagicMock()
     sys.modules['rpm'].TransactionSet.return_value.dbMatch.return_value = [{'name':'some_packag'}]
     with Environment('/') as env:
       Package("some_package*",
+        logoutput = False
       )
     shell_mock.assert_called_with(['/usr/bin/yum', '-d', '0', '-e', '0', '-y', 'install', 'some_package*'], logoutput=False, sudo=True)
 
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'redhat')
   def test_action_install_pattern_installed_rhel(self, shell_mock):
+    shell_mock.return_value = (0,'')
     sys.modules['yum'] = MagicMock()
     sys.modules['yum'].YumBase.return_value = MagicMock()
     sys.modules['yum'].YumBase.return_value.rpmdb = MagicMock()
     sys.modules['yum'].YumBase.return_value.rpmdb.simplePkgList.return_value = [('some_package_1_2_3',)]
     with Environment('/') as env:
       Package("some_package*",
+              logoutput = False
       )
     self.assertEqual(shell_mock.call_count, 0, "shell.checked_call shouldn't be called")
 
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'suse')
   def test_action_install_suse(self, shell_mock):
+    shell_mock.return_value = (0,'')
     sys.modules['rpm'] = MagicMock()
     sys.modules['rpm'].TransactionSet.return_value = MagicMock()
     sys.modules['rpm'].TransactionSet.return_value.dbMatch.return_value = [{'name':'some_packages'}]
     with Environment('/') as env:
       Package("some_package",
+        logoutput = False
       )
     shell_mock.assert_called_with(['/usr/bin/zypper', '--quiet', 'install', '--auto-agree-with-licenses', '--no-confirm', 'some_package'], logoutput=False, sudo=True)
 
@@ -171,8 +183,10 @@ class TestPackageResource(TestCase):
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'redhat')
   def test_action_install_use_repos_rhel(self, shell_mock):
+    shell_mock.return_value = (0,'')
     with Environment('/') as env:
-      Package("some_package", use_repos=['HDP-UTILS-2.2.0.1-885', 'HDP-2.2.0.1-885']
+      Package("some_package", use_repos=['HDP-UTILS-2.2.0.1-885', 'HDP-2.2.0.1-885'],
+              logoutput = False
               )
     self.assertEquals(shell_mock.call_args[0][0],
                       ['/usr/bin/yum', '-d', '0', '-e', '0', '-y', 'install',
@@ -200,7 +214,8 @@ class TestPackageResource(TestCase):
     sys.modules['rpm'].TransactionSet.return_value.dbMatch.return_value = [{'name':'some_package'}]
     with Environment('/') as env:
       Package("some_package",
-              action = "remove"
+              action = "remove",
+              logoutput = False
       )
     shell_mock.assert_called_with(['/usr/bin/yum', '-d', '0', '-e', '0', '-y', 'erase', 'some_package'], logoutput=False, sudo=True)
 
@@ -208,12 +223,14 @@ class TestPackageResource(TestCase):
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'suse')
   def test_action_remove_suse(self, shell_mock):
+    shell_mock.return_value = (0, '')
     sys.modules['rpm'] = MagicMock()
     sys.modules['rpm'].TransactionSet.return_value = MagicMock()
     sys.modules['rpm'].TransactionSet.return_value.dbMatch.return_value = [{'name':'some_package'}]
     with Environment('/') as env:
       Package("some_package",
-              action = "remove"
+              action = "remove",
+              logoutput = False
       )
     shell_mock.assert_called_with(['/usr/bin/zypper', '--quiet', 'remove', '--no-confirm', 'some_package'], logoutput=False, sudo=True)
 
@@ -221,9 +238,11 @@ class TestPackageResource(TestCase):
   @patch.object(shell, "checked_call")
   @patch.object(System, "os_family", new = 'redhat')
   def test_action_install_version_attr(self, shell_mock):
+    shell_mock.return_value = (0,'')
     with Environment('/') as env:
       Package("some_package",
-              version = "3.5.0"
+              version = "3.5.0",
+              logoutput = False
       )
     shell_mock.assert_called_with(['/usr/bin/yum', '-d', '0', '-e', '0', '-y', 'install', 'some_package-3.5.0'], logoutput=False, sudo=True)
 

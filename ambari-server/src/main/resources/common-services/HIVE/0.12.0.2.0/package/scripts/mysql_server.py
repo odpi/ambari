@@ -21,8 +21,7 @@ limitations under the License.
 import sys
 import os
 import mysql_users
-from resource_management import *
-
+from resource_management.libraries.script.script import Script
 from mysql_service import mysql_service
 from mysql_utils import mysql_configure
 
@@ -30,7 +29,7 @@ from mysql_utils import mysql_configure
 class MysqlServer(Script):
   def install(self, env):
     import params
-    self.install_packages(env, exclude_packages=params.hive_exclude_packages)
+    self.install_packages(env)
     self.configure(env)
 
   def clean(self, env):

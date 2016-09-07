@@ -31,9 +31,7 @@ App.GridFilter = Em.View.extend({
   getHeader:function () {
     return this.get('header')
   },
-  filters:function () {
-    return this.get('header._filters');
-  }.property('header._filters')
+  filters:Em.computed.alias('header._filters')
 });
 
 App.GridHeader = Em.View.extend({
@@ -46,13 +44,11 @@ App.GridHeader = Em.View.extend({
   },
   _filters:[],
   doFilter:function () {
-    console.log(this.get('grid'));
   },
   toggleFilter:function () {
     this.set('showFilter', 1 - this.get('showFilter'));
   },
   applyFilter:function () {
-    console.warn('APPLYING FILTERS');
 
     var filters = this.get('_filters');
     var filterValues = [];
@@ -110,9 +106,7 @@ App.GridRow = Em.View.extend({
 });
 
 App.GridPage = Em.Object.extend({
-  activeClass:function () {
-    return this.get('active') ? "active" : "";
-  }.property('active'),
+  activeClass:Em.computed.ifThenElse('active', 'active', ''),
   active:function () {
     return parseInt(this.get('number')) == parseInt(this.get('pager.grid.currentPage'));
   }.property('pager.grid.currentPage')
@@ -186,7 +180,6 @@ App.Grid = Em.View.extend({
   templateName:require('templates/main/admin/audit'),
 
   init:function () {
-    console.warn("  Grid INIT  ");
     this._super();
     this.prepareColumns(); // should be the 1
     this.prepareCollection();
@@ -285,7 +278,6 @@ App.Grid = Em.View.extend({
     var collection = this.get('collection');
     var thisGrid = this;
     this.clearRows();
-    console.warn("PREPARE ROWS LEN:", collection.get('length'));
     var i=1;
 
     if (collection && collection.content) {

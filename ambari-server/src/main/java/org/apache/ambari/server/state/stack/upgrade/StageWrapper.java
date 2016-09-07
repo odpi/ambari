@@ -17,13 +17,15 @@
  */
 package org.apache.ambari.server.state.stack.upgrade;
 
+import com.google.gson.Gson;
+
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-
-import com.google.gson.Gson;
 
 /**
  *
@@ -33,16 +35,41 @@ public class StageWrapper {
   private static Gson gson = new Gson();
   private String text;
   private Type type;
-
+  private Map<String, String> params;
   private List<TaskWrapper> tasks;
 
+  /**
+   * Wrapper for a stage that encapsulates its text and tasks.
+   * @param type Type of stage
+   * @param text Text to display
+   * @param tasks List of tasks to add to the stage
+   */
   public StageWrapper(Type type, String text, TaskWrapper... tasks) {
-    this(type, text, Arrays.asList(tasks));
+    this(type, text, null, Arrays.asList(tasks));
   }
 
-  public StageWrapper(Type type, String text, List<TaskWrapper> tasks) {
+  /**
+   * Wrapper for a stage that encapsulates its text, params, and tasks.
+   * @param type Type of stage
+   * @param text Text to display
+   * @param params Command parameters
+   * @param tasks List of tasks to add to the stage
+   */
+  public StageWrapper(Type type, String text, Map<String, String> params, TaskWrapper... tasks) {
+    this(type, text, params, Arrays.asList(tasks));
+  }
+
+  /**
+   * Wrapper for a stage that encapsulates its text, params, and tasks.
+   * @param type Type of stage
+   * @param text Text to display
+   * @param params Command parameters
+   * @param tasks List of tasks to add to the stage
+   */
+  public StageWrapper(Type type, String text, Map<String, String> params, List<TaskWrapper> tasks) {
     this.type = type;
     this.text = text;
+    this.params = (params == null ? Collections.<String, String>emptyMap() : params);
     this.tasks = tasks;
   }
 
@@ -78,6 +105,13 @@ public class StageWrapper {
   }
 
   /**
+   * @return the additional command parameters
+   */
+  public Map<String, String> getParams() {
+    return params;
+  }
+
+  /**
    * @return the wrapped tasks for this stage
    */
   public List<TaskWrapper> getTasks() {
@@ -92,7 +126,7 @@ public class StageWrapper {
   }
 
   /**
-   * @param text the new text for the stage
+   * @param newText the new text for the stage
    */
   public void setText(String newText) {
     text = newText;
@@ -113,6 +147,9 @@ public class StageWrapper {
     SERVER_SIDE_ACTION,
     RESTART,
     RU_TASKS,
-    SERVICE_CHECK
+    SERVICE_CHECK,
+    STOP,
+    START,
+    CONFIGURE
   }
 }

@@ -16,7 +16,6 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-
 <configuration supports_final="true">
   <property>
     <name>oozie.service.ELService.ext.functions.coord-job-submit-instances</name>
@@ -39,8 +38,11 @@
       This property is a convenience property to add extensions to the built in executors without having to
       include all the built in ones.
     </description>
+    <value-attributes>
+      <type>custom</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>oozie.service.ELService.ext.functions.coord-action-create-inst</name>
     <value>
@@ -63,8 +65,11 @@
       This property is a convenience property to add extensions to the built in executors without having to
       include all the built in ones.
     </description>
+    <value-attributes>
+      <type>custom</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>oozie.service.ELService.ext.functions.coord-action-create</name>
     <value>
@@ -87,8 +92,11 @@
       This property is a convenience property to add extensions to the built in executors without having to
       include all the built in ones.
     </description>
+    <value-attributes>
+      <type>custom</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>oozie.service.ELService.ext.functions.coord-job-submit-data</name>
     <value>
@@ -112,8 +120,11 @@
       This property is a convenience property to add extensions to the built in executors without having to
       include all the built in ones.
     </description>
+    <value-attributes>
+      <type>custom</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>oozie.service.ELService.ext.functions.coord-action-start</name>
     <value>
@@ -139,8 +150,11 @@
       This property is a convenience property to add extensions to the built in executors without having to
       include all the built in ones.
     </description>
+    <value-attributes>
+      <type>custom</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>oozie.service.ELService.ext.functions.coord-sla-submit</name>
     <value>
@@ -150,8 +164,11 @@
     <description>
       EL functions declarations, separated by commas, format is [PREFIX:]NAME=CLASS#METHOD.
     </description>
+    <value-attributes>
+      <type>custom</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>oozie.service.ELService.ext.functions.coord-sla-create</name>
     <value>
@@ -161,13 +178,20 @@
     <description>
       EL functions declarations, separated by commas, format is [PREFIX:]NAME=CLASS#METHOD.
     </description>
+    <value-attributes>
+      <type>custom</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-  
   <property>
     <name>oozie.service.HadoopAccessorService.supported.filesystems</name>
     <value>*</value>
     <description>
       Enlist the different filesystems supported for federation. If wildcard "*" is specified, then ALL file schemes will be allowed.
     </description>
+    <value-attributes>
+      <type>custom</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

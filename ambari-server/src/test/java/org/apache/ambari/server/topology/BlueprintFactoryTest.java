@@ -120,7 +120,7 @@ public class BlueprintFactoryTest {
     Map<String, Object> props = BlueprintResourceProviderTest.getBlueprintTestProperties().iterator().next();
 
     replay(stack, dao, entity, configEntity);
-    Blueprint blueprint = testFactory.createBlueprint(props);
+    Blueprint blueprint = testFactory.createBlueprint(props, null);
 
     assertEquals(BLUEPRINT_NAME, blueprint.getName());
     assertSame(stack, blueprint.getStack());
@@ -130,7 +130,7 @@ public class BlueprintFactoryTest {
     HostGroup group1 = hostGroups.get("group1");
     assertEquals("group1", group1.getName());
     assertEquals("1", group1.getCardinality());
-    Collection<String> components = group1.getComponents();
+    Collection<String> components = group1.getComponentNames();
     assertEquals(2, components.size());
     assertTrue(components.contains("component1"));
     assertTrue(components.contains("component2"));
@@ -147,7 +147,7 @@ public class BlueprintFactoryTest {
     HostGroup group2 = hostGroups.get("group2");
     assertEquals("group2", group2.getName());
     assertEquals("2", group2.getCardinality());
-    components = group2.getComponents();
+    components = group2.getComponentNames();
     assertEquals(1, components.size());
     assertTrue(components.contains("component1"));
     services = group2.getServices();
@@ -187,7 +187,7 @@ public class BlueprintFactoryTest {
     props.remove(BlueprintResourceProvider.BLUEPRINT_NAME_PROPERTY_ID);
 
     replay(stack, dao, entity, configEntity);
-    testFactory.createBlueprint(props);
+    testFactory.createBlueprint(props, null);
   }
 
   @Test(expected=IllegalArgumentException.class)
@@ -197,7 +197,7 @@ public class BlueprintFactoryTest {
     ((Set<Map<String, Object>>) props.get(BlueprintResourceProvider.HOST_GROUP_PROPERTY_ID)).clear();
 
     replay(stack, dao, entity, configEntity);
-    testFactory.createBlueprint(props);
+    testFactory.createBlueprint(props, null);
   }
 
   @Test(expected=IllegalArgumentException.class)
@@ -207,7 +207,7 @@ public class BlueprintFactoryTest {
     ((Set<Map<String, Object>>) props.get(BlueprintResourceProvider.HOST_GROUP_PROPERTY_ID)).iterator().next().remove("name");
 
     replay(stack, dao, entity, configEntity);
-    testFactory.createBlueprint(props);
+    testFactory.createBlueprint(props, null);
   }
 
   @Test(expected=IllegalArgumentException.class)
@@ -218,7 +218,7 @@ public class BlueprintFactoryTest {
         iterator().next().remove(BlueprintResourceProvider.COMPONENT_PROPERTY_ID);
 
     replay(stack, dao, entity, configEntity);
-    testFactory.createBlueprint(props);
+    testFactory.createBlueprint(props, null);
   }
 
   @Test(expected=IllegalArgumentException.class)
@@ -229,7 +229,7 @@ public class BlueprintFactoryTest {
         iterator().next().get(BlueprintResourceProvider.COMPONENT_PROPERTY_ID)).iterator().next().put("name", "INVALID_COMPONENT");
 
     replay(stack, dao, entity, configEntity);
-    testFactory.createBlueprint(props);
+    testFactory.createBlueprint(props, null);
   }
 
   private class TestBlueprintFactory extends BlueprintFactory {

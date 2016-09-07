@@ -20,13 +20,20 @@ package org.apache.ambari.view.hive;
 
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.ViewResourceHandler;
+import org.apache.ambari.view.hive.resources.files.FileService;
+import org.apache.ambari.view.hive.resources.jobs.atsJobs.ATSParserFactory;
+import org.apache.ambari.view.hive.resources.jobs.atsJobs.ATSRequestsDelegate;
+import org.apache.ambari.view.hive.resources.jobs.atsJobs.ATSRequestsDelegateImpl;
+import org.json.simple.JSONObject;
 
 import javax.inject.Inject;
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
+import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import java.io.IOException;
 
 /**
  * Help service
@@ -54,6 +61,59 @@ public class HelpService extends BaseService {
   @Produces(MediaType.TEXT_PLAIN)
   public Response version(){
     return Response.ok("0.0.1-SNAPSHOT").build();
+  }
+
+  // ================================================================================
+  // Smoke tests
+  // ================================================================================
+
+  /**
+   * HDFS Status
+   * @return status
+   */
+  @GET
+  @Path("/hdfsStatus")
+  @Produces(MediaType.APPLICATION_JSON)
+  public Response hdfsStatus(){
+    FileService.hdfsSmokeTest(context);
+    return getOKResponse();
+  }
+
+  /**
+   * HomeDirectory Status
+   * @return status
+   */
+  @GET
+  @Path("/userhomeStatus")
+  @Produces(MediaType.APPLICATION_JSON)
+  public Response userhomeStatus (){
+    FileService.userhomeSmokeTest(context);
+    return getOKResponse();
+  }
+
+  /**
+   * ATS Status
+   * @return status
+   */
+  @GET
+  @Path("/atsStatus")
+  @Produces(MediaType.APPLICATION_JSON)
+  public Response atsStatus() {
+    try {
+      ATSRequestsDelegateImpl atsimpl = new ATSRequestsDelegateImpl(context, new ATSParserFactory(context).getATSUrl());
+      atsimpl.checkATSStatus();
+      return getOKResponse();
+    }catch (IOException e){
+      throw new WebApplicationException(e);
+    }
+  }
+
+  private Response getOKResponse() {
+    JSONObject response = new JSONObject();
+    response.put("message", "OK");
+    response.put("trace", null);
+    response.put("status", "200");
+    return Response.ok().entity(response).type(MediaType.APPLICATION_JSON).build();
   }
 
   /**

@@ -17,7 +17,7 @@
  */
 
 var App = require('app');
-
+//TODO delete this file soon
 App.StackConfigProperty = DS.Model.extend({
   /**
    * id is consist of property <code>name<code>+<code>fileName<code>
@@ -47,9 +47,7 @@ App.StackConfigProperty = DS.Model.extend({
    * same as fileName
    * @property {string}
    */
-  filename: function() {
-    return this.get('fileName');
-  }.property('fileName'),
+  filename: Em.computed.alias('fileName'),
 
   /**
    * description of config property meaning
@@ -107,6 +105,12 @@ App.StackConfigProperty = DS.Model.extend({
   widget: DS.attr('object', {defaultValue: null}),
 
   /**
+   * widget type
+   * @property {string}
+   */
+  widgetType: DS.attr('string', {defaultValue: null}),
+
+  /**
    * this property contains array of properties which value
    * is dependent from current property
    * @property {array}
@@ -156,14 +160,19 @@ App.StackConfigProperty = DS.Model.extend({
    */
   subSection: DS.belongsTo('App.SubSection'),
 
+  /**
+   * sub section tab to which belongs this property
+   * @property {App.SubSectionTab}
+   */
+  subSectionTab: DS.belongsTo('App.SubSectionTab'),
+
   /******************************* UI properties ****************************************/
 
   /**
-   * defines what kind of value this property contains
-   * ex: string, digits, number, directories, custom
-   * @property {string}
+   * if property should be saved to server
+   * @property {boolean}
    */
-  displayType: DS.attr('string', {defaultValue: 'string'}),
+  isRequiredByAgent: DS.attr('boolean', {defaultValue: true}),
 
   /**
    * defines category name of property
@@ -190,15 +199,20 @@ App.StackConfigProperty = DS.Model.extend({
   index: DS.attr('number', {defaultValue: null}),
 
   /**
+   * defines what kind of value this property contains
+   * ex: string, digits, number, directories, custom
+   * @property {string}
+   */
+  displayType: function() {
+    return this.getAttribute('type', 'string');
+  }.property('valueAttributes.type'),
+
+  /**
    * defines if the property can be overriden in the host config group
    * @type {boolean}
    */
   isOverridable: function() {
-    var result = true;
-    if (this.get('valueAttributes') && !Em.none(this.get('valueAttributes.overridable'))) {
-      result =  !!this.get('valueAttributes.overridable');
-    }
-    return result;
+    return this.getAttribute('overridable', true);
   }.property('valueAttributes.overridable'),
 
   /**
@@ -206,11 +220,7 @@ App.StackConfigProperty = DS.Model.extend({
    * @type {boolean}
    */
   isVisible: function() {
-    var result = true;
-    if (this.get('valueAttributes') && !Em.none(this.get('valueAttributes.visible'))) {
-      result =  !!this.get('valueAttributes.visible');
-    }
-    return result;
+    return this.getAttribute('visible', true);
   }.property('valueAttributes.visible'),
 
   /**
@@ -218,11 +228,7 @@ App.StackConfigProperty = DS.Model.extend({
    * @type {boolean}
    */
   isRequired: function() {
-    var result = true;
-    if (this.get('valueAttributes') && !Em.none(this.get('valueAttributes.empty_value_valid'))) {
-      result =  !this.get('valueAttributes.empty_value_valid');
-    }
-    return result;
+    return !this.getAttribute('empty_value_valid', false);
   }.property('valueAttributes.empty_value_valid'),
 
   /**
@@ -230,11 +236,7 @@ App.StackConfigProperty = DS.Model.extend({
    * @type {boolean}
    */
   isReconfigurable: function() {
-    var result = true;
-    if (this.get('valueAttributes') && !Em.none(this.get('valueAttributes.editable_only_at_install'))) {
-      result =  !this.get('valueAttributes.editable_only_at_install');
-    }
-    return result;
+    return !this.getAttribute('editable_only_at_install', false);
   }.property('valueAttributes.editable_only_at_install'),
 
   /**
@@ -242,11 +244,7 @@ App.StackConfigProperty = DS.Model.extend({
    * @type {boolean}
    */
   showLabel: function() {
-    var result = true;
-    if (this.get('valueAttributes') && !Em.none(this.get('valueAttributes.show_property_name'))) {
-      result =  !!this.get('valueAttributes.show_property_name');
-    }
-    return result;
+    return this.getAttribute('show_property_name', true);
   }.property('valueAttributes.show_property_name'),
 
   /**
@@ -254,11 +252,7 @@ App.StackConfigProperty = DS.Model.extend({
    * @type {boolean}
    */
   isEditable: function() {
-    var result = true;
-    if (this.get('valueAttributes') && !Em.none(this.get('valueAttributes.read_only'))) {
-      result =  !!this.get('valueAttributes.read_only');
-    }
-    return result;
+    return this.getAttribute('read_only' ,true);
   }.property('valueAttributes.read_only'),
 
   /**
@@ -266,21 +260,33 @@ App.StackConfigProperty = DS.Model.extend({
    * @type {boolean}
    */
   unit: function() {
-    var result = '';
-    if (this.get('valueAttributes') && !Em.empty(this.get('valueAttributes.unit'))) {
-      result =  this.get('valueAttributes.unit');
-    }
-    return result;
+    return this.getAttribute('unit', '');
   }.property('valueAttributes.unit'),
 
   /**
-   * Does config property has a valid value defined in the stack
-   * @type {boolean}
+   *
+   * @param propertyName
+   * @param defaultValue
+   * @returns {string}
    */
-  isValueDefined: function() {
-    return !Em.none(this.get('value'));
-  }.property('id')
+  getAttribute: function(propertyName, defaultValue) {
+    var result = defaultValue;
+    if (!Em.empty(this.get('valueAttributes.' + propertyName))) {
+      result = this.get('valueAttributes.' + propertyName);
+    }
+    return result;
+  }
 });
 
 
 App.StackConfigProperty.FIXTURES = [];
+
+App.StackConfigValAttributesMap = {
+  'overridable': 'isOverridable' ,
+  'visible': 'isVisible' ,
+  'empty_value_valid':'isRequired' ,
+  'editable_only_at_install': 'isReconfigurable' ,
+  'show_property_name': 'showLabel',
+  'read_only': 'isEditable',
+  'ui_only_property': 'isRequiredByAgent'
+};

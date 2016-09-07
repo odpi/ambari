@@ -22,7 +22,7 @@ var App = require('app');
  * @type {Function}
  */
 var defaultSuccessCallback = function(data, ajaxOptions, params) {
-  App.router.get('applicationController').dataLoading().done(function(initValue) {
+  App.router.get('userSettingsController').dataLoading('show_bg').done(function(initValue) {
     params.query && params.query.set('status', 'SUCCESS');
     if (initValue) {
       App.router.get('backgroundOperationsController').showPopup();
@@ -35,6 +35,7 @@ var defaultSuccessCallback = function(data, ajaxOptions, params) {
  * @param {String} textStatus
  * @param {String} error
  * @param {Object} opt
+ * @param {Object} params
  * @type {Function}
  */
 var defaultErrorCallback = function(xhr, textStatus, error, opt, params) {
@@ -65,14 +66,17 @@ module.exports = {
 
   /**
    * Facade-function for restarting host components of specific service
+   * @param {String} serviceDisplayName for which service hostComponents should be restarted
    * @param {String} serviceName for which service hostComponents should be restarted
    * @param {bool} staleConfigsOnly restart only hostComponents with <code>staleConfig</code> true
    * @param {Object} query
    * @param {bool} runMmOperation
    */
-  restartAllServiceHostComponents: function(serviceName, staleConfigsOnly, query, runMmOperation) {
+  restartAllServiceHostComponents: function(serviceDisplayName, serviceName, staleConfigsOnly, query, runMmOperation) {
     var self = this;
-    var context = staleConfigsOnly ? Em.I18n.t('rollingrestart.context.allWithStaleConfigsForSelectedService').format(serviceName) : Em.I18n.t('rollingrestart.context.allForSelectedService').format(serviceName);
+    var context = staleConfigsOnly ?
+      Em.I18n.t('rollingrestart.context.allWithStaleConfigsForSelectedService').format(serviceDisplayName) :
+      Em.I18n.t('rollingrestart.context.allForSelectedService').format(serviceDisplayName);
 
     if (runMmOperation) {
       this.turnOnOffPassiveRequest('ON', Em.I18n.t('passiveState.turnOnFor').format(serviceName), serviceName);
@@ -98,7 +102,7 @@ module.exports = {
 
   /**
    * construct URL from parameters for request in <code>getComponentsFromServer()</code>
-   * @param options
+   * @param {object} options
    * @return {{fields: string, params: string}}
    */
   constructComponentsCallUrl: function (options) {
@@ -199,9 +203,16 @@ module.exports = {
      */
     var componentToHostsMap = {};
     var hosts = [];
+    var batches, refreshYARNQueues = false;
+
     hostComponentsList.forEach(function(hc) {
       var hostName = hc.get('hostName');
       var componentName = hc.get('componentName');
+
+      if (componentName === 'HIVE_SERVER_INTERACTIVE') {
+        refreshYARNQueues = true;
+      }
+
       if (!componentToHostsMap[componentName]) {
         componentToHostsMap[componentName] = [];
       }
@@ -221,27 +232,78 @@ module.exports = {
     if (hostComponentsList.length > 0) {
       var serviceComponentName = hostComponentsList[0].get("componentName");
       var serviceName = App.StackServiceComponent.find(serviceComponentName).get('serviceName');
-      var operation_level = this.getOperationLevelobject(level, serviceName,
+      var operation_level = this.getOperationLevelObject(level, serviceName,
         serviceComponentName);
     }
 
 
     if (resource_filters.length) {
-      App.ajax.send({
-        name: 'restart.hostComponents',
-        sender: {
-          successCallback: defaultSuccessCallback,
-          errorCallback: defaultErrorCallback
-        },
-        data: {
-          context: context,
-          resource_filters: resource_filters,
-          query: query,
-          operation_level: operation_level
-        },
-        success: 'successCallback',
-        error: 'errorCallback'
-      });
+      if (refreshYARNQueues) {
+        batches = [
+          {
+            "order_id": 1,
+            "type": "POST",
+            "uri": App.apiPrefix + "/clusters/" + App.get('clusterName') + "/requests",
+            "RequestBodyInfo": {
+              "RequestInfo": {
+                "context": "Refresh YARN Capacity Scheduler",
+                "command": "REFRESHQUEUES",
+                "parameters/forceRefreshConfigTags": "capacity-scheduler"
+              },
+              "Requests/resource_filters": [{
+                "service_name": "YARN",
+                "component_name": "RESOURCEMANAGER",
+                "hosts": App.HostComponent.find().findProperty('componentName', 'RESOURCEMANAGER').get('hostName')
+              }]
+            }
+          },
+          {
+            "order_id": 2,
+            "type": "POST",
+            "uri": App.apiPrefix + "/clusters/" + App.get('clusterName') + "/requests",
+            "RequestBodyInfo": {
+              "RequestInfo": {
+                "context": context,
+                "command": "RESTART",
+                "operation_level": operation_level
+              },
+              "Requests/resource_filters": resource_filters
+            }
+          }
+        ];
+
+        App.ajax.send({
+          name: 'common.batch.request_schedules',
+          sender: {
+            successCallback: defaultSuccessCallback,
+            errorCallback: defaultErrorCallback
+          },
+          data: {
+            intervalTimeSeconds: 1,
+            tolerateSize: 0,
+            batches: batches,
+            query: query
+          },
+          success: 'successCallback',
+          error: 'errorCallback'
+        });
+      } else {
+        App.ajax.send({
+          name: 'restart.hostComponents',
+          sender: {
+            successCallback: defaultSuccessCallback,
+            errorCallback: defaultErrorCallback
+          },
+          data: {
+            context: context,
+            resource_filters: resource_filters,
+            query: query,
+            operation_level: operation_level
+          },
+          success: 'successCallback',
+          error: 'errorCallback'
+        });
+      }
     }
   },
 
@@ -250,18 +312,21 @@ module.exports = {
    * @param {String} serviceName
    * @param {String} componentName
    * @returns {Object} {{level: *, cluster_name: *}} - operation level object
-   * @method getOperationLevelobject - create operation level object to be included into ajax query
+   * @method getOperationLevelObject - create operation level object to be included into ajax query
    */
-  getOperationLevelobject: function(level, serviceName, componentName) {
+  getOperationLevelObject: function(level, serviceName, componentName) {
     var operationLevel = {
       "level": level,
       "cluster_name": App.get("clusterName")
     };
     if (level === "SERVICE") {
       operationLevel["service_name"] = serviceName;
-    } else if(level !== "HOST") {
-      operationLevel["service_name"] = serviceName;
-      operationLevel["hostcomponent_name"] = componentName;
+    }
+    else {
+      if (level !== "HOST") {
+        operationLevel["service_name"] = serviceName;
+        operationLevel["hostcomponent_name"] = componentName;
+      }
     }
     return operationLevel;
   },
@@ -281,6 +346,7 @@ module.exports = {
       'success': 'successCallback'
     });
   },
+
   /**
    * Makes a REST call to the server requesting the rolling restart of the
    * provided host components.
@@ -288,18 +354,18 @@ module.exports = {
    * @param {Number} batchSize size of each batch
    * @param {Number} intervalTimeSeconds delay between two batches
    * @param {Number} tolerateSize task failure tolerance
-   * @param {callback} successCallback
-   * @param {callback} errorCallback
+   * @param {callback} [successCallback]
+   * @param {callback} [errorCallback]
    */
   _doPostBatchRollingRestartRequest: function(restartHostComponents, batchSize, intervalTimeSeconds, tolerateSize, successCallback, errorCallback) {
     successCallback = successCallback || defaultSuccessCallback;
     errorCallback = errorCallback || defaultErrorCallback;
+
     if (!restartHostComponents.length) {
-      console.log('No batch rolling restart if no restartHostComponents provided!');
       return;
     }
-    App.ajax.send({
-      name: 'rolling_restart.post',
+    return App.ajax.send({
+      name: 'common.batch.request_schedules',
       sender: {
         successCallback: successCallback,
         errorCallback: errorCallback
@@ -333,7 +399,7 @@ module.exports = {
       for ( var hc = 0; hc < batchSize && hostIndex < restartHostComponents.length; hc++) {
         hostNames.push(restartHostComponents.objectAt(hostIndex++).get('hostName'));
       }
-      if (hostNames.length > 0) {
+      if (hostNames.length) {
         batches.push({
           "order_id" : count + 1,
           "type" : "POST",
@@ -369,23 +435,24 @@ module.exports = {
    */
   launchHostComponentRollingRestart: function(hostComponentName, serviceName, isMaintenanceModeOn, staleConfigsOnly, skipMaintenance) {
     if (App.get('components.rollinRestartAllowed').contains(hostComponentName)) {
-      this.showRollingRestartPopup(hostComponentName, serviceName, isMaintenanceModeOn, staleConfigsOnly, null, skipMaintenance);
+      return this.showRollingRestartPopup(hostComponentName, serviceName, isMaintenanceModeOn, staleConfigsOnly, null, skipMaintenance);
     }
-    else {
-      this.showWarningRollingRestartPopup(hostComponentName);
-    }
+    return this.showWarningRollingRestartPopup(hostComponentName);
   },
 
   /**
    * Show popup with rolling restart dialog
    * @param {String} hostComponentName name of the host components that should be restarted
+   * @param {String} serviceName
+   * @param {boolean} isMaintenanceModeOn
    * @param {bool} staleConfigsOnly restart only components with <code>staleConfigs</code> = true
-   * @param {App.hostComponent[]} hostComponents list of hostComponents that should be restarted (optional).
+   * @param {App.hostComponent[]} [hostComponents] list of hostComponents that should be restarted
+   * @param {boolean} [skipMaintenance]
    * Using this parameter will reset hostComponentName
    */
   showRollingRestartPopup: function(hostComponentName, serviceName, isMaintenanceModeOn, staleConfigsOnly, hostComponents, skipMaintenance) {
     hostComponents = hostComponents || [];
-    var componentDisplayName = App.format.role(hostComponentName);
+    var componentDisplayName = App.format.role(hostComponentName, false);
     var self = this;
     if (!componentDisplayName) {
       componentDisplayName = hostComponentName;
@@ -405,29 +472,30 @@ module.exports = {
         this.set('parentView.innerView', this);
         if (hostComponents.length) {
           view.initialize();
-        } else {
-          self.getComponentsFromServer({
-            components: [hostComponentName],
-            displayParams: ['host_components/HostRoles/stale_configs', 'Hosts/maintenance_state', 'host_components/HostRoles/maintenance_state'],
-            staleConfigs: staleConfigsOnly ? staleConfigsOnly : null
-          }, function (data) {
-            var wrappedHostComponents = [];
-            data.items.forEach(function (host) {
-              host.host_components.forEach(function(hostComponent){
-                wrappedHostComponents.push(Em.Object.create({
-                  componentName: hostComponent.HostRoles.component_name,
-                  serviceName: App.StackServiceComponent.find(hostComponent.HostRoles.component_name).get('serviceName'),
-                  hostName: host.Hosts.host_name,
-                  staleConfigs: hostComponent.HostRoles.stale_configs,
-                  hostPassiveState: host.Hosts.maintenance_state,
-                  passiveState: hostComponent.HostRoles.maintenance_state
-                }));
-              });
-            });
-            view.set('allHostComponents', wrappedHostComponents);
-            view.initialize();
-          });
+          return;
         }
+
+        self.getComponentsFromServer({
+          components: [hostComponentName],
+          displayParams: ['host_components/HostRoles/stale_configs', 'Hosts/maintenance_state', 'host_components/HostRoles/maintenance_state'],
+          staleConfigs: staleConfigsOnly ? staleConfigsOnly : null
+        }, function (data) {
+          var wrappedHostComponents = [];
+          data.items.forEach(function (host) {
+            host.host_components.forEach(function(hostComponent) {
+              wrappedHostComponents.push(Em.Object.create({
+                componentName: hostComponent.HostRoles.component_name,
+                serviceName: App.StackServiceComponent.find(hostComponent.HostRoles.component_name).get('serviceName'),
+                hostName: host.Hosts.host_name,
+                staleConfigs: hostComponent.HostRoles.stale_configs,
+                hostPassiveState: host.Hosts.maintenance_state,
+                passiveState: hostComponent.HostRoles.maintenance_state
+              }));
+            });
+          });
+          view.set('allHostComponents', wrappedHostComponents);
+          view.initialize();
+        });
       }
     };
     if (hostComponents.length) {
@@ -471,14 +539,11 @@ module.exports = {
    * @param {String} hostComponentName
    */
   showWarningRollingRestartPopup: function(hostComponentName) {
-    var componentDisplayName = App.format.role(hostComponentName);
-    if (!componentDisplayName) {
-      componentDisplayName = hostComponentName;
-    }
+    var componentDisplayName = App.format.role(hostComponentName, false) || hostComponentName;
     var title = Em.I18n.t('rollingrestart.dialog.title').format(componentDisplayName);
     var msg = Em.I18n.t('rollingrestart.notsupported.hostComponent').format(componentDisplayName);
-    console.log(msg);
-    App.ModalPopup.show({
+
+    return App.ModalPopup.show({
       header : title,
       secondary : false,
       msg : msg,
@@ -490,18 +555,16 @@ module.exports = {
 
   /**
    * Warn user that alerts will be updated in few minutes
-   * @param {String} hostComponentName
+   * @param {String} passiveState
    */
   infoPassiveState: function(passiveState) {
     var enabled = passiveState == 'OFF' ? 'enabled' : 'suppressed';
     App.ModalPopup.show({
       header: Em.I18n.t('common.information'),
       secondary: null,
-      bodyClass: Ember.View.extend({
-        template: Ember.Handlebars.compile('<p>{{view.message}}</p>'),
-        message: function() {
-          return Em.I18n.t('hostPopup.warning.alertsTimeOut').format(passiveState.toLowerCase(), enabled);
-        }.property()
+      bodyClass: Em.View.extend({
+        template: Em.Handlebars.compile('<p>{{view.message}}</p>'),
+        message: Em.I18n.t('hostPopup.warning.alertsTimeOut').format(passiveState.toLowerCase(), enabled)
       })
     });
   },
@@ -518,16 +581,12 @@ module.exports = {
    */
   getRequestSchedule: function(requestScheduleId, successCallback, errorCallback) {
     if (requestScheduleId != null && !isNaN(requestScheduleId) && requestScheduleId > -1) {
-      errorCallback = errorCallback ? errorCallback : defaultErrorCallback;
+      errorCallback = errorCallback || defaultErrorCallback;
       App.ajax.send({
         name : 'request_schedule.get',
         sender : {
-          successCallbackFunction : function(data) {
-            successCallback(data);
-          },
-          errorCallbackFunction : function(xhr, textStatus, error, opt) {
-            errorCallback(xhr, textStatus, error, opt);
-          }
+          successCallbackFunction: successCallback,
+          errorCallbackFunction: errorCallback
         },
         data : {
           request_schedule_id : requestScheduleId
@@ -554,12 +613,8 @@ module.exports = {
       App.ajax.send({
         name : 'common.delete.request_schedule',
         sender : {
-          successCallbackFunction : function(data) {
-            successCallback(data);
-          },
-          errorCallbackFunction : function(xhr, textStatus, error, opt) {
-            errorCallback(xhr, textStatus, error, opt);
-          }
+          successCallbackFunction: successCallback,
+          errorCallbackFunction: errorCallback
         },
         data : {
           request_schedule_id : requestScheduleId

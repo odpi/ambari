@@ -30,7 +30,7 @@ The cause is that for every call new connection initialized, with datanodes, nam
 While this resource can gather the directories/files to create/delete/copyFromLocal.
 And after just with one call create all that.
 
-action = create_delayed / delete_delayed. Are for gathering information  about what you want
+action = create_on_execute / delete_on_execute. Are for gathering information  about what you want
 to create.
 
 After everything is gathered you should execute action = execute. To perform delayed actions
@@ -52,7 +52,7 @@ class HdfsResource(Resource):
   target = ResourceArgument(default=lambda obj: obj.name)
   # "directory" or "file"
   type = ResourceArgument()
-  # "create_delayed" or "delete_delayed" or "execute"
+  # "create_on_execute" or "delete_on_execute" or "execute"
   action = ForcedListArgument()
   # if present - copies file/directory from local path {source} to hadoop path - {target}
   source = ResourceArgument()
@@ -76,6 +76,25 @@ class HdfsResource(Resource):
   hadoop_bin_dir = ResourceArgument()
   hadoop_conf_dir = ResourceArgument()
   
+  """
+  Path to file which contains '\n'-separated list of hdfs resources, which should not
+  be managed. (simply any action to be skipped on it)
+  
+  This mean that if HdfsResource('/test1'..) is executed and /test1 is one of the lines
+  in the given file, the execution will be ignored.
+  
+  Example value:
+  /var/lib/ambari-agent/data/.hdfs_resource_ignore
+  """
+  hdfs_resource_ignore_file = ResourceArgument()
+
+  """
+  If the name of the HdfsResource is in immutable_paths
+  and it is already created, any actions on it will be skipped
+  (like changing permissions/recursive permissions, copying from source, deleting etc.)
+  """
+  immutable_paths = ResourceArgument(default=[])
+
   # WebHDFS needs these
   hdfs_site = ResourceArgument()
   default_fs = ResourceArgument()
@@ -84,5 +103,5 @@ class HdfsResource(Resource):
   dfs_type = ResourceArgument(default="")
 
   #action 'execute' immediately creates all pending files/directories in efficient manner
-  #action 'create_delayed/delete_delayed' adds file/directory to list of pending directories
+  #action 'create_on_execute/delete_on_execute' adds file/directory to list of pending directories
   actions = Resource.actions + ["create_on_execute", "delete_on_execute", "execute"]

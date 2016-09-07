@@ -19,13 +19,13 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.apache.ambari.contrib.views</groupId>
   <artifactId>pig</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
+  <version>1.0.0.0-SNAPSHOT</version>
   <name>Pig</name>
 
   <parent>
     <groupId>org.apache.ambari.contrib.views</groupId>
     <artifactId>ambari-contrib-views</artifactId>
-    <version>2.0.0-SNAPSHOT</version>
+    <version>2.0.0.0-SNAPSHOT</version>
   </parent>
 
   <dependencies>
@@ -85,12 +85,24 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-hdfs</artifactId>
-      <version>${hadoop-version}</version>
+      <version>${hadoop.version}</version>
+        <exclusions>
+            <exclusion>
+                <groupId>tomcat</groupId>
+                <artifactId>jasper-runtime</artifactId>
+            </exclusion>
+        </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
-      <version>${hadoop-version}</version>
+      <version>${hadoop.version}</version>
+        <exclusions>
+            <exclusion>
+                <groupId>tomcat</groupId>
+                <artifactId>jasper-runtime</artifactId>
+            </exclusion>
+        </exclusions>
     </dependency>
     <dependency>
       <groupId>javax.ws.rs</groupId>
@@ -110,7 +122,7 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-minicluster</artifactId>
-      <version>${hadoop-version}</version>
+      <version>${hadoop.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -119,16 +131,25 @@
       <version>1.4.0</version>
     </dependency>
     <dependency>
+      <groupId>commons-io</groupId>
+      <artifactId>commons-io</artifactId>
+      <version>2.4</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.ambari.contrib.views</groupId>
       <artifactId>ambari-views-utils</artifactId>
-      <version>0.0.1-SNAPSHOT</version>
+      <version>2.0.0.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.ambari.contrib.views</groupId>
+      <artifactId>ambari-views-commons</artifactId>
+      <version>2.0.0.0-SNAPSHOT</version>
     </dependency>
   </dependencies>
 
   <properties>
     <ambari.dir>${project.parent.parent.parent.basedir}</ambari.dir>
-    <hadoop-version>2.2.0</hadoop-version>
-    <ambari.version>2.0.0-SNAPSHOT</ambari.version>
+    <ambari.version>2.0.0.0-SNAPSHOT</ambari.version>
     <ui.directory>${basedir}/src/main/resources/ui/pig-web</ui.directory>
   </properties>
   <build>
@@ -181,7 +202,7 @@
               <!-- optional: The default argument is actually "install", so unless
                    you need to run some other npm command, you can remove this whole <configuration>
                    section. -->
-              <arguments>install --unsafe-perm --registry=http://registry.npmjs.eu</arguments>
+              <arguments>install --unsafe-perm</arguments>
             </configuration>
           </execution>
         </executions>
@@ -289,6 +310,7 @@
         <includes>
           <include>META-INF/**/*</include>
           <include>view.xml</include>
+          <include>view.log4j.properties</include>
         </includes>
       </resource>
       <resource>

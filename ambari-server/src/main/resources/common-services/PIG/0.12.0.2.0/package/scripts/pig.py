@@ -19,7 +19,9 @@ Ambari Agent
 
 """
 import os
-from resource_management import *
+from resource_management.core.resources.system import Directory, File
+from resource_management.core.source import InlineTemplate
+from resource_management.libraries.functions.format import format
 from ambari_commons import OSConst
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 
@@ -28,7 +30,7 @@ def pig():
   import params
 
   Directory( params.pig_conf_dir,
-    recursive = True,
+    create_parents = True,
     owner = params.hdfs_user,
     group = params.user_group
   )

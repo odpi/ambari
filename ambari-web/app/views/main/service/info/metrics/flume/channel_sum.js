@@ -29,20 +29,14 @@ var App = require('app');
 App.ChartServiceMetricsFlume_ChannelSizeSum = App.ChartLinearTimeView.extend({
   id: "service-metrics-flume-channel-size-sum",
   title: Em.I18n.t('services.service.info.metrics.flume.channelSizeSum'),
-  yAxisFormatter: App.ChartLinearTimeView.BytesFormatter,
+  displayUnit: 'B',
 
-  ajaxIndex: 'service.metrics.flume.channel_size_for_all',
+  ajaxIndex: 'service.metrics.flume.channel_size_for_all.sum',
 
-  transformToSeries: function (jsonData) {
-    var seriesArray = [];
-    var self = this;
-    if(Em.get(jsonData, "metrics.flume.flume.CHANNEL.ChannelSize.rate.sum")){
-      var seriesName = Em.I18n.t('services.service.info.metrics.flume.channelSizeSum');
-      var seriesData = jsonData.metrics.flume.flume.CHANNEL.ChannelSize.rate.sum;
-      if (seriesData) {
-        seriesArray.push(self.transformData(seriesData, seriesName));
-      }
+  seriesTemplate: {
+    path: 'metrics.flume.flume.CHANNEL.ChannelSize.rate',
+    displayName: function () {
+      return Em.I18n.t('services.service.info.metrics.flume.channelSizeSum');
     }
-    return seriesArray;
   }
 });

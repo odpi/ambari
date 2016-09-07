@@ -21,20 +21,23 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Type;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.google.inject.Singleton;
-
+import org.apache.ambari.server.configuration.Configuration;
+import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-
-import org.apache.ambari.server.configuration.Configuration;
-import org.apache.commons.io.IOUtils;
+import com.google.inject.Singleton;
 
 /**
  * Class that encapsulates OS family logic
@@ -44,7 +47,7 @@ public class OsFamily {
     private final static String OS_FAMILY_UBUNTU = "ubuntu";
     private final static String OS_FAMILY_SUSE = "suse";
     private final static String OS_FAMILY_REDHAT = "redhat";
-    
+
     private final String os_pattern = "([\\D]+|(?:[\\D]+[\\d]+[\\D]+))([\\d]*)";
     private final String OS_DISTRO = "distro";
     private final String OS_VERSION = "versions";
@@ -53,6 +56,7 @@ public class OsFamily {
     private final Logger LOG = LoggerFactory.getLogger(OsFamily.class);
 
     private Map<String, JsonOsFamilyEntry> osMap = null;
+    private JsonOsFamilyRoot jsonOsFamily = null;
 
   /**
    * Initialize object
@@ -67,19 +71,22 @@ public class OsFamily {
    * @param properties list of properties
    */
     public OsFamily(Properties properties){
-      init(properties.getProperty(Configuration.SHARED_RESOURCES_DIR_KEY));
+      init(properties.getProperty(Configuration.SHARED_RESOURCES_DIR.getKey()));
     }
 
     private void init(String SharedResourcesPath){
       FileInputStream inputStream = null;
       try {
         File f = new File(SharedResourcesPath, FILE_NAME);
-        if (!f.exists()) throw new Exception();
+        if (!f.exists()) {
+          throw new Exception();
+        }
         inputStream = new FileInputStream(f);
 
-        Type type = new TypeToken<Map<String, JsonOsFamilyEntry>>() {}.getType();
+        Type type = new TypeToken<JsonOsFamilyRoot>() {}.getType();
         Gson gson = new Gson();
-        osMap = gson.fromJson(new InputStreamReader(inputStream), type);
+        jsonOsFamily = gson.fromJson(new InputStreamReader(inputStream), type);
+        osMap = jsonOsFamily.getMapping();
       } catch (Exception e) {
         LOG.error(String.format(LOAD_CONFIG_MSG, new File(SharedResourcesPath, FILE_NAME).toString()));
         throw new RuntimeException(e);
@@ -99,7 +106,7 @@ public class OsFamily {
       Pattern r = Pattern.compile(os_pattern);
       Matcher m = r.matcher(os);
 
-      if (m.matches()){
+      if (m.matches()) {
         pos.put(OS_DISTRO, m.group(1));
         pos.put(OS_VERSION, m.group(2));
       } else {
@@ -120,7 +127,9 @@ public class OsFamily {
         JsonOsFamilyEntry fam = osMap.get(family);
         if (fam.getDistro().contains(pos.get(OS_DISTRO)) && fam.getVersions().contains(pos.get(OS_VERSION))){
           Set<String> data=new HashSet<String>();
-          for (String item: fam.getDistro()) data.add(item + pos.get(OS_VERSION));
+          for (String item: fam.getDistro()) {
+            data.add(item + pos.get(OS_VERSION));
+          }
             return Collections.unmodifiableSet(data);
         }
       }
@@ -140,9 +149,10 @@ public class OsFamily {
           return family + pos.get(OS_VERSION);
         }
       }
+
       return null;
     }
-    
+
     /**
      * Finds the family for the specific OS
      * @param os the OS
@@ -168,21 +178,23 @@ public class OsFamily {
         JsonOsFamilyEntry fam = osMap.get(family);
         for (String version: fam.getVersions()){
           Set<String> data=new HashSet<String>();
-          for (String item: fam.getDistro()) data.add(item + version);
+          for (String item: fam.getDistro()) {
+            data.add(item + version);
+          }
           r.addAll(data);
         }
       }
       return r;
     }
-    
+
     public boolean isUbuntuFamily(String osType) {
       return isOsInFamily(osType, OS_FAMILY_UBUNTU);
     }
-    
+
     public boolean isSuseFamily(String osType) {
       return isOsInFamily(osType, OS_FAMILY_SUSE);
     }
-    
+
     public boolean isRedhatFamily(String osType) {
       return isOsInFamily(osType, OS_FAMILY_REDHAT);
     }
@@ -195,8 +207,16 @@ public class OsFamily {
     private boolean isFamilyExtendedByFamily(String currentFamily, String family) {
       return (currentFamily.equals(family) || getOsFamilyParent(currentFamily)!=null && isFamilyExtendedByFamily(getOsFamilyParent(currentFamily), family));
     }
-      
+
     private String getOsFamilyParent(String osFamily) {
       return osMap.get(osFamily).getExtendsFamily();
+    }
+
+    /**
+     * @return the map of aliases
+     */
+    public Map<String, String> getAliases() {
+      return (null == jsonOsFamily || null == jsonOsFamily.getAliases()) ?
+          Collections.<String, String>emptyMap() : jsonOsFamily.getAliases();
     }
 }

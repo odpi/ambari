@@ -17,8 +17,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
-
-from resource_management import *
+from resource_management.core.resources.system import Execute, File
+from resource_management.core.source import StaticFile
+from resource_management.libraries.functions.format import format
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 from ambari_commons import OSConst
 
@@ -47,7 +48,7 @@ def hbase_decommission(env):
   import params
 
   env.set_params(params)
-  kinit_cmd = params.kinit_cmd
+  kinit_cmd = params.kinit_cmd_master
 
   File(params.region_drainer,
        content=StaticFile("draining_servers.rb"),
@@ -63,7 +64,7 @@ def hbase_decommission(env):
     for host in hosts:
       if host:
         regiondrainer_cmd = format(
-          "{kinit_cmd} {hbase_cmd} --config {hbase_conf_dir} org.jruby.Main {region_drainer} remove {host}")
+          "{kinit_cmd} {hbase_cmd} --config {hbase_conf_dir} {master_security_config} org.jruby.Main {region_drainer} remove {host}")
         Execute(regiondrainer_cmd,
                 user=params.hbase_user,
                 logoutput=True
@@ -75,9 +76,9 @@ def hbase_decommission(env):
     for host in hosts:
       if host:
         regiondrainer_cmd = format(
-          "{kinit_cmd} {hbase_cmd} --config {hbase_conf_dir} org.jruby.Main {region_drainer} add {host}")
+          "{kinit_cmd} {hbase_cmd} --config {hbase_conf_dir} {master_security_config} org.jruby.Main {region_drainer} add {host}")
         regionmover_cmd = format(
-          "{kinit_cmd} {hbase_cmd} --config {hbase_conf_dir} org.jruby.Main {region_mover} unload {host}")
+          "{kinit_cmd} {hbase_cmd} --config {hbase_conf_dir} {master_security_config} org.jruby.Main {region_mover} unload {host}")
 
         Execute(regiondrainer_cmd,
                 user=params.hbase_user,

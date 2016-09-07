@@ -19,7 +19,9 @@ limitations under the License.
 """
 
 import sys
-from resource_management import *
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.security_commons import build_expectations, \
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties, \
   FILE_TYPE_XML
@@ -40,7 +42,8 @@ class HbaseMaster(Script):
 
   def install(self, env):
     import params
-    self.install_packages(env, params.exclude_packages)
+    env.set_params(params)
+    self.install_packages(env)
 
   def decommission(self, env):
     import params
@@ -69,22 +72,22 @@ class HbaseMasterWindows(HbaseMaster):
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class HbaseMasterDefault(HbaseMaster):
-  def get_stack_to_component(self):
-    return {"HDP": "hbase-master"}
+  def get_component_name(self):
+    return "hbase-master"
 
-  def pre_rolling_restart(self, env):
+  def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     upgrade.prestart(env, "hbase-master")
 
-  def start(self, env, rolling_restart=False):
+  def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     self.configure(env) # for security
-    setup_ranger_hbase(rolling_upgrade=rolling_restart)  
+    setup_ranger_hbase(upgrade_type=upgrade_type, service_name="hbase-master")
     hbase_service('master', action = 'start')
     
-  def stop(self, env, rolling_restart=False):
+  def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     hbase_service('master', action = 'stop')
@@ -92,8 +95,8 @@ class HbaseMasterDefault(HbaseMaster):
   def status(self, env):
     import status_params
     env.set_params(status_params)
-    pid_file = format("{pid_dir}/hbase-{hbase_user}-master.pid")
-    check_process_status(pid_file)
+
+    check_process_status(status_params.hbase_master_pid_file)
 
   def security_status(self, env):
     import status_params
@@ -143,7 +146,18 @@ class HbaseMasterDefault(HbaseMaster):
         self.put_structured_out({"securityState": "UNSECURED"})
     else:
       self.put_structured_out({"securityState": "UNSECURED"})
+      
+  def get_log_folder(self):
+    import params
+    return params.log_dir
+  
+  def get_user(self):
+    import params
+    return params.hbase_user
 
+  def get_pid_files(self):
+    import status_params
+    return [status_params.hbase_master_pid_file]
 
 if __name__ == "__main__":
   HbaseMaster().execute()

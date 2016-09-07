@@ -21,105 +21,33 @@ var validator = require('utils/validator');
 
 App.User = DS.Model.extend({
   userName:DS.attr('string'),
-  id:function(){
-    return this.get('userName');
-  }.property('userName'),
-  isLdap:DS.attr('boolean'),
-  type: function(){
-    if(this.get('isLdap')){
-      return 'LDAP';
-    }
-    return 'Local';
-  }.property('isLdap'),
+  id: Em.computed.alias('userName'),
+  userType: DS.attr('string'),
   auditItems:DS.hasMany('App.ServiceAudit'),
   admin: DS.attr('boolean'),
   operator: DS.attr('boolean'),
+  clusterUser: DS.attr('boolean'),
+
   /**
    * List of permissions assigned to user
    *  Available permissions:
-   *    AMBARI.ADMIN
-   *    CLUSTER.READ
-   *    CLUSTER.OPERATE
-   *    VIEW.USE
+   *    AMBARI.ADMINISTRATOR
+   *    CLUSTER.USER
+   *    CLUSTER.ADMINISTRATOR
+   *    VIEW.USER
    * @property {Array} permissions
    **/
-  permissions: DS.attr('array')
+  permissions: DS.attr('array'),
+
+  /**
+   * @type {Boolean}
+   */
+  isLdap: Em.computed.equal('userType', 'LDAP')
 });
 
-App.EditUserForm = App.Form.extend({
-  className:App.User,
-  object:function () {
-    return App.router.get('mainAdminUserEditController.content');
-  }.property('App.router.mainAdminUserEditController.content'),
-
-  fieldsOptions:[
-    { name:"userName", displayName:"Username" },
-    { name:"old_password", displayName:"Current Password", displayType:"password", isRequired: false },
-    { name:"new_password", displayName:"New Password", displayType:"password",  isRequired: false },
-    { name:"new_passwordRetype", displayName:"Retype New Password", displayType:"password", isRequired: false },
-    { name:"admin", displayName:"Admin", displayType:"checkbox", isRequired:false },
-    { name:"isLdap", displayName:"Type", isRequired:false, isHidden:true }
-  ],
-  fields:[],
-  disableUsername:function () {
-    this.getField("userName").set("disabled", "disabled");
-  }.observes('object'),
-  disableAdminCheckbox:function () {
-    var object = this.get('object');
-    if (object) {
-      if (object.get('userName') == App.get('router').getLoginName()) {
-        this.getField("admin").set("disabled", true);
-      } else {
-        this.getField("admin").set("disabled", false);
-      }
-    }
-  }.observes('object'),
-
-  isValid:function () {
-
-    var isValid = this._super();
-    var thisForm = this;
-
-    var newPass = this.get('field.new_password');
-    var oldPass = this.get('field.old_password');
-    var passRetype = this.get('field.new_passwordRetype');
-
-    if (!validator.empty(newPass.get('value'))) {
-      if(validator.empty(oldPass.get('value'))){
-        oldPass.set('errorMessage', this.t('admin.users.editError.requiredField'));
-        isValid = false;
-      }
-      if (newPass.get('value') != passRetype.get('value')) {
-        passRetype.set('errorMessage', this.t('admin.users.createError.passwordValidation'));
-        isValid = false;
-      }
-    }
-
-    return isValid;
-  },
-
-  save: function () {
-    var object = this.get('object');
-    var formValues = {};
-    $.each(this.get('fields'), function () {
-      formValues[this.get('name')] = this.get('value');
-    });
-
-    $.each(formValues, function (k, v) {
-      object.set(k, v);
-    });
-
-    //App.store.commit();
-    this.set('result', 1);
-
-    return true;
-  }
-});
 App.CreateUserForm = App.Form.extend({
   className:App.User,
-  object:function () {
-    return App.router.get('mainAdminUserCreateController.content');
-  }.property('App.router.mainAdminUserCreateController.content'),
+  object: Em.computed.alias('App.router.mainAdminUserCreateController.content'),
 
   fieldsOptions:[
     { name:"userName", displayName:"Username", toLowerCase: function(){var v = this.get('value'); this.set('value', v.toLowerCase())}.observes('value') },
@@ -179,9 +107,6 @@ App.CreateUserForm = App.Form.extend({
 
     if (this.get('className')) {
       App.store.load(this.get('className'), App.dateTime(), formValues);
-    }
-    else {
-      console.log("Please define class name for your form " + this.constructor);
     }
 
     this.set('result', 1);

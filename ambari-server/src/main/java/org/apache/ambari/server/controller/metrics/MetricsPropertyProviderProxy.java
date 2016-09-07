@@ -20,6 +20,7 @@ package org.apache.ambari.server.controller.metrics;
 import org.apache.ambari.server.configuration.ComponentSSLConfiguration;
 import org.apache.ambari.server.controller.internal.AbstractPropertyProvider;
 import org.apache.ambari.server.controller.internal.PropertyInfo;
+import org.apache.ambari.server.controller.internal.URLStreamProvider;
 import org.apache.ambari.server.controller.metrics.ganglia.GangliaComponentPropertyProvider;
 import org.apache.ambari.server.controller.metrics.ganglia.GangliaHostComponentPropertyProvider;
 import org.apache.ambari.server.controller.metrics.ganglia.GangliaHostPropertyProvider;
@@ -33,11 +34,10 @@ import org.apache.ambari.server.controller.spi.Predicate;
 import org.apache.ambari.server.controller.spi.Request;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.SystemException;
-import org.apache.ambari.server.controller.utilities.StreamProvider;
+
 import java.util.Map;
 import java.util.Set;
 
-import static org.apache.ambari.server.controller.metrics.MetricsPaddingMethod.ZERO_PADDING_PARAM;
 import static org.apache.ambari.server.controller.metrics.MetricsServiceProvider.MetricsService;
 import static org.apache.ambari.server.controller.metrics.MetricsServiceProvider.MetricsService.GANGLIA;
 import static org.apache.ambari.server.controller.metrics.MetricsServiceProvider.MetricsService.TIMELINE_METRICS;
@@ -48,11 +48,12 @@ public class MetricsPropertyProviderProxy extends AbstractPropertyProvider {
   private AMSPropertyProvider amsPropertyProvider;
   private GangliaPropertyProvider gangliaPropertyProvider;
   private TimelineMetricCacheProvider cacheProvider;
+  private String clusterNamePropertyId;
 
   public MetricsPropertyProviderProxy(
     InternalType type,
     Map<String, Map<String, PropertyInfo>> componentPropertyInfoMap,
-    StreamProvider streamProvider,
+    URLStreamProvider streamProvider,
     ComponentSSLConfiguration configuration,
     TimelineMetricCacheProvider cacheProvider,
     MetricHostProvider hostProvider,
@@ -64,6 +65,7 @@ public class MetricsPropertyProviderProxy extends AbstractPropertyProvider {
     super(componentPropertyInfoMap);
     this.metricsServiceProvider = serviceProvider;
     this.cacheProvider = cacheProvider;
+    this.clusterNamePropertyId = clusterNamePropertyId;
 
     switch (type) {
       case Host:
@@ -103,7 +105,7 @@ public class MetricsPropertyProviderProxy extends AbstractPropertyProvider {
   }
 
   private void createHostPropertyProviders(Map<String, Map<String, PropertyInfo>> componentPropertyInfoMap,
-                                           StreamProvider streamProvider,
+                                           URLStreamProvider streamProvider,
                                            ComponentSSLConfiguration configuration,
                                            MetricHostProvider hostProvider,
                                            String clusterNamePropertyId,
@@ -126,7 +128,7 @@ public class MetricsPropertyProviderProxy extends AbstractPropertyProvider {
 }
 
   private void createHostComponentPropertyProviders(Map<String, Map<String, PropertyInfo>> componentPropertyInfoMap,
-                                            StreamProvider streamProvider,
+                                            URLStreamProvider streamProvider,
                                             ComponentSSLConfiguration configuration,
                                             MetricHostProvider hostProvider,
                                             String clusterNamePropertyId,
@@ -154,7 +156,7 @@ public class MetricsPropertyProviderProxy extends AbstractPropertyProvider {
   }
 
   private void createComponentPropertyProviders(Map<String, Map<String, PropertyInfo>> componentPropertyInfoMap,
-                                                StreamProvider streamProvider,
+                                                URLStreamProvider streamProvider,
                                                 ComponentSSLConfiguration configuration,
                                                 MetricHostProvider hostProvider,
                                                 String clusterNamePropertyId,
@@ -181,6 +183,10 @@ public class MetricsPropertyProviderProxy extends AbstractPropertyProvider {
   @Override
   public Set<Resource> populateResources(Set<Resource> resources, Request request,
                                          Predicate predicate) throws SystemException {
+
+    if(!checkAuthorizationForMetrics(resources, clusterNamePropertyId)) {
+      return resources;
+    }
 
     MetricsService metricsService = metricsServiceProvider.getMetricsServiceType();
 

@@ -23,10 +23,18 @@ import string
 import subprocess
 import sys
 import tempfile
+from tempfile import gettempdir
 
-from resource_management import *
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.default import default
+from resource_management.core.exceptions import Fail
+from resource_management.core.logger import Logger
+from resource_management.core.resources.system import Directory, Execute, File
+from resource_management.core.source import InlineTemplate, Template, DownloadSource
 from utils import get_property_value
 from ambari_commons.os_utils import remove_file
+from ambari_agent import Constants
 
 class KerberosScript(Script):
   KRB5_REALM_PROPERTIES = [
@@ -102,7 +110,7 @@ class KerberosScript(Script):
 
     Directory(params.krb5_conf_dir,
               owner='root',
-              recursive=True,
+              create_parents = True,
               group='root',
               mode=0755
     )
@@ -284,6 +292,14 @@ class KerberosScript(Script):
     return success
 
   @staticmethod
+  def clear_tmp_cache():
+    tmp_dir = Constants.AGENT_TMP_DIR
+    if tmp_dir is None:
+      tmp_dir = gettempdir()
+    curl_krb_cache_path = os.path.join(tmp_dir, "curl_krb_cache")
+    Directory(curl_krb_cache_path, action="delete")
+
+  @staticmethod
   def create_principals(identities, auth_identity=None):
     if identities is not None:
       for identity in identities:
@@ -366,7 +382,7 @@ class KerberosScript(Script):
           if (keytab_file_path is not None) and (len(keytab_file_path) > 0):
             head, tail = os.path.split(keytab_file_path)
             if head:
-              Directory(head, recursive=True, mode=0755, owner="root", group="root")
+              Directory(head, create_parents = True, mode=0755, owner="root", group="root")
 
             owner = get_property_value(item, 'keytab_file_owner_name')
             owner_access = get_property_value(item, 'keytab_file_owner_access')
@@ -438,7 +454,7 @@ class KerberosScript(Script):
     if params.jce_policy_zip is not None:
       jce_curl_target = format("{artifact_dir}/{jce_policy_zip}")
       Directory(params.artifact_dir,
-                recursive = True,
+                create_parents = True,
                 )
       File(jce_curl_target,
            content = DownloadSource(format("{jce_location}/{jce_policy_zip}")),

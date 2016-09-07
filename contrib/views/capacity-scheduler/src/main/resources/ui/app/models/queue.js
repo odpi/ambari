@@ -35,7 +35,16 @@ App.Label = DS.Model.extend({
   }.property('store.nodeLabels.content.@each.notExist'),
   isDefault: function () {
     return this.get('queue.default_node_label_expression') === this.get('name');
-  }.property('queue.default_node_label_expression')
+  }.property('queue.default_node_label_expression'),
+  absoluteCapacity: 0,
+  setCapacity: function(cap) {
+    this.set('capacity', cap);
+  },
+  setMaxCapacity: function(maxCap) {
+    this.set('maximum_capacity', maxCap);
+  },
+  isDirtyLabelCapacity: false,
+  isDirtyLabelMaxCapacity: false
 });
 
 App.Scheduler = DS.Model.extend({
@@ -145,6 +154,54 @@ App.Queue = DS.Model.extend({
     }
   },
 
+  removeQueueNodeLabel: function(qLabel) {
+    qLabel = this.get('labels').findBy('name', qLabel.get('name'));
+    if (qLabel) {
+      if (this.get('labels').contains(qLabel)) {
+        this.get('labels').removeObject(qLabel);
+      }
+      if (!this.get('nonAccessibleLabels').contains(qLabel)) {
+        this.get('nonAccessibleLabels').addObject(qLabel);
+      }
+      qLabel.setCapacity(0);
+      qLabel.setMaxCapacity(100);
+      this.notifyPropertyChange('labels');
+      this.notifyPropertyChange('nonAccessibleLabels');
+    }
+  },
+
+  recursiveRemoveChildQueueLabels: function(qLabel) {
+    qLabel = this.get('labels').findBy('name', qLabel.get('name'));
+    if (qLabel) {
+      this.removeQueueNodeLabel(qLabel);
+      var childrenQs = this.store.all('queue').filterBy('depth', this.get('depth') + 1).filterBy('parentPath', this.get('path'));
+      childrenQs.forEach(function(child){
+        child.recursiveRemoveChildQueueLabels(qLabel);
+      }.bind(this));
+    }
+  },
+
+  addQueueNodeLabel: function(qLabel) {
+    qLabel = this.store.getById('label', [this.get('path'), qLabel.get('name')].join('.'));
+    if (!this.get('labels').contains(qLabel)) {
+      this.get('labels').addObject(qLabel);
+    }
+    if (this.get('nonAccessibleLabels').contains(qLabel)) {
+      this.get('nonAccessibleLabels').removeObject(qLabel);
+    }
+    this.notifyPropertyChange('labels');
+    this.notifyPropertyChange('nonAccessibleLabels');
+  },
+
+  recursiveAddChildQueueLabels: function(qLabel) {
+    qLabel = this.store.getById('label', [this.get('path'), qLabel.get('name')].join('.'));
+    this.addQueueNodeLabel(qLabel);
+    var childrenQs = this.store.all('queue').filterBy('depth', this.get('depth') + 1).filterBy('parentPath', this.get('path'));
+    childrenQs.forEach(function(child) {
+      child.recursiveAddChildQueueLabels(qLabel);
+    }.bind(this));
+  },
+
   isAnyDirty: function () {
     return this.get('isDirty') || !Em.isEmpty(this.get('labels').findBy('isDirty',true)) || this.get('isLabelsDirty');
   }.property('isDirty','labels.@each.isDirty','initialLabels','isLabelsDirty'),
@@ -153,6 +210,13 @@ App.Queue = DS.Model.extend({
   labelsLoad:function() {
     this.set('labelsEnabled',this._data.labelsEnabled);
     this.set('initialLabels',this.get('labels').mapBy('id'));
+
+    //Setting root label capacity to 100
+    if (this.get('id') === 'root') {
+      this.get('labels').forEach(function(label){
+        label.set('capacity', 100);
+      });
+    }
   }.on('didLoad','didUpdate','didCreate'),
 
   isLabelsDirty:function () {
@@ -181,11 +245,17 @@ App.Queue = DS.Model.extend({
   capacity: DS.attr('number', { defaultValue: 0 }),
   maximum_capacity: DS.attr('number', { defaultValue: 0 }),
   //unfunded_capacity: DS.attr('number', { defaultValue: 0 }),
+  isDirtyCapacity: false,
+  isDirtyMaxCapacity: false,
 
   user_limit_factor: DS.attr('number', { defaultValue: 1 }),
   minimum_user_limit_percent: DS.attr('number', { defaultValue: 100 }),
   maximum_applications: DS.attr('number', { defaultValue: null }),
   maximum_am_resource_percent: DS.attr('number', { defaultValue: null }),
+
+  disable_preemption: DS.attr('string', {defaultValue: ''}),
+  isPreemptionInherited: DS.attr('boolean', {defaultValue: true}),
+  isPreemptionOverriden: false,
 
   queues: DS.attr('string'),
   queuesArray:function (key,val) {
@@ -209,6 +279,14 @@ App.Queue = DS.Model.extend({
 
     return this.get('_overCapacity') || !Em.isEmpty(this.get('labels').filterBy('overCapacity'));
   }.property('_overCapacity','labels.@each.overCapacity'),
+
+  isInvalidMaxCapacity: false,
+  isInvalidLabelMaxCapacity: false,
+
+  nonAccessibleLabels: [],
+
+  //queue state from resource manager
+  rmQueueState: 'UNKNOWN',
 
   //new queue flag
   isNewQueue:DS.attr('boolean', {defaultValue: false}),

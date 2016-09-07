@@ -19,46 +19,61 @@ package org.apache.ambari.server.utils;
 
 import java.util.Arrays;
 import java.util.Collections;
-
-import java.util.concurrent.Callable;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionService;
-import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.ThreadFactory;
-import java.util.List;
-import java.util.LinkedList;
-import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import org.eclipse.persistence.internal.helper.ConcurrencyManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- *  This class provides support for parallel loops.
- *  Iterations in the loop run in parallel in parallel loops.
+ * <b>TEMPORARILY DO NOT USE WITH JPA ENTITIES</b>
+ * <p/>
+ * Deprecated since the use of this class to access JPA from multiple Ambari
+ * threads seems to cause thread liveliness problems in
+ * {@link ConcurrencyManager}.
+ * <p/>
+ * This class provides support for parallel loops. Iterations in the loop run in
+ * parallel in parallel loops.
  */
+@Deprecated
 public class Parallel {
 
   /**
    * Max pool size
    */
-  private static final int MAX_POOL_SIZE = Math.max(2, Runtime.getRuntime().availableProcessors());
+  private static final int MAX_POOL_SIZE = Math.max(8, Runtime.getRuntime().availableProcessors());
 
   /**
-   * Keep alive time (1 sec)
+   * Keep alive time (15 min)
    */
-  private static final int KEEP_ALIVE_TIME_MILLISECONDS = 1000;
+  // !!! changed from 1 second because EclipseLink was making threads idle and
+  // they kept timing out
+  private static final int KEEP_ALIVE_TIME_MINUTES = 15;
 
   /**
    * Poll duration (10 secs)
    */
   private static final int POLL_DURATION_MILLISECONDS = 10000;
+
+  /**
+   * Core pool size
+   */
+  private static final int CORE_POOL_SIZE = 2;
 
   /**
    * Logger
@@ -81,10 +96,10 @@ public class Parallel {
 
     // Create thread pool
     ThreadPoolExecutor threadPool = new ThreadPoolExecutor(
-        0,                                        // Core pool size
+        CORE_POOL_SIZE,                           // Core pool size
         MAX_POOL_SIZE,                            // Max pool size
-        KEEP_ALIVE_TIME_MILLISECONDS,             // Keep alive time for idle threads
-        TimeUnit.MILLISECONDS,
+        KEEP_ALIVE_TIME_MINUTES,                  // Keep alive time for idle threads
+        TimeUnit.MINUTES,
         blockingQueue,                            // Using synchronous queue
         new ParallelLoopsThreadFactory(),         // Thread pool factory to use
         new ThreadPoolExecutor.CallerRunsPolicy() // Rejected tasks will run on calling thread.
@@ -171,11 +186,16 @@ public class Parallel {
 
     boolean completed = true;
     R[] result = (R[]) new Object[futures.size()];
-    try {
-      for (int i = 0; i < futures.size(); i++) {
-        Future<ResultWrapper<R>> futureResult = completionService.poll(POLL_DURATION_MILLISECONDS, TimeUnit.MILLISECONDS);
+    for (int i = 0; i < futures.size(); i++) {
+      try {
+        Future<ResultWrapper<R>> futureResult = null;
+        try {
+          futureResult = completionService.poll(POLL_DURATION_MILLISECONDS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+          LOG.error("Caught InterruptedException in Parallel.forLoop", e);
+        }
         if (futureResult == null) {
-          // Time out! no progress was made during the last poll duration. Abort the threads and cancel the threads.
+          // Timed out! no progress was made during the last poll duration. Abort the threads and cancel the threads.
           LOG.error("Completion service in Parallel.forLoop timed out!");
           completed = false;
           for(int fIndex = 0; fIndex < futures.size(); fIndex++) {
@@ -190,6 +210,7 @@ public class Parallel {
               LOG.debug("    Task - {} successfully cancelled", fIndex);
             }
           }
+          // Finished processing all futures
           break;
         } else {
           ResultWrapper<R> res = futureResult.get();
@@ -200,13 +221,16 @@ public class Parallel {
             completed = false;
           }
         }
+      } catch (InterruptedException e) {
+        LOG.error("Caught InterruptedException in Parallel.forLoop", e);
+        completed = false;
+      } catch (ExecutionException e) {
+        LOG.error("Caught ExecutionException in Parallel.forLoop", e);
+        completed = false;
+      } catch (CancellationException e) {
+        LOG.error("Caught CancellationException in Parallel.forLoop", e);
+        completed = false;
       }
-    } catch (InterruptedException e) {
-      LOG.error("Caught InterruptedException in Parallel.forLoop", e);
-      completed = false;
-    } catch (ExecutionException e) {
-      LOG.error("Caught ExecutionException in Parallel.forLoop", e);
-      completed = false;
     }
     // Return parallel loop result
     return new ParallelLoopResult<R>(completed, Arrays.asList(result));

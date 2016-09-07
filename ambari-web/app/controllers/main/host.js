@@ -18,23 +18,28 @@
 
 var App = require('app');
 var validator = require('utils/validator');
-var batchUtils = require('utils/batch_scheduled_requests');
-var hostsManagement = require('utils/hosts');
 
 App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
   name: 'mainHostController',
 
-  dataSource: App.Host.find(),
   clearFilters: null,
 
   filteredCount: 0,
+
   /**
    * total number of installed hosts
+   * @type {number}
    */
   totalCount: function () {
     return this.get('hostsCountMap')['TOTAL'] || 0;
   }.property('hostsCountMap'),
+
+  /**
+   * @type {boolean}
+   * @default false
+   */
   resetStartIndex: false,
+
   /**
    * flag responsible for updating status counters of hosts
    */
@@ -100,7 +105,17 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
     {
       name: 'hostComponents',
       key: 'host_components/HostRoles/component_name',
-      type: 'MULTIPLE'
+      type: 'EQUAL'
+    },
+    {
+      name: 'services',
+      key: 'host_components/HostRoles/service_name',
+      type: 'MATCH'
+    },
+    {
+      name: 'state',
+      key: 'host_components/HostRoles/state',
+      type: 'MATCH'
     },
     {
       name: 'healthClass',
@@ -109,7 +124,7 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
     },
     {
       name: 'criticalWarningAlertsCount',
-      key: 'alerts_summary/CRITICAL{0}|alerts_summary/WARNING{1}',
+      key: '(alerts_summary/CRITICAL{0}|alerts_summary/WARNING{1})',
       type: 'CUSTOM'
     },
     {
@@ -128,9 +143,29 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
       type: 'MULTIPLE'
     },
     {
+      name: 'version',
+      key: 'stack_versions/repository_versions/RepositoryVersions/display_name',
+      type: 'EQUAL'
+    },
+    {
+      name: 'versionState',
+      key: 'stack_versions/HostStackVersions/state',
+      type: 'EQUAL'
+    },
+    {
       name: 'hostStackVersion',
       key: 'stack_versions',
       type: 'EQUAL'
+    },
+    {
+      name: 'componentState',
+      key: [
+        '(host_components/HostRoles/component_name={0})',
+        '(host_components/HostRoles/component_name={0}&host_components/HostRoles/state={1})',
+        '(host_components/HostRoles/component_name={0}&host_components/HostRoles/desired_admin_state={1})',
+        '(host_components/HostRoles/component_name={0}&host_components/HostRoles/maintenance_state={1})'
+      ],
+      type: 'COMBO'
     }
   ],
 
@@ -223,10 +258,17 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
           key: property.key,
           value: filter.value,
           type: property.type,
-          isFilter: true
+          isFilter: true,
+          isComponentRelatedFilter: ([13,15].indexOf(filter.iColumn) != -1)
         };
         if (filter.type === 'string' && sortProperties.someProperty('name', colPropAssoc[filter.iColumn])) {
-          result.value = this.getRegExp(filter.value);
+          if (Em.isArray(filter.value)) {
+            for(var i = 0; i < filter.value.length; i++) {
+              filter.value[i] = this.getRegExp(filter.value[i]);
+            }
+          } else {
+            result.value = this.getRegExp(filter.value);
+          }
         }
         if (filter.type === 'number' || filter.type === 'ambari-bandwidth') {
           result.type = this.getComparisonType(filter.value);
@@ -317,8 +359,6 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
       'UNHEALTHY': data.Clusters.health_report['Host/host_status/UNHEALTHY'],
       'ALERT': data.Clusters.health_report['Host/host_status/ALERT'],
       'UNKNOWN': data.Clusters.health_report['Host/host_status/UNKNOWN'],
-      'health-status-WITH-ALERTS': (data.alerts_summary_hosts) ? data.alerts_summary_hosts.CRITICAL + data.alerts_summary_hosts.WARNING : 0,
-      'health-status-CRITICAL': (data.alerts_summary_hosts) ? data.alerts_summary_hosts.CRITICAL : 0,
       'health-status-RESTART': data.Clusters.health_report['Host/stale_config'],
       'health-status-PASSIVE_STATE': data.Clusters.health_report['Host/maintenance_state'],
       'TOTAL': data.Clusters.total_hosts
@@ -330,9 +370,7 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
   /**
    * success callback on <code>updateStatusCounters()</code>
    */
-  updateStatusCountersErrorCallback: function() {
-    console.warn('ERROR: updateStatusCounters failed')
-  },
+  updateStatusCountersErrorCallback: Em.K,
 
   /**
    * Return value without predicate
@@ -340,13 +378,13 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
    * @return {String}
    */
   getProperValue: function (value) {
-    return (value.charAt(0) === '>' || value.charAt(0) === '<' || value.charAt(0) === '=') ? value.substr(1, value.length) : value;
+    return (['>', '<', '='].contains(value.charAt(0))) ? value.substr(1, value.length) : value;
   },
 
   /**
    * Return value converted to kilobytes
    * @param {String} value
-   * @return {*}
+   * @return {number}
    */
   convertMemory: function (value) {
     var scale = value.charAt(value.length - 1);
@@ -385,7 +423,7 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
     value = this.getProperValue(value);
     var parsedValue = parseFloat(value);
     if (isNaN(parsedValue)) {
-      return value;
+      return [0, 0];
     }
     var parsedValuePair = this.rangeConvertNumber(parsedValue, scale);
     var multiplyingFactor = 1;
@@ -418,7 +456,7 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
    */
   rangeConvertNumber: function (value, scale) {
     if (isNaN(value)) {
-      return value;
+      return [0, 0];
     }
     var valuePair = [];
     switch (scale) {
@@ -438,8 +476,8 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
 
   /**
    * Return comparison type depending on populated predicate
-   * @param value
-   * @return {String}
+   * @param {string} value
+   * @return {string}
    */
   getComparisonType: function (value) {
     var comparisonChar = value.charAt(0);
@@ -457,49 +495,61 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
     return result;
   },
 
+  labelValueMap: {},
+
   /**
    * Filter hosts by componentName of <code>component</code>
    * @param {App.HostComponent} component
    */
   filterByComponent: function (component) {
-    if (!component)
-      return;
-    var id = component.get('componentName');
-    var column = 6;
+    if (!component) return;
+    var componentName = component.get('componentName');
+    var displayName = App.format.role(componentName, false);
+    var colPropAssoc = this.get('colPropAssoc');
+    var map = this.get('labelValueMap');
 
     var filterForComponent = {
-      iColumn: column,
-      value: [id],
-      type: 'multiple'
+      iColumn: 15,
+      value: componentName + ':ALL',
+      type: 'string'
     };
+    map[displayName] = componentName;
+    map['All'] = 'ALL';
+    var filterStr = '"' + displayName + '"' + ': "All"';
     App.db.setFilterConditions(this.get('name'), [filterForComponent]);
+    App.db.setComboSearchQuery(this.get('name'), filterStr);
   },
 
   /**
    * Filter hosts by stack version and state
    * @param {String} displayName
-   * @param {String} state
+   * @param {Array} states
    */
-  filterByStack: function (displayName, state) {
-    if (!displayName || !state)
-      return;
-    var column = 11;
+  filterByStack: function (displayName, states) {
+    if (Em.isNone(displayName) || Em.isNone(states) || !states.length) return;
+    var colPropAssoc = this.get('colPropAssoc');
+    var map = this.get('labelValueMap');
+    var stateFilterStrs = [];
 
-    var filterForStack = {
-      iColumn: column,
-      value: [
-        {
-          property: 'repository_versions/RepositoryVersions/display_name',
-          value: displayName
-        },
-        {
-          property: 'HostStackVersions/state',
-          value: state.toUpperCase()
-        }
-      ],
-      type: 'sub-resource'
+    var versionFilter = {
+      iColumn: 16,
+      value: displayName,
+      type: 'string'
     };
-    App.db.setFilterConditions(this.get('name'), [filterForStack]);
+    var stateFilter = {
+      iColumn: 17,
+      value: states,
+      type: 'string'
+    };
+    map["Stack Version"] = colPropAssoc[versionFilter.iColumn];
+    map["Version State"] = colPropAssoc[stateFilter.iColumn];
+    stateFilter.value.forEach(function(state) {
+      map[App.HostStackVersion.formatStatus(state)] = state;
+      stateFilterStrs.push('"Version State": "' + App.HostStackVersion.formatStatus(state) + '"');
+    });
+    var versionFilterStr = '"Stack Version": "' + versionFilter.value + '"';
+    App.db.setFilterConditions(this.get('name'), [versionFilter, stateFilter]);
+    App.db.setComboSearchQuery(this.get('name'), [versionFilterStr, stateFilterStrs.join(' ')].join(' '));
   },
 
   goToHostAlerts: function (event) {
@@ -514,10 +564,7 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
    */
   removeHosts: function () {
     var hosts = this.get('content');
-    var selectedHosts = hosts.filterProperty('isChecked', true);
-    selectedHosts.forEach(function (_hostInfo) {
-      console.log('Removing:  ' + _hostInfo.hostName);
-    });
+    var selectedHosts = hosts.filterProperty('isChecked');
     this.get('fullContent').removeObjects(selectedHosts);
   },
 
@@ -529,474 +576,6 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
     var hosts = this.get('content');
     var selectedHosts = hosts.filterProperty('id', host_id);
     this.get('fullContent').removeObjects(selectedHosts);
-  },
-
-  /**
-   * Bulk operation wrapper
-   * @param {Object} operationData - data about bulk operation (action, hosts or hostComponents etc)
-   * @param {Array} hosts - list of affected hosts
-   */
-  bulkOperation: function (operationData, hosts) {
-    if (operationData.componentNameFormatted) {
-      if (operationData.action === 'RESTART') {
-        this.bulkOperationForHostComponentsRestart(operationData, hosts);
-      }
-      else {
-        if (operationData.action.indexOf('DECOMMISSION') != -1) {
-          this.bulkOperationForHostComponentsDecommission(operationData, hosts);
-        }
-        else {
-          this.bulkOperationForHostComponents(operationData, hosts);
-        }
-      }
-    }
-    else {
-      if (operationData.action === 'SET_RACK_INFO') {
-        this.bulkOperationForHostsSetRackInfo(operationData, hosts);
-      } else if (operationData.action === 'RESTART') {
-        this.bulkOperationForHostsRestart(operationData, hosts);
-      }
-      else {
-        if (operationData.action === 'PASSIVE_STATE') {
-          this.bulkOperationForHostsPassiveState(operationData, hosts);
-        }
-        else {
-          this.bulkOperationForHosts(operationData, hosts);
-        }
-      }
-    }
-  },
-
-  /**
-   * Bulk operation (start/stop all) for selected hosts
-   * @param {Object} operationData - data about bulk operation (action, hostComponents etc)
-   * @param {Array} hosts - list of affected hosts
-   */
-  bulkOperationForHosts: function (operationData, hosts) {
-    var self = this;
-
-    batchUtils.getComponentsFromServer({
-      hosts: hosts.mapProperty('hostName'),
-      passiveState: 'OFF',
-      displayParams: ['host_components/HostRoles/component_name']
-    }, function (data) {
-      self.bulkOperationForHostsCallback(operationData, data);
-    });
-  },
-  /**
-   * run Bulk operation (start/stop all) for selected hosts
-   * after host and components are loaded
-   * @param operationData
-   * @param data
-   */
-  bulkOperationForHostsCallback: function (operationData, data) {
-    var query = [];
-    var hostNames = [];
-    var hostsMap = {};
-
-    data.items.forEach(function (host) {
-      host.host_components.forEach(function (hostComponent) {
-        if (!App.components.get('clients').contains((hostComponent.HostRoles.component_name))) {
-          if (hostsMap[host.Hosts.host_name]) {
-            hostsMap[host.Hosts.host_name].push(hostComponent.HostRoles.component_name);
-          } else {
-            hostsMap[host.Hosts.host_name] = [hostComponent.HostRoles.component_name];
-          }
-        }
-      });
-    });
-
-    var nn_hosts = [];
-    for (var hostName in hostsMap) {
-      var subQuery = '(HostRoles/component_name.in(%@)&HostRoles/host_name=' + hostName + ')';
-      var components = hostsMap[hostName];
-
-      if (components.length) {
-        if (components.indexOf('NAMENODE') >= 0) {
-          nn_hosts.push(hostName);
-        }
-        query.push(subQuery.fmt(components.join(',')));
-      }
-      hostNames.push(hostName);
-    }
-    hostNames = hostNames.join(",");
-    if (query.length) {
-      query = query.join('|');
-      var self = this;
-      // if NameNode included, check HDFS NameNode checkpoint before stop NN
-      if (nn_hosts.length == 1 && operationData.action === 'INSTALLED' && App.Service.find().filterProperty('serviceName', 'HDFS').someProperty('workStatus', App.HostComponentStatus.started)) {
-        var hostName = nn_hosts[0];
-        App.router.get('mainHostDetailsController').checkNnLastCheckpointTime(function () {
-          App.ajax.send({
-            name: 'common.host_components.update',
-            sender: self,
-            data: {
-              query: query,
-              HostRoles: {
-                state: operationData.action
-              },
-              context: operationData.message,
-              hostName: hostNames,
-              noOpsMessage: Em.I18n.t('hosts.host.maintainance.allComponents.context')
-            },
-            success: 'bulkOperationForHostComponentsSuccessCallback'
-          });
-        }, hostName);
-      } else if (nn_hosts.length == 2 && operationData.action === 'INSTALLED' && App.Service.find().filterProperty('serviceName', 'HDFS').someProperty('workStatus', App.HostComponentStatus.started)) {
-        // HA enabled
-        App.router.get('mainServiceItemController').checkNnLastCheckpointTime(function () {
-          App.ajax.send({
-            name: 'common.host_components.update',
-            sender: self,
-            data: {
-              query: query,
-              HostRoles: {
-                state: operationData.action
-              },
-              context: operationData.message,
-              hostName: hostNames,
-              noOpsMessage: Em.I18n.t('hosts.host.maintainance.allComponents.context')
-            },
-            success: 'bulkOperationForHostComponentsSuccessCallback'
-          });
-        });
-      } else {
-        App.ajax.send({
-          name: 'common.host_components.update',
-          sender: self,
-          data: {
-            query: query,
-            HostRoles: {
-              state: operationData.action
-            },
-            context: operationData.message,
-            hostName: hostNames,
-            noOpsMessage: Em.I18n.t('hosts.host.maintainance.allComponents.context')
-          },
-          success: 'bulkOperationForHostComponentsSuccessCallback'
-        });
-      }
-    }
-    else {
-      App.ModalPopup.show({
-        header: Em.I18n.t('rolling.nothingToDo.header'),
-        body: Em.I18n.t('rolling.nothingToDo.body').format(Em.I18n.t('hosts.host.maintainance.allComponents.context')),
-        secondary: false
-      });
-    }
-  },
-
-  bulkOperationForHostsSetRackInfo: function (operationData, hosts) {
-    hostsManagement.setRackInfo(operationData, hosts);
-  },
-
-   /**
-   * Bulk restart for selected hosts
-   * @param {Object} operationData - data about bulk operation (action, hostComponents etc)
-   * @param {Ember.Enumerable} hosts - list of affected hosts
-   */
-  bulkOperationForHostsRestart: function (operationData, hosts) {
-    batchUtils.getComponentsFromServer({
-      passiveState: 'OFF',
-      hosts: hosts.mapProperty('hostName'),
-      displayParams: ['host_components/HostRoles/component_name']
-    }, function (data) {
-      var hostComponents = [];
-      data.items.forEach(function (host) {
-        host.host_components.forEach(function (hostComponent) {
-          hostComponents.push(Em.Object.create({
-            componentName: hostComponent.HostRoles.component_name,
-            hostName: host.Hosts.host_name
-          }));
-        })
-      });
-      // if NameNode included, check HDFS NameNode checkpoint before restart NN
-      var nn_count = hostComponents.filterProperty('componentName', 'NAMENODE').get('length');
-      if (nn_count == 1 && App.Service.find().filterProperty('serviceName', 'HDFS').someProperty('workStatus', App.HostComponentStatus.started)) {
-        var hostName = hostComponents.findProperty('componentName', 'NAMENODE').get('hostName');
-        App.router.get('mainHostDetailsController').checkNnLastCheckpointTime(function () {
-          batchUtils.restartHostComponents(hostComponents, Em.I18n.t('rollingrestart.context.allOnSelectedHosts'), "HOST");
-        }, hostName);
-      } else if (nn_count == 2 && App.Service.find().filterProperty('serviceName', 'HDFS').someProperty('workStatus', App.HostComponentStatus.started)) {
-        // HA enabled
-        App.router.get('mainServiceItemController').checkNnLastCheckpointTime(function () {
-          batchUtils.restartHostComponents(hostComponents, Em.I18n.t('rollingrestart.context.allOnSelectedHosts'), "HOST");
-        });
-      } else {
-        batchUtils.restartHostComponents(hostComponents, Em.I18n.t('rollingrestart.context.allOnSelectedHosts'), "HOST");
-      }
-    });
-  },
-
-  /**
-   * Bulk turn on/off passive state for selected hosts
-   * @param {Object} operationData - data about bulk operation (action, hostComponents etc)
-   * @param {Array} hosts - list of affected hosts
-   */
-  bulkOperationForHostsPassiveState: function (operationData, hosts) {
-    var self = this;
-
-    batchUtils.getComponentsFromServer({
-      hosts: hosts.mapProperty('hostName'),
-      displayParams: ['Hosts/maintenance_state']
-    }, function (data) {
-      var hostNames = [];
-
-      data.items.forEach(function (host) {
-        if (host.Hosts.maintenance_state !== operationData.state) {
-          hostNames.push(host.Hosts.host_name);
-        }
-      });
-      if (hostNames.length) {
-        App.ajax.send({
-          name: 'bulk_request.hosts.passive_state',
-          sender: self,
-          data: {
-            hostNames: hostNames.join(','),
-            passive_state: operationData.state,
-            requestInfo: operationData.message
-          },
-          success: 'updateHostPassiveState'
-        });
-      } else {
-        App.ModalPopup.show({
-          header: Em.I18n.t('rolling.nothingToDo.header'),
-          body: Em.I18n.t('hosts.bulkOperation.passiveState.nothingToDo.body'),
-          secondary: false
-        });
-      }
-    });
-  },
-
-  updateHostPassiveState: function (data, opt, params) {
-    batchUtils.infoPassiveState(params.passive_state);
-  },
-  /**
-   * Bulk operation for selected hostComponents
-   * @param {Object} operationData - data about bulk operation (action, hostComponents etc)
-   * @param {Array} hosts - list of affected hosts
-   */
-  bulkOperationForHostComponents: function (operationData, hosts) {
-    var self = this;
-
-    batchUtils.getComponentsFromServer({
-      components: [operationData.componentName],
-      hosts: hosts.mapProperty('hostName'),
-      passiveState: 'OFF'
-    }, function (data) {
-      if (data.items.length) {
-        var hostsWithComponentInProperState = data.items.mapProperty('Hosts.host_name');
-        App.ajax.send({
-          name: 'common.host_components.update',
-          sender: self,
-          data: {
-            HostRoles: {
-              state: operationData.action
-            },
-            query: 'HostRoles/component_name=' + operationData.componentName + '&HostRoles/host_name.in(' + hostsWithComponentInProperState.join(',') + ')&HostRoles/maintenance_state=OFF',
-            context: operationData.message + ' ' + operationData.componentNameFormatted,
-            level: 'SERVICE',
-            noOpsMessage: operationData.componentNameFormatted
-          },
-          success: 'bulkOperationForHostComponentsSuccessCallback'
-        });
-      }
-      else {
-        App.ModalPopup.show({
-          header: Em.I18n.t('rolling.nothingToDo.header'),
-          body: Em.I18n.t('rolling.nothingToDo.body').format(operationData.componentNameFormatted),
-          secondary: false
-        });
-      }
-    });
-  },
-
-  /**
-   * Bulk decommission/recommission for selected hostComponents
-   * @param {Object} operationData
-   * @param {Array} hosts
-   */
-  bulkOperationForHostComponentsDecommission: function (operationData, hosts) {
-    var self = this;
-
-    batchUtils.getComponentsFromServer({
-      components: [operationData.realComponentName],
-      hosts: hosts.mapProperty('hostName'),
-      passiveState: 'OFF',
-      displayParams: ['host_components/HostRoles/state']
-    }, function (data) {
-      self.bulkOperationForHostComponentsDecommissionCallBack(operationData, data)
-    });
-  },
-
-  /**
-   * run Bulk decommission/recommission for selected hostComponents
-   * after host and components are loaded
-   * @param operationData
-   * @param data
-   */
-  bulkOperationForHostComponentsDecommissionCallBack: function (operationData, data) {
-    var service = App.Service.find(operationData.serviceName);
-    var components = [];
-
-    data.items.forEach(function (host) {
-      host.host_components.forEach(function (hostComponent) {
-        components.push(Em.Object.create({
-          componentName: hostComponent.HostRoles.component_name,
-          hostName: host.Hosts.host_name,
-          workStatus: hostComponent.HostRoles.state
-        }))
-      });
-    });
-
-    if (components.length) {
-      var hostsWithComponentInProperState = components.mapProperty('hostName');
-      var turn_off = operationData.action.indexOf('OFF') !== -1;
-      var svcName = operationData.serviceName;
-      var masterName = operationData.componentName;
-      var slaveName = operationData.realComponentName;
-      var hostNames = hostsWithComponentInProperState.join(',');
-      if (turn_off) {
-        // For recommession
-        if (svcName === "YARN" || svcName === "HBASE" || svcName === "HDFS") {
-          App.router.get('mainHostDetailsController').doRecommissionAndStart(hostNames, svcName, masterName, slaveName);
-        }
-      } else {
-        hostsWithComponentInProperState = components.filterProperty('workStatus', 'STARTED').mapProperty('hostName');
-        //For decommession
-        if (svcName == "HBASE") {
-          // HBASE service, decommission RegionServer in batch requests
-          this.warnBeforeDecommission(hostNames);
-        } else {
-          var parameters = {
-            "slave_type": slaveName
-          };
-          var contextString = turn_off ? 'hosts.host.' + slaveName.toLowerCase() + '.recommission' :
-              'hosts.host.' + slaveName.toLowerCase() + '.decommission';
-          if (turn_off) {
-            parameters['included_hosts'] = hostsWithComponentInProperState.join(',')
-          }
-          else {
-            parameters['excluded_hosts'] = hostsWithComponentInProperState.join(',');
-          }
-          App.ajax.send({
-            name: 'bulk_request.decommission',
-            sender: this,
-            data: {
-              context: Em.I18n.t(contextString),
-              serviceName: service.get('serviceName'),
-              componentName: operationData.componentName,
-              parameters: parameters,
-              noOpsMessage: operationData.componentNameFormatted
-            },
-            success: 'bulkOperationForHostComponentsSuccessCallback'
-          });
-        }
-      }
-    }
-    else {
-      App.ModalPopup.show({
-        header: Em.I18n.t('rolling.nothingToDo.header'),
-        body: Em.I18n.t('rolling.nothingToDo.body').format(operationData.componentNameFormatted),
-        secondary: false
-      });
-    }
-  },
-
-
-  /**
-   * get info about regionserver passive_state
-   * @method warnBeforeDecommission
-   * @param {String} hostNames
-   * @return {$.ajax}
-   */
-  warnBeforeDecommission: function (hostNames) {
-    return App.ajax.send({
-      'name': 'host_components.hbase_regionserver.active',
-      'sender': this,
-      'data': {
-        hostNames: hostNames
-      },
-      success: 'warnBeforeDecommissionSuccess'
-    });
-  },
-
-  /**
-   * check is hbase regionserver in mm. If so - run decommission
-   * otherwise shows warning
-   * @method warnBeforeDecommission
-   * @param {Object} data
-   * @param {Object} opt
-   * @param {Object} params
-   */
-  warnBeforeDecommissionSuccess: function(data, opt, params) {
-    if (Em.get(data, 'items.length')) {
-      App.router.get('mainHostDetailsController').showHbaseActiveWarning();
-    } else {
-      App.router.get('mainHostDetailsController').checkRegionServerState(params.hostNames);
-    }
-  },
-  /**
-   * Bulk restart for selected hostComponents
-   * @param {Object} operationData
-   * @param {Array} hosts
-   */
-  bulkOperationForHostComponentsRestart: function (operationData, hosts) {
-    var service = App.Service.find(operationData.serviceName);
-
-    batchUtils.getComponentsFromServer({
-      components: [operationData.componentName],
-      hosts: hosts.mapProperty('hostName'),
-      passiveState: 'OFF',
-      displayParams: ['Hosts/maintenance_state', 'host_components/HostRoles/stale_configs', 'host_components/HostRoles/maintenance_state']
-    }, function (data) {
-      var wrappedHostComponents = [];
-
-      data.items.forEach(function (host) {
-        host.host_components.forEach(function (hostComponent) {
-          wrappedHostComponents.push(Em.Object.create({
-            componentName: hostComponent.HostRoles.component_name,
-            serviceName: operationData.serviceName,
-            hostName: host.Hosts.host_name,
-            hostPassiveState: host.Hosts.maintenance_state,
-            staleConfigs: hostComponent.HostRoles.stale_configs,
-            passiveState: hostComponent.HostRoles.maintenance_state
-          }))
-        });
-      });
-
-      if (wrappedHostComponents.length) {
-        batchUtils.showRollingRestartPopup(wrappedHostComponents.objectAt(0).get('componentName'), service.get('displayName'), service.get('passiveState') === "ON", false, wrappedHostComponents);
-      } else {
-        App.ModalPopup.show({
-          header: Em.I18n.t('rolling.nothingToDo.header'),
-          body: Em.I18n.t('rolling.nothingToDo.body').format(operationData.componentNameFormatted),
-          secondary: false
-        });
-      }
-    });
-  },
-
-  updateHostComponentsPassiveState: function (data, opt, params) {
-    batchUtils.infoPassiveState(params.passive_state);
-  },
-  /**
-   * Show BO popup after bulk request
-   */
-  bulkOperationForHostComponentsSuccessCallback: function (data, opt, params, req) {
-    if (!data && req.status == 200) {
-      App.ModalPopup.show({
-        header: Em.I18n.t('rolling.nothingToDo.header'),
-        body: Em.I18n.t('rolling.nothingToDo.body').format(params.noOpsMessage || Em.I18n.t('hosts.host.maintainance.allComponents.context')),
-        secondary: false
-      });
-    } else {
-      App.router.get('applicationController').dataLoading().done(function (initValue) {
-        if (initValue) {
-          App.router.get('backgroundOperationsController').showPopup();
-        }
-      });
-    }
   },
 
   /**
@@ -1018,6 +597,11 @@ App.MainHostController = Em.ArrayController.extend(App.TableServerMixin, {
     associations[10] = 'selected';
     associations[11] = 'hostStackVersion';
     associations[12] = 'rack';
+    associations[13] = 'services';
+    associations[14] = 'state';
+    associations[15] = 'componentState';
+    associations[16] = 'version';
+    associations[17] = 'versionState';
     return associations;
   }.property()
 

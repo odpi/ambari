@@ -35,6 +35,12 @@
             <scriptType>PYTHON</scriptType>
             <timeout>1200</timeout>
           </commandScript>
+          <logs>
+            <log>
+              <logId>flume_handler</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
         </component>
       </components>
 
@@ -58,6 +64,7 @@
       <configuration-dependencies>
         <config-type>flume-env</config-type>
         <config-type>flume-conf</config-type>
+        <config-type>ams-ssl-client</config-type>
       </configuration-dependencies>
 
     </service>

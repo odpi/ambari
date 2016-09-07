@@ -18,16 +18,18 @@
 
 package org.apache.ambari.server.api.services.serializers;
 
+import org.apache.ambari.server.api.services.DeleteResultMetadata;
 import org.apache.ambari.server.api.services.Result;
 import org.apache.ambari.server.api.services.ResultImpl;
 import org.apache.ambari.server.api.services.ResultStatus;
 import org.apache.ambari.server.api.util.TreeNode;
 import org.apache.ambari.server.controller.spi.Resource;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.junit.Test;
 
 import javax.ws.rs.core.UriInfo;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.easymock.EasyMock.*;
@@ -37,6 +39,7 @@ import static org.junit.Assert.assertEquals;
  * JSONSerializer unit tests
  */
 public class JsonSerializerTest {
+
   @Test
   public void testSerialize() throws Exception {
     UriInfo uriInfo = createMock(UriInfo.class);
@@ -52,15 +55,15 @@ public class JsonSerializerTest {
     //child.addChild(resource2, "sub-resource");
 
     // resource properties
-    HashMap<String, Object> mapRootProps = new HashMap<String, Object>();
-    mapRootProps.put("prop1", "value1");
+    Map<String, Object> mapRootProps = new LinkedHashMap<>();
     mapRootProps.put("prop2", "value2");
+    mapRootProps.put("prop1", "value1");
 
-    HashMap<String, Object> mapCategoryProps = new HashMap<String, Object>();
+    Map<String, Object> mapCategoryProps = new LinkedHashMap<String, Object>();
     mapCategoryProps.put("catProp1", "catValue1");
     mapCategoryProps.put("catProp2", "catValue2");
 
-    Map<String, Map<String, Object>> propertyMap = new HashMap<String, Map<String, Object>>();
+    Map<String, Map<String, Object>> propertyMap = new LinkedHashMap<String, Map<String, Object>>();
 
     propertyMap.put(null, mapRootProps);
     propertyMap.put("category", mapCategoryProps);
@@ -106,15 +109,15 @@ public class JsonSerializerTest {
     resourcesNode.addChild(resource, "resource1");
 
     // resource properties
-    HashMap<String, Object> mapRootProps = new HashMap<String, Object>();
-    mapRootProps.put("prop1", "value1");
+    Map<String, Object> mapRootProps = new LinkedHashMap<String, Object>();
     mapRootProps.put("prop2", "value2");
+    mapRootProps.put("prop1", "value1");
 
-    HashMap<String, Object> mapCategoryProps = new HashMap<String, Object>();
+    Map<String, Object> mapCategoryProps = new LinkedHashMap<String, Object>();
     mapCategoryProps.put("catProp1", "catValue1");
     mapCategoryProps.put("catProp2", "catValue2");
 
-    Map<String, Map<String, Object>> propertyMap = new HashMap<String, Map<String, Object>>();
+    Map<String, Map<String, Object>> propertyMap = new LinkedHashMap<String, Map<String, Object>>();
 
     propertyMap.put(null, mapRootProps);
     propertyMap.put("category", mapCategoryProps);
@@ -162,15 +165,15 @@ public class JsonSerializerTest {
     //child.addChild(resource2, "sub-resource");
 
     // resource properties
-    HashMap<String, Object> mapRootProps = new HashMap<String, Object>();
-    mapRootProps.put("prop1", "value1");
+    Map<String, Object> mapRootProps = new LinkedHashMap<String, Object>();
     mapRootProps.put("prop2", "value2");
+    mapRootProps.put("prop1", "value1");
 
-    HashMap<String, Object> mapCategoryProps = new HashMap<String, Object>();
+    Map<String, Object> mapCategoryProps = new LinkedHashMap<String, Object>();
     mapCategoryProps.put("catProp1", "catValue1");
     mapCategoryProps.put("catProp2", "catValue2");
 
-    Map<String, Map<String, Object>> propertyMap = new HashMap<String, Map<String, Object>>();
+    Map<String, Map<String, Object>> propertyMap = new LinkedHashMap<String, Map<String, Object>>();
 
     propertyMap.put(null, mapRootProps);
     propertyMap.put("category", mapCategoryProps);
@@ -207,6 +210,36 @@ public class JsonSerializerTest {
 
     verify(uriInfo, resource/*, resource2*/);
   }
-    
+
+  @Test
+  public void testDeleteResultMetadata() throws Exception {
+    Result result = new ResultImpl(true);
+    result.setResultStatus(new ResultStatus(ResultStatus.STATUS.OK));
+    DeleteResultMetadata metadata = new DeleteResultMetadata();
+    metadata.addDeletedKey("key1");
+    metadata.addException("key2", new AuthorizationException());
+    result.setResultMetadata(metadata);
+
+    String expected =
+        "{\n" +
+        "  \"deleteResult\" : [\n"+
+        "    {\n" +
+        "      \"deleted\" : {\n" +
+        "        \"key\" : \"key1\"\n" +
+        "      }\n" +
+        "    },\n" +
+        "    {\n" +
+        "      \"error\" : {\n" +
+        "        \"key\" : \"key2\",\n" +
+        "        \"code\" : 403,\n" +
+        "        \"message\" : \"org.apache.ambari.server.security.authorization.AuthorizationException:"+
+                              " The authenticated user is not authorized to perform the requested operation\"\n" +
+        "      }\n" +
+        "    }\n" +
+        "  ]\n" +
+        "}";
+    String  json = new JsonSerializer().serialize(result).toString().replace("\r", "");
+    assertEquals(expected, json);
+  }
   
 }

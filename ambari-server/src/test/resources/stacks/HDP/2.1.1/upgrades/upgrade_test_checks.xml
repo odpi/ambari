@@ -15,11 +15,35 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 -->
-<upgrade xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <target>2.2.*</target>
-  
+<upgrade xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="upgrade-pack.xsd">
+  <target>2.2.*.*</target>
+  <target-stack>HDP-2.2.0</target-stack>
+  <type>ROLLING</type>
+  <prerequisite-checks>
+    <check>org.apache.ambari.server.checks.HiveMultipleMetastoreCheck</check>
+    <check>org.apache.ambari.server.checks.MapReduce2JobHistoryStatePreservingCheck</check>
+    <check>org.apache.ambari.server.checks.SecondaryNamenodeDeletedCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesMapReduceDistributedCacheCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesNamenodeHighAvailabilityCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesNamenodeTruncateCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesTezDistributedCacheCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesYarnWorkPreservingCheck</check>
+    <check>org.apache.ambari.server.checks.YarnRMHighAvailabilityCheck</check>
+    <check>org.apache.ambari.server.checks.YarnTimelineServerStatePreservingCheck</check>
+
+    <configuration>
+      <property name="global-property-1">global-value-1</property>
+      <check-properties name="org.apache.ambari.server.checks.ServicesMapReduceDistributedCacheCheck">
+        <property name="dfs-protocols-regex">^([^:]*dfs|wasb|ecs):.*</property>
+      </check-properties>
+      <check-properties name="org.apache.ambari.server.checks.ServicesTezDistributedCacheCheck">
+        <property name="dfs-protocols-regex">^([^:]*dfs|wasb|ecs):.*</property>
+      </check-properties>
+    </configuration>
+  </prerequisite-checks>
+
   <order>
-    <group xsi:type="cluster" name="PRE_CLUSTER" title="Pre Upgrade" stage="pre">
+    <group xsi:type="cluster" name="PRE_CLUSTER" title="Pre Upgrade">
       <execute-stage title="Confirm 1">
         <task xsi:type="manual">
           <message>Foo</message>
@@ -27,7 +51,8 @@
       </execute-stage>
       <execute-stage service="HDFS" component="NAMENODE" title="Finalize HDFS">
         <task xsi:type="execute">
-          <command>ls</command>
+          <script>foo</script>
+          <function>list</function>
         </task>
       </execute-stage>
       <execute-stage title="Confirm 2">
@@ -89,7 +114,7 @@
     </group>
     
     
-    <group xsi:type="cluster" name="POST_CLUSTER" title="Finalize Upgrade" stage="post">
+    <group xsi:type="cluster" name="POST_CLUSTER" title="Finalize Upgrade">
       <execute-stage title="Confirm Finalize">
         <task xsi:type="manual">
           <message>Please confirm you are ready to finalize</message>
@@ -97,7 +122,8 @@
       </execute-stage>
       <execute-stage service="HDFS" component="NAMENODE" title="Execute HDFS Finalize">
         <task xsi:type="execute">
-          <command>ls</command>
+          <script>foo</script>
+          <function>list</function>
         </task>
       </execute-stage>
       <execute-stage title="Save Cluster State" service="" component="">
@@ -120,10 +146,10 @@
           </task>
         </pre-upgrade>
         <upgrade>
-          <task xsi:type="restart" />
+          <task xsi:type="restart-task" />
         </upgrade>
         <post-upgrade>
-          <task xsi:type="configure" />
+          <task xsi:type="configure" id="hdp_2_1_1_zk_post_upgrade"/>
         </post-upgrade>
       </component>
     </service>
@@ -131,29 +157,28 @@
       <component name="NAMENODE">
         <pre-upgrade>
           <task xsi:type="execute" hosts="master">
-            <command>su - {hdfs-user} -c 'dosomething'</command>
+            <script>foo</script>
+            <function>list</function>
           </task>
-          <task xsi:type="configure">
-            <type>hdfs-site</type>
-            <set key="myproperty" value="mynewvalue"/>
-          </task>
+          <task xsi:type="configure" id="hdp_2_1_1_nn_pre_upgrade"/>
           <task xsi:type="manual">
             <message>Update your database</message>
           </task>
         </pre-upgrade>
         <upgrade>
-          <task xsi:type="restart" />
+          <task xsi:type="restart-task" />
         </upgrade>
         <post-upgrade>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>list</function>
           </task>
         </post-upgrade>
       </component>
       <component name="DATANODE">
         <pre-downgrade />
         <upgrade>
-          <task xsi:type="restart" />
+          <task xsi:type="restart-task" />
         </upgrade>
         <post-downgrade>
           <task xsi:type="manual">
@@ -166,16 +191,20 @@
       <component name="RESOURCEMANAGER">
         <pre-upgrade>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>list</function>
           </task>
         </pre-upgrade>
+        <upgrade />
       </component>
       <component name="NODEMANAGER">
         <pre-upgrade>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>list</function>
           </task>
         </pre-upgrade>
+        <upgrade />
       </component>
     </service>
   </processing>

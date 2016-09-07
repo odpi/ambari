@@ -30,6 +30,11 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
   config: null,
 
   /**
+   * @type {App.ConfigProperty}
+   */
+  copyFromConfig: null,
+
+  /**
    * Determines if user hover on widget-view
    * @type {boolean}
    */
@@ -63,18 +68,14 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
    * if not, text-field with config value or label "Undefined" should be shown
    * @type {boolean}
    */
-  doNotShowWidget: function() {
-    return this.get('isPropertyUndefined') || this.get('config.showAsTextBox');
-  }.property('isPropertyUndefined', 'config.showAsTextBox'),
+  doNotShowWidget: Em.computed.or('isPropertyUndefined', 'config.showAsTextBox'),
 
   /**
    * defines if property in not defined in selected version
    * in this case "Undefined" should be shown instead of widget
    * @type {boolean}
    */
-  isPropertyUndefined: function() {
-    return this.get('config.value') === "Undefined";
-  }.property('config.value'),
+  isPropertyUndefined: Em.computed.equal('config.value', 'Undefined'),
 
   /**
    * Tab where current widget placed
@@ -106,9 +107,7 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
   /**
    * @type {boolean}
    */
-  showPencil: function () {
-    return this.get('supportSwitchToTextBox') && !this.get('disabled');
-  }.property('supportSwitchToTextBox', 'disabled'),
+  showPencil: Em.computed.and('supportSwitchToTextBox', '!disabled'),
 
   /**
    * Alias to <code>config.isOriginalSCP</code>
@@ -173,6 +172,7 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
     },
 
     willDestroyElement: function() {
+      $(this.get('element')).tooltip('destroy');
       this.removeObserver('issuedConfig.warnMessage', this, this.errorLevelObserver);
       this.removeObserver('issuedConfig.errorMessage', this, this.errorLevelObserver);
       this.removeObserver('parentView.isPropertyUndefined', this, this.errorLevelObserver);
@@ -236,9 +236,7 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
    * Config name to display.
    * @type {String}
    */
-  configLabel: function() {
-    return this.get('config.stackConfigProperty.displayName') || this.get('config.displayName') || this.get('config.name');
-  }.property('config.name', 'config.displayName'),
+  configLabel: Em.computed.firstNotBlank('config.stackConfigProperty.displayName', 'config.displayName', 'config.name'),
 
 
   /**
@@ -327,7 +325,7 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
    */
   showFinalConfig: function () {
     var config = this.get('config');
-    return config.get('isFinal') || (!config.get('isNotEditable') && this.get('isHover'));
+    return config.get('isFinal') || !config.get('isNotEditable') && this.get('isHover');
   }.property('config.isFinal', 'config.isNotEditable', 'isHover'),
 
   /**
@@ -362,6 +360,7 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
   }.property('controller.selectedConfigGroup.name', 'controller.selectedConfigGroup.isDefault'),
 
   didInsertElement: function () {
+    App.tooltip(this.$('[data-toggle=tooltip]'), {placement: 'top'});
     App.tooltip($(this.get('element')).find('span'));
     var self = this;
     var element = this.$();
@@ -374,6 +373,201 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
     }
     this.initIncompatibleWidgetAsTextBox();
   },
+
+  willInsertElement: function() {
+    var configConditions = this.get('config.configConditions');
+    var configAction = this.get('config.configAction');
+    var isCopy =  this.get('config.copy');
+    if (!Em.empty(isCopy)) {
+      this.bindConfigValue();
+    }
+
+    if (configConditions && configConditions.length) {
+      this.configValueObserverForAttributes();
+
+      //Add Observer to configCondition that depends on another config value
+      var isConditionConfigDependent = configConditions.filterProperty('resource', 'config').length;
+      if (isConditionConfigDependent) {
+        this.addObserver('config.value', this, this.configValueObserverForAttributes);
+      }
+
+      if (configAction) {
+        this.addObserver('config.value', this, this.configValueObserverForAction);
+      }
+    }
+
+  },
+
+  willDestroyElement: function() {
+    this.$('[data-toggle=tooltip]').tooltip('destroy');
+    $(this.get('element')).find('span').tooltip('destroy');
+    if (this.get('config.configConditions')) {
+      this.removeObserver('config.value', this, this.configValueObserverForAttributes);
+    }
+    if (this.get('config.configAction')) {
+      this.removeObserver('config.value', this, this.configValueObserverForAction);
+    }
+    if (this.get('copyFromConfig')) {
+      this.removeObserver('copyFromConfig.value', this, this.configValueObserverForCopy);
+    }
+  },
+
+  configValueObserverForAttributes: function() {
+    var configConditions = this.get('config.configConditions');
+    var serviceName = this.get('config.serviceName');
+    var serviceConfigs = this.get('controller.stepConfigs').findProperty('serviceName',serviceName).get('configs');
+    var isConditionTrue;
+    configConditions.forEach(function(configCondition){
+      var ifStatement = configCondition.get("if");
+      if (configCondition.get("resource") === 'config') {
+        isConditionTrue = App.configTheme.calculateConfigCondition(ifStatement, serviceConfigs);
+        if (configCondition.get("type") === 'subsection' || configCondition.get("type") === 'subsectionTab') {
+          this.changeSubsectionAttribute(configCondition, isConditionTrue);
+        } else {
+          this.changeConfigAttribute(configCondition, isConditionTrue);
+        }
+      } else if (configCondition.get("resource") === 'service') {
+        var service = App.Service.find().findProperty('serviceName', ifStatement);
+        var serviceName;
+        if (service) {
+          isConditionTrue = true;
+        } else if (!service && this.get('controller.allSelectedServiceNames') && this.get('controller.allSelectedServiceNames').length) {
+          isConditionTrue = this.get('controller.allSelectedServiceNames').contains(ifStatement);
+        } else {
+          isConditionTrue = false;
+        }
+        this.changeConfigAttribute(configCondition, isConditionTrue);
+      }
+    }, this);
+  },
+
+  /**
+   * This is an observer that is fired when a value of a config that is suppose to add/delete a component is changed
+   * @private
+   * @method {configValueObserverForAction}
+   */
+  configValueObserverForAction: function() {
+    var assignMasterOnStep7Controller = App.router.get('assignMasterOnStep7Controller');
+    var configAction = this.get('config.configAction');
+    var serviceName = this.get('config.serviceName');
+    var serviceConfigs = this.get('controller.stepConfigs').findProperty('serviceName', serviceName).get('configs');
+
+    this.set('config.configActionComponent', null);
+    var hostComponent = {
+      componentName:configAction.get('componentName'),
+      isClient: '',
+      hostName: '',
+      action: ''
+    };
+
+    var hostComponentObj = App.HostComponent.find().findProperty('componentName', hostComponent.componentName);
+    var stackComponentObj = App.StackServiceComponent.find(configAction.get('componentName'));
+
+    if (stackComponentObj) {
+      hostComponent.isClient = stackComponentObj.get('isClient');
+    }
+
+    if (hostComponentObj) {
+      hostComponent.hostName = hostComponentObj.get('hostName');
+    }
+
+    var isConditionTrue = App.configTheme.calculateConfigCondition(configAction.get("if"), serviceConfigs);
+    var action = isConditionTrue ? configAction.get("then") : configAction.get("else");
+    hostComponent.action = action;
+    switch (action) {
+      case 'add':
+        // Disable save button until a host is selected
+        var isComponentToBeInstalled = !App.HostComponent.find().someProperty('componentName', hostComponent.componentName);
+        if (isComponentToBeInstalled) {
+          this.set('controller.saveInProgress', true);
+          assignMasterOnStep7Controller.execute(this, 'ADD', hostComponent);
+        } else {
+          assignMasterOnStep7Controller.clearComponentsToBeDeleted(hostComponent.componentName);
+        }
+        break;
+      case 'delete':
+        assignMasterOnStep7Controller.execute(this, 'DELETE', hostComponent);
+        break;
+    }
+  },
+
+  bindConfigValue: function() {
+    var serviceName = this.get('config.serviceName');
+    var fileName =  this.get('config.copy').split('/')[0] + '.xml';
+    var configName = this.get('config.copy').split('/')[1];
+
+    var serviceConfigs = this.get('controller.stepConfigs').findProperty('serviceName', serviceName).get('configs');
+    var config = serviceConfigs.filterProperty('filename',fileName).findProperty('name', configName);
+    this.addObserver('copyFromConfig.value', this, this.configValueObserverForCopy);
+    this.set('copyFromConfig',config);
+  },
+
+  configValueObserverForCopy: function() {
+    var copyFromConfig = this.get('copyFromConfig');
+    var displayName = copyFromConfig.get('displayName');
+    var value = copyFromConfig.get('value');
+    var description = copyFromConfig.get('description');
+    var config = this.get('config');
+    config.setProperties({
+      value:value,
+      initialValue:value,
+      displayName:displayName,
+      description:description
+    });
+  },
+
+
+  /**
+   *
+   * @param configCondition {App.ThemeCondition}
+   * @param isConditionTrue {boolean}
+   */
+  changeConfigAttribute: function(configCondition, isConditionTrue) {
+    var conditionalConfigName = configCondition.get("configName");
+    var conditionalConfigFileName = configCondition.get("fileName");
+    var serviceName = this.get('config.serviceName');
+    var serviceConfigs = this.get('controller.stepConfigs').findProperty('serviceName',serviceName).get('configs');
+    var action = isConditionTrue ? configCondition.get("then") : configCondition.get("else");
+    var valueAttributes = action.property_value_attributes;
+    for (var key in valueAttributes) {
+      if (valueAttributes.hasOwnProperty(key)) {
+        var valueAttribute = App.StackConfigValAttributesMap[key] || key;
+        var conditionalConfig = serviceConfigs.filterProperty('filename',conditionalConfigFileName).findProperty('name', conditionalConfigName);
+        if (conditionalConfig) {
+          if (key === 'visible') {
+            conditionalConfig.set('hiddenBySection', !valueAttributes[key]);
+          }
+          conditionalConfig.set(valueAttribute, valueAttributes[key]);
+        }
+      }
+    }
+  },
+
+  /**
+   *
+   * @param subsectionCondition {App.ThemeCondition}
+   * @param isConditionTrue {boolean}
+   */
+  changeSubsectionAttribute: function(subsectionCondition, isConditionTrue) {
+    var subsectionConditionName = subsectionCondition.get('name');
+    var action = isConditionTrue ? subsectionCondition.get("then") : subsectionCondition.get("else");
+    if (subsectionCondition.get('id')) {
+      var valueAttributes = action.property_value_attributes;
+      if (valueAttributes && !Em.none(valueAttributes.visible)) {
+        var themeResource;
+        if (subsectionCondition.get('type') === 'subsection') {
+          themeResource = App.SubSection.find().findProperty('name', subsectionConditionName);
+        } else if (subsectionCondition.get('type') === 'subsectionTab') {
+          themeResource = App.SubSectionTab.find().findProperty('name', subsectionConditionName);
+        }
+        themeResource.set('isHiddenByConfig', !valueAttributes.visible);
+        themeResource.get('configs').setEach('hiddenBySection', !valueAttributes.visible);
+        themeResource.get('configs').setEach('hiddenBySubSection', !valueAttributes.visible);
+      }
+    }
+  },
+
+
 
   /**
    * set widget value same as config value
@@ -432,7 +626,7 @@ App.ConfigWidgetView = Em.View.extend(App.SupportsDependentConfigs, App.WidgetPo
    * @returns {boolean}
    */
   isValueCompatibleWithWidget: function() {
-    return (this.get('isOverrideEqualityError') && !this.get('config.isValid')) || this.get('config.isValid') || !this.get('supportSwitchToTextBox');
+    return this.get('isOverrideEqualityError') && !this.get('config.isValid') || this.get('config.isValid') || !this.get('supportSwitchToTextBox');
   },
 
   /**

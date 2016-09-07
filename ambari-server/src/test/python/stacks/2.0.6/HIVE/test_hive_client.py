@@ -30,40 +30,40 @@ class TestHiveClient(RMFTestCase):
                        classname = "HiveClient",
                        command = "configure",
                        config_file="default_client.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Directory', '/etc/hive',
         mode = 0755
     )
-    self.assertResourceCalled('Directory', '/etc/hive/conf',
+    self.assertResourceCalled('Directory', '/usr/hdp/current/hive-client/conf',
         owner = 'hive',
         group = 'hadoop',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('XmlConfig', 'mapred-site.xml',
         group = 'hadoop',
-        conf_dir = '/etc/hive/conf',
+        conf_dir = '/usr/hdp/current/hive-client/conf',
         mode = 0644,
         configuration_attributes = self.getConfig()['configuration_attributes']['mapred-site'],
         owner = 'hive',
         configurations = self.getConfig()['configurations']['mapred-site'],
     )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-default.xml.template',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-default.xml.template',
         owner = 'hive',
         group = 'hadoop',
     )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-env.sh.template',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-env.sh.template',
         owner = 'hive',
         group = 'hadoop',
     )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-exec-log4j.properties',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-exec-log4j.properties',
         content = 'log4jproperties\nline2',
         owner = 'hive',
         group = 'hadoop',
         mode = 0644,
     )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-log4j.properties',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-log4j.properties',
         content = 'log4jproperties\nline2',
         owner = 'hive',
         group = 'hadoop',
@@ -71,13 +71,13 @@ class TestHiveClient(RMFTestCase):
     )
     self.assertResourceCalled('XmlConfig', 'hive-site.xml',
                               group = 'hadoop',
-                              conf_dir = '/etc/hive/conf',
+                              conf_dir = '/usr/hdp/current/hive-client/conf',
                               mode = 0644,
                               configuration_attributes = self.getConfig()['configuration_attributes']['hive-site'],
                               owner = 'hive',
                               configurations = self.getConfig()['configurations']['hive-site'],
                               )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-env.sh',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['hive-env']['content']),
                               owner = 'hive',
                               group = 'hadoop',
@@ -85,7 +85,7 @@ class TestHiveClient(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
                               group = 'root',
-                              recursive = True,
+                              create_parents = True,
                               )
     self.assertResourceCalled('File', '/etc/security/limits.d/hive.conf',
                               content = Template('hive.conf.j2'),
@@ -106,40 +106,40 @@ class TestHiveClient(RMFTestCase):
                        classname = "HiveClient",
                        command = "configure",
                        config_file="secured_client.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Directory', '/etc/hive',
         mode = 0755
     )
-    self.assertResourceCalled('Directory', '/etc/hive/conf',
+    self.assertResourceCalled('Directory', '/usr/hdp/current/hive-client/conf',
         owner = 'hive',
         group = 'hadoop',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('XmlConfig', 'mapred-site.xml',
         group = 'hadoop',
-        conf_dir = '/etc/hive/conf',
+        conf_dir = '/usr/hdp/current/hive-client/conf',
         mode = 0644,
         configuration_attributes = self.getConfig()['configuration_attributes']['mapred-site'],
         owner = 'hive',
         configurations = self.getConfig()['configurations']['mapred-site'],
     )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-default.xml.template',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-default.xml.template',
         owner = 'hive',
         group = 'hadoop',
     )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-env.sh.template',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-env.sh.template',
         owner = 'hive',
         group = 'hadoop',
     )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-exec-log4j.properties',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-exec-log4j.properties',
         content = 'log4jproperties\nline2',
         owner = 'hive',
         group = 'hadoop',
         mode = 0644,
     )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-log4j.properties',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-log4j.properties',
         content = 'log4jproperties\nline2',
         owner = 'hive',
         group = 'hadoop',
@@ -147,13 +147,13 @@ class TestHiveClient(RMFTestCase):
     )
     self.assertResourceCalled('XmlConfig', 'hive-site.xml',
                               group = 'hadoop',
-                              conf_dir = '/etc/hive/conf',
+                              conf_dir = '/usr/hdp/current/hive-client/conf',
                               mode = 0644,
                               configuration_attributes = self.getConfig()['configuration_attributes']['hive-site'],
                               owner = 'hive',
                               configurations = self.getConfig()['configurations']['hive-site'],
                               )
-    self.assertResourceCalled('File', '/etc/hive/conf/hive-env.sh',
+    self.assertResourceCalled('File', '/usr/hdp/current/hive-client/conf/hive-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['hive-env']['content']),
                               owner = 'hive',
                               group = 'hadoop',
@@ -161,7 +161,7 @@ class TestHiveClient(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
                               group = 'root',
-                              recursive = True,
+                              create_parents = True,
                               )
     self.assertResourceCalled('File', '/etc/security/limits.d/hive.conf',
                               content = Template('hive.conf.j2'),
@@ -175,7 +175,7 @@ class TestHiveClient(RMFTestCase):
     )
     self.assertNoMoreResources()
 
-  def test_pre_rolling_restart(self):
+  def test_pre_upgrade_restart(self):
     config_file = self.get_src_folder()+"/test/python/stacks/2.0.6/configs/default.json"
     with open(config_file, "r") as f:
       json_content = json.load(f)
@@ -183,17 +183,19 @@ class TestHiveClient(RMFTestCase):
     json_content['commandParams']['version'] = version
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/hive_client.py",
                        classname = "HiveClient",
-                       command = "pre_rolling_restart",
+                       command = "pre_upgrade_restart",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES)
     self.assertResourceCalled('Execute',
-                              ('hdp-select', 'set', 'hadoop-client', version), sudo=True,)
+                              ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'hadoop-client', version), sudo=True,)
     self.assertNoMoreResources()
 
+  @patch("os.path.exists")
   @patch("resource_management.core.shell.call")
-  def test_pre_rolling_restart_23(self, call_mock):
+  def test_pre_upgrade_restart_23(self, call_mock, os_path__exists_mock):
     config_file = self.get_src_folder()+"/test/python/stacks/2.0.6/configs/default.json"
+    os_path__exists_mock.return_value = False
     with open(config_file, "r") as f:
       json_content = json.load(f)
     version = '2.3.0.0-1234'
@@ -202,28 +204,29 @@ class TestHiveClient(RMFTestCase):
     mocks_dict = {}
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/hive_client.py",
                        classname = "HiveClient",
-                       command = "pre_rolling_restart",
+                       command = "pre_upgrade_restart",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES,
-                       call_mocks = [(0, None), (0, None), (0, None), (0, None)],
+                       call_mocks = [(0, None, ''), (0, None, ''), (0, None, ''), (0, None, '')],
                        mocks_dict = mocks_dict)
 
-    self.assertResourceCalled('Execute',
-                              ('hdp-select', 'set', 'hadoop-client', version), sudo=True,)
+    self.assertResourceCalled('Link', ('/etc/hive/conf'), to='/usr/hdp/current/hive-client/conf')
+    self.assertResourceCalledIgnoreEarlier('Execute',
+                              ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'hadoop-client', version), sudo=True,)
     self.assertNoMoreResources()
 
     self.assertEquals(2, mocks_dict['call'].call_count)
     self.assertEquals(2, mocks_dict['checked_call'].call_count)
     self.assertEquals(
-      ('conf-select', 'set-conf-dir', '--package', 'hive', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'set-conf-dir', '--package', 'hive', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['checked_call'].call_args_list[0][0][0])
     self.assertEquals(
-      ('conf-select', 'create-conf-dir', '--package', 'hive', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'create-conf-dir', '--package', 'hive', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['call'].call_args_list[0][0][0])
     self.assertEquals(
-      ('conf-select', 'set-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'set-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['checked_call'].call_args_list[1][0][0])
     self.assertEquals(
-      ('conf-select', 'create-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'create-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['call'].call_args_list[1][0][0])

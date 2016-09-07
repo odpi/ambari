@@ -76,11 +76,18 @@ class OozieServiceCheckDefault(OozieServiceCheck):
     os_family = System.get_instance().os_family
     oozie_examples_dir = glob.glob(params.oozie_examples_regex)[0]
 
-    Execute(format("{tmp_dir}/{prepare_hdfs_file_name} {conf_dir} {oozie_examples_dir} {hadoop_conf_dir} "),
+    Execute((format("{tmp_dir}/{prepare_hdfs_file_name}"), params.conf_dir, oozie_examples_dir, params.hadoop_conf_dir, params.yarn_resourcemanager_address, params.fs_root, params.service_check_queue_name),
             tries=3,
             try_sleep=5,
             logoutput=True
     )
+
+    params.HdfsResource(format("/user/{smokeuser}"),
+        type="directory",
+        action="create_on_execute",
+        owner=params.smokeuser,
+        mode=params.smoke_hdfs_user_mode,
+        )
 
     examples_dir = format('/user/{smokeuser}/examples')
     params.HdfsResource(examples_dir,
@@ -130,7 +137,7 @@ class OozieServiceCheckWindows(OozieServiceCheck):
     import params
 
     env.set_params(params)
-    smoke_cmd = os.path.join(params.hdp_root, "Run-SmokeTests.cmd")
+    smoke_cmd = os.path.join(params.stack_root, "Run-SmokeTests.cmd")
     service = "OOZIE"
     Execute(format("cmd /C {smoke_cmd} {service}"), logoutput=True)
 

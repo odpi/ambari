@@ -19,30 +19,37 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <property>
     <name>mapred_log_dir_prefix</name>
     <value>/var/log/hadoop-mapreduce</value>
     <description>Mapreduce Log Dir Prefix</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>mapred_pid_dir_prefix</name>
     <value>/var/run/hadoop-mapreduce</value>
     <description>Mapreduce PID Dir Prefix</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>mapred_user</name>
+    <display-name>Mapreduce User</display-name>
     <value>mapred</value>
     <property-type>USER</property-type>
     <description>Mapreduce User</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>jobhistory_heapsize</name>
     <value>900</value>
     <description>Value for JobHistoryServer heap_size variable in hadoop-env.sh</description>
+    <on-ambari-upgrade add="true"/>
   </property>
-  
   <!-- mapred-env.sh -->
   <property>
     <name>content</name>
@@ -61,5 +68,9 @@ export HADOOP_MAPRED_ROOT_LOGGER=INFO,RFA
 #export HADOOP_MAPRED_IDENT_STRING= #A string representing this instance of hadoop. $USER by default
 #export HADOOP_MAPRED_NICENESS= #The scheduling priority for daemons. Defaults to 0.
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

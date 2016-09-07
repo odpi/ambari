@@ -22,21 +22,13 @@ App.ReassignMasterWizardStep1Controller = Em.Controller.extend({
   name: 'reassignMasterWizardStep1Controller',
   databaseType: null,
 
-  dbProperty: function() {
-    var componentName = this.get('content.reassign.component_name');
-
-    var property = null;
-    switch(componentName) {
-      case 'HIVE_SERVER':
-      case 'HIVE_METASTORE':
-        property = 'javax.jdo.option.ConnectionDriverName';
-        break;
-      case 'OOZIE_SERVER':
-        property = 'oozie.service.JPAService.jdbc.driver';
-        break;
-    }
-
-    return property;
+  /**
+   * @type {object}
+   */
+  dbPropertyMap: {
+    'HIVE_SERVER': 'javax.jdo.option.ConnectionDriverName',
+    'HIVE_METASTORE': 'javax.jdo.option.ConnectionDriverName',
+    'OOZIE_SERVER': 'oozie.service.JPAService.jdbc.driver'
   },
 
   loadConfigsTags: function () {
@@ -98,8 +90,8 @@ App.ReassignMasterWizardStep1Controller = Em.Controller.extend({
 
     this.set('content.serviceProperties', properties);
 
-    databaseProperty = properties[ this.dbProperty() ];
-    databaseType = databaseProperty.match(/MySQL|PostgreS|Oracle|Derby|MSSQL/gi)[0];
+    databaseProperty = properties[ Em.getWithDefault(this.get('dbPropertyMap'), this.get('content.reassign.component_name'), null) ];
+    databaseType = databaseProperty.match(/MySQL|PostgreS|Oracle|Derby|MSSQL|Anywhere/gi)[0];
     this.set('databaseType', databaseType);
 
     if (this.get('content.reassign.component_name') == 'OOZIE_SERVER' && databaseType !== 'derby') {

@@ -21,6 +21,11 @@ require('models/background_operation');
 
 App.MainController = Em.Controller.extend({
   name: 'mainController',
+  isUserActive: true,
+  checkActivenessInterval: null,
+  lastUserActiveTime: null,
+  userTimeOut: 0,
+  userTimeOutModal: null,
 
   updateTitle: function(){
     var name = App.router.get('clusterController.clusterName');
@@ -32,15 +37,11 @@ App.MainController = Em.Controller.extend({
       }
       $('title').text(Em.I18n.t('app.name.subtitle').format(name));
     }
-  }.observes('App.router.clusterController.clusterName, App.router.clusterInstallCompleted', 'App.router.clusterController.isLoaded'),
+  }.observes('App.router.clusterController.clusterName', 'App.router.clusterInstallCompleted', 'App.router.clusterController.isLoaded'),
 
-  isClusterDataLoaded: function(){
-    return App.router.get('clusterController.isLoaded');
-  }.property('App.router.clusterController.isLoaded'),
+  isClusterDataLoaded: Em.computed.alias('App.router.clusterController.isLoaded'),
 
-  clusterDataLoadedPercent: function(){
-    return App.router.get('clusterController.clusterDataLoadedPercent');
-  }.property('App.router.clusterController.clusterDataLoadedPercent'),
+  clusterDataLoadedPercent: Em.computed.alias('App.router.clusterController.clusterDataLoadedPercent'),
   /**
    * run all processes and cluster's data loading
    */
@@ -109,44 +110,13 @@ App.MainController = Em.Controller.extend({
     clearTimeout(this.get("reloadTimeOut"));
 
     this.set('reloadTimeOut',
-        setTimeout(function () {
-          if (App.clusterStatus.get('isInstalled')) {
-            location.reload();
-          }
-        }, App.pageReloadTime)
+    setTimeout(function () {
+      if (App.clusterStatus.get('isInstalled')) {
+        location.reload();
+      }
+    }, App.pageReloadTime)
     );
   }.observes("App.router.location.lastSetURL", "App.clusterStatus.isInstalled"),
-
-  scRequest: function(request) {
-    return App.router.get('mainServiceController').get(request);
-  },
-
-  isAllServicesInstalled: function() {
-    return this.scRequest('isAllServicesInstalled');
-  }.property('App.router.mainServiceController.content.content.@each',
-      'App.router.mainServiceController.content.content.length'),
-
-  isStartAllDisabled: function() {
-    return this.scRequest('isStartAllDisabled');
-  }.property('App.router.mainServiceController.isStartStopAllClicked',
-      'App.router.mainServiceController.content.@each.healthStatus'),
-
-  isStopAllDisabled: function() {
-    return this.scRequest('isStopAllDisabled');
-  }.property('App.router.mainServiceController.isStartStopAllClicked',
-      'App.router.mainServiceController.content.@each.healthStatus'),
-
-  gotoAddService: function() {
-    App.router.get('mainServiceController').gotoAddService();
-  },
-
-  startAllService: function(event){
-    App.router.get('mainServiceController').startAllService(event);
-  },
-
-  stopAllService: function(event){
-    App.router.get('mainServiceController').stopAllService(event);
-  },
 
   /**
    * check server version and web client version
@@ -183,7 +153,130 @@ App.MainController = Em.Controller.extend({
     App.set('isManagedMySQLForHiveEnabled', App.config.isManagedMySQLForHiveAllowed(data.RootServiceComponents.properties['server.os_family']));
   },
   getServerVersionErrorCallback: function () {
-    console.log('ERROR: Cannot load Ambari server version');
-  }
+  },
 
+  monitorInactivity: function() {
+    var timeout = Number(App.router.get('clusterController.ambariProperties')['user.inactivity.timeout.default']);
+    var readonly_timeout = Number(App.router.get('clusterController.ambariProperties')['user.inactivity.timeout.role.readonly.default']);
+    var isAdmin = App.get('isAdmin');
+    if (isAdmin && timeout > 0) {
+      this.set('userTimeOut', timeout * 1000);
+    } else if (!isAdmin && readonly_timeout > 0) {
+      this.set('userTimeOut', readonly_timeout * 1000);
+    }
+    if (this.get('userTimeOut') > 0) {
+      this.startMonitorInactivity();
+    }
+  },
+
+  startMonitorInactivity: function() {
+    this.set('isUserActive', true);
+    this.set('lastUserActiveTime', Date.now());
+
+    this.rebindActivityEventMonitors();
+    if (!this.get('checkActivenessInterval')) {
+      this.set('checkActivenessInterval', window.setInterval(this.checkActiveness, 1000));
+    }
+  },
+
+  /* this will be triggerred by user driven events: 'mousemove', 'keypress' and 'click' */
+  keepActive: function() {
+    var scope = App.router.get('mainController');
+    if (scope.get('isUserActive')) {
+      scope.set('lastUserActiveTime', Date.now());
+    }
+  },
+
+  checkActiveness: function() {
+    var scope = App.router.get('mainController');
+    if (!scope.isOnWizard()) {
+      var remainTime = scope.get('userTimeOut') - (Date.now() - scope.get('lastUserActiveTime'));
+      if (remainTime < 0) {
+        scope.set('isUserActive', false);
+        scope.unbindActivityEventMonitors();
+        clearInterval(scope.get('checkActivenessInterval'));
+        App.router.logOff({});
+      } else if (remainTime < App.inactivityRemainTime * 1000 && !scope.userTimeOutModal) {
+        // show alert 60 seconds before logging user out
+        scope.userTimeOutModal = App.ModalPopup.show({
+          primary: Em.I18n.t('common.timeout.warning.popup.primary'),
+          secondary: Em.I18n.t('common.timeout.warning.popup.secondary'),
+          third: false,
+          header: Em.I18n.t('common.timeout.warning.popup.header'),
+          showCloseButton: false,
+          bodyClass: Ember.View.extend({
+            template: Ember.Handlebars.compile('<p>{{view.beforeMsg}}<b>{{view.remainTime}}</b>{{view.afterMsg}}</p>'),
+            beforeMsg: Em.I18n.t('common.timeout.warning.popup.body.before'),
+            afterMsg: Em.I18n.t('common.timeout.warning.popup.body.after'),
+            remainTime: App.inactivityRemainTime,
+            didInsertElement: function() {
+              var self = this;
+              setInterval(function(){self.countDown();}, 1000)
+            },
+            countDown: function() {
+              if (this.get('remainTime') > 0) {
+                this.set('remainTime', this.get('remainTime') - 1);
+              }
+              if (this.get('remainTime') == 0) {
+                App.router.logOff({});
+              }
+            }
+          }),
+          onPrimary: function() {
+            scope.keepActive();
+            scope.userTimeOutModal.hide();
+            delete scope.userTimeOutModal;
+          },
+          onSecondary: function() {
+            scope.userTimeOutModal.hide();
+            delete scope.userTimeOutModal;
+            App.router.logOff({});
+          }
+        });
+      }
+    }
+  },
+
+  rebindActivityEventMonitors: function() {
+    this.unbindActivityEventMonitors();
+    this.bindActivityEventMonitors();
+  },
+
+  isOnWizard: function() {
+    var isWizard = window.location.href.indexOf('/step') != -1;
+    var isUpgrade = window.location.href.indexOf('/stack/upgrade') != -1;
+    return isWizard || isUpgrade;
+  },
+
+  bindActivityEventMonitors: function() {
+    $(window).bind('mousemove', this.keepActive);
+    $(window).bind('keypress', this.keepActive);
+    $(window).bind('click', this.keepActive);
+    // iframes need to be monitored as well
+    var iframes = $('iframe');
+    if (iframes.length > 0) {
+      for (var i = 0; i < iframes.length; i++) {
+        var iframe = iframes[i];
+        $(iframe.contentWindow).bind('mousemove', this.keepActive);
+        $(iframe.contentWindow).bind('keypress', this.keepActive);
+        $(iframe.contentWindow).bind('click', this.keepActive);
+      }
+    }
+  },
+
+  unbindActivityEventMonitors: function() {
+    $(window).unbind('mousemove', this.keepActive);
+    $(window).unbind('keypress', this.keepActive);
+    $(window).unbind('click', this.keepActive);
+    // iframes need to be monitored as well
+    var iframes = $('iframe');
+    if (iframes.length > 0) {
+      for (var i = 0; i < iframes.length; i++) {
+        var iframe = iframes[i];
+        $(iframe.contentWindow).unbind('mousemove', this.keepActive);
+        $(iframe.contentWindow).unbind('keypress', this.keepActive);
+        $(iframe.contentWindow).unbind('click', this.keepActive);
+      }
+    }
+  }
 });

@@ -18,19 +18,27 @@
 
 package org.apache.hadoop.metrics2.sink.flume;
 
+import static org.easymock.EasyMock.anyString;
+import static org.easymock.EasyMock.createNiceMock;
+import static org.easymock.EasyMock.expect;
 import static org.powermock.api.easymock.PowerMock.mockStatic;
 import static org.powermock.api.easymock.PowerMock.replay;
+import static org.powermock.api.easymock.PowerMock.replayAll;
+import static org.powermock.api.easymock.PowerMock.resetAll;
 import static org.powermock.api.easymock.PowerMock.verifyAll;
 
+import java.net.InetAddress;
 import java.util.Collections;
 
-import org.apache.commons.httpclient.HttpClient;
+import org.apache.flume.Context;
 import org.apache.flume.instrumentation.util.JMXPollUtil;
 import org.apache.hadoop.metrics2.sink.timeline.TimelineMetric;
 import org.apache.hadoop.metrics2.sink.timeline.cache.TimelineMetricsCache;
+import org.apache.hadoop.metrics2.sink.timeline.configuration.Configuration;
 import org.easymock.EasyMock;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.powermock.api.easymock.PowerMock;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
 
@@ -65,7 +73,7 @@ public class FlumeTimelineMetricsSinkTest {
 
   private TimelineMetricsCache getTimelineMetricsCache(FlumeTimelineMetricsSink flumeTimelineMetricsSink) {
     TimelineMetricsCache timelineMetricsCache = EasyMock.createNiceMock(TimelineMetricsCache.class);
-    flumeTimelineMetricsSink.setMetricsCache(timelineMetricsCache);
+    flumeTimelineMetricsSink.setMetricsCaches(Collections.singletonMap("SINK",timelineMetricsCache));
     EasyMock.expect(timelineMetricsCache.getTimelineMetric("key1"))
         .andReturn(new TimelineMetric()).once();
     timelineMetricsCache.putTimelineMetric(EasyMock.anyObject(TimelineMetric.class));
@@ -78,14 +86,12 @@ public class FlumeTimelineMetricsSinkTest {
     FlumeTimelineMetricsSink flumeTimelineMetricsSink = new FlumeTimelineMetricsSink();
     TimelineMetricsCache timelineMetricsCache = getTimelineMetricsCache(flumeTimelineMetricsSink);
     flumeTimelineMetricsSink.setPollFrequency(1);
-    HttpClient httpClient = EasyMock.createNiceMock(HttpClient.class);
-    flumeTimelineMetricsSink.setHttpClient(httpClient);
     mockStatic(JMXPollUtil.class);
     EasyMock.expect(JMXPollUtil.getAllMBeans()).andReturn(
         Collections.singletonMap("component1", Collections.singletonMap("key1", "42"))).once();
     flumeTimelineMetricsSink.start();
     flumeTimelineMetricsSink.stop();
-    replay(JMXPollUtil.class, timelineMetricsCache, httpClient);
+    replay(JMXPollUtil.class, timelineMetricsCache);
     flumeTimelineMetricsSink.start();
     Thread.sleep(5);
     flumeTimelineMetricsSink.stop();
@@ -104,4 +110,56 @@ public class FlumeTimelineMetricsSinkTest {
     collector.run();
     verifyAll();
   }
+
+  @Test
+  @PrepareForTest({Configuration.class, FlumeTimelineMetricsSink.class})
+  public void testGettingFqdn() throws Exception {
+    FlumeTimelineMetricsSink flumeTimelineMetricsSink = new FlumeTimelineMetricsSink();
+    Configuration config = createNiceMock(Configuration.class);
+
+    expect(config.getProperty(anyString(), anyString()))
+      .andReturn("60")
+      .anyTimes();
+    expect(config.getProperty(anyString()))
+      .andReturn("60")
+      .anyTimes();
+    replay(config);
+
+    PowerMock.expectNew(Configuration.class, anyString())
+      .andReturn(config);
+    replay(Configuration.class);
+
+    // getHostName() returned FQDN
+    InetAddress address = createNiceMock(InetAddress.class);
+    expect(address.getHostName()).andReturn("hostname.domain").once();
+    replay(address);
+
+    mockStatic(InetAddress.class);
+    expect(InetAddress.getLocalHost()).andReturn(address).once();
+    replay(InetAddress.class);
+
+    flumeTimelineMetricsSink.configure(new Context());
+    verifyAll();
+
+    resetAll();
+
+    PowerMock.expectNew(Configuration.class, anyString())
+      .andReturn(config);
+    replay(Configuration.class);
+
+    // getHostName() returned short hostname, getCanonicalHostName() called
+    address = createNiceMock(InetAddress.class);
+    expect(address.getHostName()).andReturn("hostname").once();
+    expect(address.getCanonicalHostName()).andReturn("hostname.domain").once();
+    replay(address);
+
+    mockStatic(InetAddress.class);
+    expect(InetAddress.getLocalHost()).andReturn(address).times(2);
+    replay(InetAddress.class);
+
+    flumeTimelineMetricsSink.configure(new Context());
+    verifyAll();
+
+  }
+
 }

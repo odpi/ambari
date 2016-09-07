@@ -23,7 +23,7 @@ App.ReassignMasterController = App.WizardController.extend({
 
   name: 'reassignMasterController',
 
-  totalSteps: 7,
+  totalSteps: 6,
 
   /**
    * @type {string}
@@ -64,7 +64,8 @@ App.ReassignMasterController = App.WizardController.extend({
     hasManualSteps: false,
     hasCheckDBStep: false,
     componentsWithCheckDBStep: ['HIVE_METASTORE', 'HIVE_SERVER', 'OOZIE_SERVER'],
-    componentsWithoutSecurityConfigs: ['MYSQL_SERVER']
+    componentsWithoutSecurityConfigs: ['MYSQL_SERVER'],
+    reassignComponentsInMM: []
   }),
 
   /**
@@ -84,8 +85,70 @@ App.ReassignMasterController = App.WizardController.extend({
     'requestIds'
   ],
 
+  /**
+   * Load data for all steps until <code>current step</code>
+   */
+  loadMap: {
+    '1': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.loadComponentToReassign();
+          this.loadDatabaseType();
+          this.loadServiceProperties();
+          this.load('cluster');
+        }
+      }
+    ],
+    '2': [
+      {
+        type: 'async',
+        callback: function () {
+          var self = this,
+            dfd = $.Deferred();
+          this.loadServicesFromServer();
+          this.loadMasterComponentHosts().done(function () {
+            self.loadConfirmedHosts();
+            dfd.resolve();
+          });
+          return dfd.promise();
+        }
+      }
+    ],
+    '3': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.loadReassignHosts();
+        }
+      }
+    ],
+    '4': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.loadTasksStatuses();
+          this.loadTasksRequestIds();
+          this.loadRequestIds();
+          this.loadReassignComponentsInMM();
+        }
+      }
+    ],
+    '5': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.loadSecureConfigs();
+          this.loadComponentDir();
+        }
+      }
+    ]
+  },
+
   addManualSteps: function () {
-    this.set('content.hasManualSteps', this.get('content.componentsWithManualCommands').contains(this.get('content.reassign.component_name')));
+    var hasManualSteps = this.get('content.componentsWithManualCommands').contains(this.get('content.reassign.component_name'));
+    this.set('content.hasManualSteps', hasManualSteps);
+    this.set('totalSteps', hasManualSteps ? 6 : 4);
   }.observes('content.reassign.component_name'),
 
   addCheckDBStep: function () {
@@ -98,7 +161,6 @@ App.ReassignMasterController = App.WizardController.extend({
   loadTasksStatuses: function () {
     var statuses = App.db.getReassignTasksStatuses();
     this.set('content.tasksStatuses', statuses);
-    console.log('ReassignMasterController.loadTasksStatuses: loaded statuses', statuses);
   },
 
   /**
@@ -161,7 +223,6 @@ App.ReassignMasterController = App.WizardController.extend({
   saveTasksStatuses: function (statuses) {
     App.db.setReassignTasksStatuses(statuses);
     this.set('content.tasksStatuses', statuses);
-    console.log('ReassignMasterController.saveTasksStatuses: saved statuses', statuses);
   },
 
   loadTasksRequestIds: function () {
@@ -240,37 +301,19 @@ App.ReassignMasterController = App.WizardController.extend({
         var manual = App.router.reassignMasterController.get('content.componentsWithManualCommands').without('OOZIE_SERVER');
         App.router.reassignMasterController.set('content.hasManualSteps', false);
         App.router.reassignMasterController.set('content.componentsWithManualCommands', manual);
+        this.set('totalSteps', 4);
       }
     }
   },
 
-  /**
-   * Load data for all steps until <code>current step</code>
-   */
-  loadAllPriorSteps: function () {
-    var step = this.get('currentStep');
-    switch (step) {
-      case '7':
-      case '6':
-      case '5':
-        this.loadSecureConfigs();
-        this.loadComponentDir();
-      case '4':
-        this.loadTasksStatuses();
-        this.loadTasksRequestIds();
-        this.loadRequestIds();
-      case '3':
-        this.loadReassignHosts();
-      case '2':
-        this.loadServicesFromServer();
-        this.loadMasterComponentHosts();
-        this.loadConfirmedHosts();
-      case '1':
-        this.loadComponentToReassign();
-        this.loadDatabaseType();
-        this.loadServiceProperties();
-        this.load('cluster');
-    }
+  loadReassignComponentsInMM: function () {
+    var reassignComponentsInMM = this.getDBProperty('reassignComponentsInMM');
+    this.set('content.reassignComponentsInMM', reassignComponentsInMM);
+  },
+
+  saveReassignComponentsInMM: function (reassignComponentsInMM) {
+    this.setDBProperty('reassignComponentsInMM', reassignComponentsInMM);
+    this.set('content.reassignComponentsInMM', reassignComponentsInMM);
   },
 
   /**
@@ -290,6 +333,19 @@ App.ReassignMasterController = App.WizardController.extend({
       wizardControllerName: 'reassignMasterController',
       localdb: App.db.data
     });
+  },
+
+  getReassignComponentsInMM: function () {
+    var hostComponentsInMM = [];
+    var sourceHostComponents = App.HostComponent.find().filterProperty('hostName', this.get('content.reassignHosts.source'));
+    var reassignComponents = this.get('content.reassign.component_name') === 'NAMENODE' && App.get('isHaEnabled') ? ['NAMENODE', 'ZKFC'] : [this.get('content.reassign.component_name')];
+    reassignComponents.forEach(function(hostComponent){
+      var componentToReassign = sourceHostComponents.findProperty('componentName', hostComponent);
+      if (componentToReassign && !componentToReassign.get('isActive') && componentToReassign.get('workStatus') === 'STARTED') {
+        hostComponentsInMM.push(hostComponent);
+      }
+    });
+    return hostComponentsInMM;
   },
 
   /**

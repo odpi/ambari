@@ -55,6 +55,7 @@
         "ServiceComponentInfo/service_name",
         "ServiceComponentInfo/component_name",
         "ServiceComponentInfo/cluster_name",
+        "ServiceComponentInfo/display_name",
         "ServiceComponentInfo/state",
         "ServiceComponents/display_name",
         "ServiceComponents/description",
@@ -62,6 +63,10 @@
         "ServiceComponentInfo/total_count",
         "ServiceComponentInfo/started_count",
         "ServiceComponentInfo/installed_count",
+        "ServiceComponentInfo/install_failed_count",
+        "ServiceComponentInfo/init_count",
+        "ServiceComponentInfo/unknown_count",
+        "ServiceComponentInfo/recovery_enabled",
         "params/run_smoke_test",
         "_"
     ],
@@ -70,6 +75,7 @@
         "HostRoles/cluster_name",
         "HostRoles/host_name",
         "HostRoles/component_name",
+        "HostRoles/display_name",
         "HostRoles/state",
         "HostRoles/desired_state",
         "HostRoles/stack_id",
@@ -165,6 +171,7 @@
         "Users/password",
         "Users/old_password",
         "Users/ldap_user",
+        "Users/user_type",
         "Users/active",
         "Users/groups",
         "Users/admin",
@@ -208,6 +215,7 @@
         "StackServices/service_check_supported",
         "StackServices/custom_commands",
         "StackServices/required_services",
+        "StackServices/properties",
         "_"
     ],
     "StackConfiguration":[
@@ -238,6 +246,13 @@
         "StackServiceComponents/is_master",
         "StackServiceComponents/cardinality",
         "StackServiceComponents/custom_commands",
+        "StackServiceComponents/recovery_enabled",
+        "StackServiceComponents/advertise_version",
+        "StackServiceComponents/decommission_allowed",
+        "StackServiceComponents/reassign_allowed",
+        "StackServiceComponents/has_bulk_commands_definition",
+        "StackServiceComponents/bulk_commands_display_name",
+        "StackServiceComponents/bulk_commands_master_component_name",
         "auto_deploy/enabled",
         "auto_deploy/location",
         "_"
@@ -252,6 +267,26 @@
         "Dependencies/scope",
         "auto_deploy/enabled",
         "auto_deploy/location"
+    ],
+    "ExtensionLink": [
+        "ExtensionLink/link_id",
+        "ExtensionLink/stack_name",
+        "ExtensionLink/stack_version",
+        "ExtensionLink/extension_name",
+        "ExtensionLink/extension_version",
+        "_"
+    ],
+    "Extension":[
+        "Extensions/extension_name",
+        "_"
+    ],
+    "ExtensionVersion":[
+        "Versions/extension_name",
+        "Versions/extension_version",
+        "Versions/valid",
+        "Versions/extension-errors",
+        "Versions/parent_extension_version",
+        "_"
     ],
     "DRFeed":[
         "Feed/name",
@@ -347,11 +382,13 @@
         "Blueprints/blueprint_name",
         "Blueprints/stack_name",
         "Blueprints/stack_version",
+        "Blueprints/security",
         "host_groups",
         "host_groups/components",
         "host_groups/cardinality",
         "configurations",
-        "validate_topology"
+        "validate_topology",
+        "settings"
     ],
     "Recommendation":[
         "Recommendation/id",
@@ -454,5 +491,11 @@
         "StackConfigurationDependency/dependency_type",
         "StackConfigurationDependency/dependency_name",
         "_"
+    ],
+    "KerberosDescriptor":[
+        "KerberosDescriptors/kerberos_descriptor_name",
+        "KerberosDescriptors/kerberos_descriptor_text",
+        "_"
     ]
+
 }

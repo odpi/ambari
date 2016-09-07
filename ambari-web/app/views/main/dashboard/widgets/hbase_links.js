@@ -33,31 +33,21 @@ App.HBaseLinksView = App.LinkDashboardWidgetView.extend({
   /**
    * All master components
    */
-  masters: function () {
-    return this.get('model.hostComponents').filterProperty('isMaster', true);
-  }.property('model.hostComponents.@each'),
+  masters: Em.computed.filterBy('model.hostComponents', 'isMaster', true),
   /**
    * Passive master components
    */
-  passiveMasters: function () {
-    return this.get('masters').filterProperty('haStatus', 'false');
-  }.property('masters'),
+  passiveMasters: Em.computed.filterBy('masters', 'haStatus', 'false'),
   /**
    * One(!) active master component
    */
-  activeMaster: function () {
-    return this.get('masters').findProperty('haStatus', 'true');
-  }.property('masters'),
+  activeMaster: Em.computed.findBy('masters', 'haStatus', 'true'),
 
-  activeMasterTitle: function(){
-    return this.t('service.hbase.activeMaster');
-  }.property('activeMaster'),
+  activeMasterTitle: Em.I18n.t('service.hbase.activeMaster'),
 
   hbaseMasterWebUrl: function () {
-    if (this.get('activeMaster.host') && this.get('activeMaster.host').get('publicHostName')) {
-      return "http://" + this.get('activeMaster.host').get('publicHostName') + ':' + this.get('port');
-    }
-    return '';
+    var hostName = this.get('activeMaster.host.publicHostName');
+    return hostName ? 'http://' + hostName + ':' + this.get('port') : '';
   }.property('activeMaster'),
 
   calcWebUrl: function() {

@@ -38,7 +38,7 @@
                       <i class="fa fa-edit"></i>
                     </a>
                   </small>
-                  <small>
+                  <small {{bind-attr class="isDefaultQ:del-default-q"}}>
                     {{confirm-delete action="delQ" param=content}}
                   </small>
                 {{/unless}}
@@ -73,12 +73,14 @@
   </div>
   <div class="row queue-acl-row">
     <div class="col-md-12 col-lg-6 queue-acl">
+
       <div class="panel panel-default">
         <div class="panel-heading">
           <div class="panel-title">
             Access Control and Status
           </div>
         </div>
+        {{#unless isRangerEnabledForYarn}}
         <div class="panel-body">
           <form class="form-horizontal form-acl" role="form">
           <div class="form-group row">
@@ -103,6 +105,8 @@
                 {{/if}}
               </div>
           </div>
+
+          <div class="hz-divider"></div>
 
           {{#if isOperator}}
 
@@ -130,9 +134,23 @@
 
             <div class="form-group row">
               {{tooltip-label
+                tagName='small'
+                class="col-lg-4 col-xs-4 control-label"
+                label='Effective Administraters'
+                message='The effective permissions to perform administrative functions on this queue.'
+              }}
+              <div class="col-lg-6 col-md-6 col-sm-8 col-xs-7 control-value">
+                <label>{{escapeACL aaq_effective_permission}}</label>
+              </div>
+           </div>
+
+           <div class="hz-divider"></div>
+
+           <div class="form-group row">
+              {{tooltip-label
                 class="col-lg-4 col-xs-4 control-label"
                 label='Submit Applications'
-                message='The access control list of users and groups that have authorizatioN to submit applications to this queue.'
+                message='The access control list of users and groups that have authorization to submit applications to this queue.'
               }}
               <div class="col-lg-6 col-md-6 col-sm-8 col-xs-7 control-value">
                 <div class="btn-group btn-group-xs" data-toggle="buttons">
@@ -150,6 +168,18 @@
               {{user-group-input ug=content.acl_submit_applications disabled=asa_anyone}}
             {{/unless}}
 
+            <div class="form-group row">
+               {{tooltip-label
+                 tagName='small'
+                 class="col-lg-4 col-xs-4 control-label"
+                 label='Effective Users'
+                 message='The effective permissions to submit applications to this queue.'
+               }}
+               <div class="col-lg-6 col-md-6 col-sm-8 col-xs-7 control-value">
+                 <label>{{escapeACL asa_effective_permission}}</label>
+               </div>
+            </div>
+
           {{else}}
             <div class="form-group">
               {{tooltip-label
@@ -164,11 +194,27 @@
               </div>
             </div>
 
+            <div class="form-group row">
+               {{tooltip-label
+                 tagName='small'
+                 class="col-lg-4 col-xs-4 control-label"
+                 label='Effective Administraters'
+                 message='The effective permissions to perform administrative functions on this queue.'
+               }}
+               <div class="col-lg-8 col-xs-8 control-value">
+                 <p class="form-control-static">
+                   {{escapeACL aaq_effective_permission}}
+                 </p>
+               </div>
+            </div>
+
+            <div class="hz-divider"></div>
+
             <div class="form-group">
               {{tooltip-label
                 class="col-lg-4 col-xs-4 control-label"
                 label='Submit Applications'
-                message='The access control list of users and groups that have authorizatioN to submit applications to this queue.'
+                message='The access control list of users and groups that have authorization to submit applications to this queue.'
               }}
               <div class="col-lg-8 col-xs-8 control-value">
                <p class="form-control-static">
@@ -176,10 +222,30 @@
                </p>
               </div>
             </div>
+
+            <div class="form-group row">
+               {{tooltip-label
+                 tagName='small'
+                 class="col-lg-4 col-xs-4 control-label"
+                 label='Effective Users'
+                 message='The effective permissions to submit applications to this queue.'
+               }}
+               <div class="col-lg-8 col-xs-8 control-valu">
+                 <p class="form-control-static">
+                   {{escapeACL asa_effective_permission}}
+                 </p>
+               </div>
+            </div>
           {{/if}}
           </form>
         </div>
+        {{else}}
+          <div class="panel-body">
+              Permissions are managed by Ranger
+          </div>
+        {{/unless}}
       </div>
+
     </div>
 
     <div class="col-md-12 col-lg-6 queue-resources">

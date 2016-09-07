@@ -77,25 +77,17 @@ App.GaugeWidgetView = Em.View.extend(App.WidgetMixin, {
      */
     MAX_VALUE: 100,
 
-    warningThreshold: function(){
-      return this.get('parentView.content.properties.warning_threshold');
-    }.property('parentView.content.properties.warning_threshold'),
+    warningThreshold: Em.computed.alias('parentView.content.properties.warning_threshold'),
 
-    errorThreshold: function(){
-      return this.get('parentView.content.properties.error_threshold');
-    }.property('parentView.content.properties.error_threshold'),
+    errorThreshold: Em.computed.alias('parentView.content.properties.error_threshold'),
 
-    id: function() {
-      return 'gauge-widget-' + this.get('parentView.content.id');
-    }.property('parentView.content.id'),
+    id: Em.computed.format('gauge-widget-{0}', 'parentView.content.id'),
 
     existCenterText: true,
-    centerTextColor: function () {
-      return this.get('contentColor');
-    }.property('contentColor'),
+    centerTextColor: Em.computed.alias('contentColor'),
 
     palette: new Rickshaw.Color.Palette({
-      scheme: [ '#FFFFFF', '#D6DDDF'].reverse()
+      scheme: ['#FFFFFF', '#D6DDDF'].reverse()
     }),
 
     data: function () {
@@ -113,17 +105,17 @@ App.GaugeWidgetView = Em.View.extend(App.WidgetMixin, {
       var color_orange = App.healthStatusOrange;
       if ((isNaN(threshold1) && isNaN(threshold2)) || (isNaN(threshold1) && used <= threshold2) || (isNaN(threshold2) && used <= threshold1) || (!isNaN(threshold2) && (threshold1 > threshold2) && (used > threshold1)) || (!isNaN(threshold2) && (threshold1 < threshold2) && (used <= threshold1))) {
         this.set('palette', new Rickshaw.Color.Palette({
-          scheme: [ '#FFFFFF', color_green  ].reverse()
+          scheme: ['#FFFFFF', color_green].reverse()
         }));
         return color_green;
       } else if ((!isNaN(threshold2) && used.isInRange(threshold1, threshold2)) || (isNaN(threshold2) && used > threshold1)) {
         this.set('palette', new Rickshaw.Color.Palette({
-          scheme: [ '#FFFFFF', color_orange  ].reverse()
+          scheme: ['#FFFFFF', color_orange].reverse()
         }));
         return color_orange;
       } else {
         this.set('palette', new Rickshaw.Color.Palette({
-          scheme: [ '#FFFFFF', color_red  ].reverse()
+          scheme: ['#FFFFFF', color_red].reverse()
         }));
         return color_red;
       }
@@ -132,8 +124,8 @@ App.GaugeWidgetView = Em.View.extend(App.WidgetMixin, {
     // refresh text and color when data in model changed
     refreshSvg: function () {
       // remove old svg
-      var old_svg =  $("#" + this.get('id'));
-      if(old_svg){
+      var old_svg = $("#" + this.get('id'));
+      if (old_svg) {
         old_svg.remove();
       }
 

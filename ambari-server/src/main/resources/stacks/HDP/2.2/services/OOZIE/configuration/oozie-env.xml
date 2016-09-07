@@ -19,11 +19,11 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <!-- oozie-env.sh -->
   <property>
     <name>content</name>
+    <display-name>oozie-env template</display-name>
     <description>This is the jinja template for oozie-env.sh file</description>
     <value>
 #!/bin/bash
@@ -101,7 +101,13 @@ export CATALINA_OPTS="${CATALINA_OPTS} -Xmx2048m -XX:MaxPermSize=256m "
 export CATALINA_OPTS="${CATALINA_OPTS} -Xmx2048m"
 {% endif %}
 
-    </value>
-  </property>
+# Set Hadoop-related properties
+export HADOOP_OPTS="-Dhdp.version=${HDP_VERSION} ${HADOOP_OPTS}"
 
+    </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
 </configuration>

@@ -38,6 +38,8 @@ import org.apache.ambari.server.controller.predicate.EqualsPredicate;
 import org.apache.ambari.server.controller.spi.*;
 import org.apache.ambari.server.controller.utilities.PredicateHelper;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
+import org.apache.ambari.server.utils.RetryHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -203,6 +205,10 @@ public abstract class AbstractResourceProvider extends BaseProvider implements R
    * @return the request status
    */
   protected RequestStatus getRequestStatus(RequestStatusResponse response, Set<Resource> associatedResources) {
+    return getRequestStatus(response, associatedResources, null);
+  }
+
+  protected RequestStatus getRequestStatus(RequestStatusResponse response, Set<Resource> associatedResources, RequestStatusMetaData requestStatusMetaData) {
     if (response != null){
       Resource requestResource = new ResourceImpl(Resource.Type.Request);
       if (response.getMessage() != null){
@@ -210,9 +216,9 @@ public abstract class AbstractResourceProvider extends BaseProvider implements R
       }
       requestResource.setProperty(PropertyHelper.getPropertyId("Requests", "id"), response.getRequestId());
       requestResource.setProperty(PropertyHelper.getPropertyId("Requests", "status"), "Accepted");
-      return new RequestStatusImpl(requestResource, associatedResources);
+      return new RequestStatusImpl(requestResource, associatedResources, requestStatusMetaData);
     }
-    return new RequestStatusImpl(null, associatedResources);
+    return new RequestStatusImpl(null, associatedResources, requestStatusMetaData);
   }
 
   /**
@@ -269,7 +275,7 @@ public abstract class AbstractResourceProvider extends BaseProvider implements R
   protected <T> T createResources(Command<T> command)
       throws SystemException, ResourceAlreadyExistsException, NoSuchParentResourceException {
     try {
-      return command.invoke();
+      return invokeWithRetry(command);
     } catch (ParentObjectNotFoundException e) {
       throw new NoSuchParentResourceException(e.getMessage(), e);
     } catch (DuplicateResourceException e) {
@@ -327,7 +333,7 @@ public abstract class AbstractResourceProvider extends BaseProvider implements R
   protected <T> T modifyResources (Command<T> command)
       throws SystemException, NoSuchResourceException, NoSuchParentResourceException {
     try {
-      return command.invoke();
+      return invokeWithRetry(command);
     } catch (ParentObjectNotFoundException e) {
       throw new NoSuchParentResourceException(e.getMessage(), e);
     } catch (ObjectNotFoundException e) {
@@ -439,6 +445,35 @@ public abstract class AbstractResourceProvider extends BaseProvider implements R
     return predicates.size() == 1 && PredicateHelper.getPropertyIds(predicate).containsAll(getPKPropertyIds());
   }
 
+  //invoke command with retry support in case of database fail
+  private <T> T invokeWithRetry(Command<T> command) throws AmbariException, AuthorizationException {
+    RetryHelper.clearAffectedClusters();
+    int retryAttempts = RetryHelper.getOperationsRetryAttempts();
+    do {
+
+      try {
+        return command.invoke();
+      } catch (Exception e) {
+        if (RetryHelper.isDatabaseException(e)) {
+
+          RetryHelper.invalidateAffectedClusters();
+
+          if (retryAttempts > 0) {
+            LOG.error("Ignoring database exception to perform operation retry, attempts remaining: " + retryAttempts, e);
+            retryAttempts--;
+          } else {
+            RetryHelper.clearAffectedClusters();
+            throw e;
+          }
+        } else {
+          RetryHelper.clearAffectedClusters();
+          throw e;
+        }
+      }
+
+    } while (true);
+  }
+
 
   // ----- Inner interface ---------------------------------------------------
 
@@ -455,6 +490,6 @@ public abstract class AbstractResourceProvider extends BaseProvider implements R
      *
      * @throws AmbariException thrown if a problem occurred during invocation
      */
-    public T invoke() throws AmbariException;
+    public T invoke() throws AmbariException, AuthorizationException;
   }
 }

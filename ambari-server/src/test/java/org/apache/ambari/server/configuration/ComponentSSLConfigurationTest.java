@@ -29,12 +29,13 @@ import org.junit.Test;
 public class ComponentSSLConfigurationTest {
 
   public static ComponentSSLConfiguration getConfiguration(String path,
-      String pass, String type, boolean gangliaSSL) {
+      String pass, String type, boolean isSslEnabled) {
     Properties ambariProperties = new Properties();
-    ambariProperties.setProperty(Configuration.SSL_TRUSTSTORE_PATH_KEY, path);
-    ambariProperties.setProperty(Configuration.SSL_TRUSTSTORE_PASSWORD_KEY, pass);
-    ambariProperties.setProperty(Configuration.SSL_TRUSTSTORE_TYPE_KEY, type);
-    ambariProperties.setProperty(Configuration.GANGLIA_HTTPS_KEY, Boolean.toString(gangliaSSL));
+    ambariProperties.setProperty(Configuration.SSL_TRUSTSTORE_PATH.getKey(), path);
+    ambariProperties.setProperty(Configuration.SSL_TRUSTSTORE_PASSWORD.getKey(), pass);
+    ambariProperties.setProperty(Configuration.SSL_TRUSTSTORE_TYPE.getKey(), type);
+    ambariProperties.setProperty(Configuration.AMBARI_METRICS_HTTPS_ENABLED.getKey(),
+        Boolean.toString(isSslEnabled));
 
     Configuration configuration =  new TestConfiguration(ambariProperties);
 
@@ -70,7 +71,7 @@ public class ComponentSSLConfigurationTest {
   public void testIsGangliaSSL() throws Exception {
     ComponentSSLConfiguration sslConfiguration = getConfiguration("tspath",
         "tspass", "tstype", true);
-    Assert.assertTrue(sslConfiguration.isGangliaSSL());
+    Assert.assertTrue(sslConfiguration.isHttpsEnabled());
   }
 
   private static class TestConfiguration extends Configuration {

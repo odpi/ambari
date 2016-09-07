@@ -23,18 +23,18 @@
       <extends>common-services/KNOX/0.5.0.2.2</extends>
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat6,suse11</osFamily>
+          <osFamily>redhat7,amazon2015,redhat6,suse11,suse12</osFamily>
           <packages>
             <package>
-              <name>knox_2_2_*</name>
+              <name>knox_${stack_version}</name>
             </package>
           </packages>
         </osSpecific>
         <osSpecific>
-          <osFamily>debian7,ubuntu12,ubuntu14</osFamily>
+          <osFamily>debian7,ubuntu12,ubuntu14,ubuntu16</osFamily>
           <packages>
             <package>
-              <name>knox-2-2-.*</name>
+              <name>knox-${stack_version}</name>
             </package>
           </packages>
         </osSpecific>

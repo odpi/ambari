@@ -19,13 +19,12 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <property>
     <name>sqoop_user</name>
     <deleted>true</deleted>
+    <on-ambari-upgrade add="false"/>
   </property>
-
   <!-- sqoop-env.cmd -->
   <property>
     <name>content</name>
@@ -68,5 +67,9 @@
 ::Set the path for where zookeper config dir is
 ::set ZOOCFGDIR=
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

@@ -17,7 +17,7 @@
 }}
 
 {{#if view.service.isRestartRequired}}
-  {{#isAccessible ADMIN}}
+  {{#isAuthorized "SERVICE.START_STOP"}}
     <div id="summary-restart-bar">
       <div class="alert alert-warning clearfix">
         <i class="icon-refresh"></i> {{{view.needToRestartMessage}}} {{t services.service.config.restartService.needToRestart}}
@@ -43,7 +43,7 @@
         </div>
       </div>
     </div>
-  {{/isAccessible}}
+  {{/isAuthorized}}
 {{/if}}
 
 <div class="service-block">
@@ -64,7 +64,7 @@
     {{#if view.serviceSummaryView}}
       {{view view.serviceSummaryView}}
     {{else}}
-      <div class="spinner"></div>
+      {{view App.SpinnerView}}
     {{/if}}
   </div>
 
@@ -76,16 +76,7 @@
         <div class="box-header">
           <h4>{{t services.service.metrics}}</h4>
           {{#if showTimeRangeControl}}
-            <div class="btn-group pull-right">
-              <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown">
-                {{view.currentTimeRange.name}} &nbsp;<span class="caret"></span>
-              </button>
-              <ul class="dropdown-menu">
-                {{#each option in view.timeRangeOptions}}
-                  <li><a href="#" {{action setTimeRange option target="view"}}>{{option.name}}</a></li>
-                {{/each}}
-              </ul>
-            </div>
+            {{view view.timeRangeListView}}
           {{/if}}
           {{#if isServiceWithEnhancedWidgets}}
             {{#if isAmbariMetricsInstalled}}
@@ -161,29 +152,7 @@
   <div class="row-fluid">
     <div class="span12 metrics-collapsed-graphs">
       {{#each collapsedSection in view.collapsedSections}}
-        <div {{bindAttr class=":accordion collapsedSection.toggleIndex"}}>
-          <div class="accordion-group box">
-            <div class="accordion-heading box-header">
-              <span class="pull-left accordion-toggle"
-                    data-toggle="collapse" {{bindAttr dataParent="collapsedSection.toggleIndex" href="collapsedSection.toggleIndex"}}>
-                <i class="pull-left icon-caret-toggle"></i>
-                <span>{{collapsedSection.header}}</span>
-              </span>
-              <a class="btn pull-right" {{bindAttr href="collapsedSection.url"}} target="_blank">
-                <i class="icon-link"></i>
-              </a>
-
-              <div class="clearfix"></div>
-            </div>
-            <div class="accordion-body collapse in" {{bindAttr id="collapsedSection.id"}}>
-              <div class="accordion-inner">
-                {{#if collapsedSection.metricView}}
-                  {{view collapsedSection.metricView viewDataBinding="collapsedSection.metricViewData"}}
-                {{/if}}
-              </div>
-            </div>
-          </div>
-        </div>
+        {{view collapsedSection}}
       {{/each}}
     </div>
   </div>

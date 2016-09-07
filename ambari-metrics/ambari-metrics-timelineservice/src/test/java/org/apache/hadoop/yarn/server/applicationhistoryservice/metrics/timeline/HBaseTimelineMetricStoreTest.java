@@ -17,50 +17,116 @@
  */
 package org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline;
 
+import com.google.common.collect.Multimap;
+import junit.framework.Assert;
 import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.Function;
 import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.Function.ReadFunction.AVG;
+import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.Function.ReadFunction.SUM;
 import static org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.Function.PostProcessingFunction.RATE;
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class HBaseTimelineMetricStoreTest {
 
   public static final String MEM_METRIC = "mem";
   public static final String BYTES_IN_METRIC = "bytes_in";
-  public static final String BYTES_NOT_AFUNCTION_METRIC = "bytes._not" +
-    "._afunction";
+  public static final String BYTES_NOT_AFUNCTION_METRIC = "bytes._not._afunction";
 
   @Test
   public void testParseMetricNamesToAggregationFunctions() throws Exception {
     //giwen
     List<String> metricNames = Arrays.asList(
       MEM_METRIC + "._avg",
+      MEM_METRIC + "._sum",
       MEM_METRIC + "._rate._avg",
       BYTES_IN_METRIC,
       BYTES_NOT_AFUNCTION_METRIC);
 
     //when
-    HashMap<String, List<Function>> mfm = HBaseTimelineMetricStore
-      .parseMetricNamesToAggregationFunctions(metricNames);
+    Multimap<String, List<Function>> multimap =
+      HBaseTimelineMetricStore.parseMetricNamesToAggregationFunctions(metricNames);
 
     //then
-    assertThat(mfm).hasSize(3)
-      .containsKeys(MEM_METRIC, BYTES_IN_METRIC, BYTES_NOT_AFUNCTION_METRIC);
+    Assert.assertEquals(multimap.keySet().size(), 3);
+    Assert.assertTrue(multimap.containsKey(MEM_METRIC));
+    Assert.assertTrue(multimap.containsKey(BYTES_IN_METRIC));
+    Assert.assertTrue(multimap.containsKey(BYTES_NOT_AFUNCTION_METRIC));
+
+    List<List<Function>> metricEntry = (List<List<Function>>) multimap.get(MEM_METRIC);
+    HashMap<String, List<Function>> mfm = new HashMap<String, List<Function>>();
+    mfm.put(MEM_METRIC, metricEntry.get(0));
 
     assertThat(mfm.get(MEM_METRIC)).containsOnly(
-      new Function(AVG, null),
+      new Function(AVG, null));
+
+    mfm = new HashMap<String, List<Function>>();
+    mfm.put(MEM_METRIC, metricEntry.get(1));
+    assertThat(mfm.get(MEM_METRIC)).containsOnly(
+      new Function(SUM, null));
+
+    mfm = new HashMap<String, List<Function>>();
+    mfm.put(MEM_METRIC, metricEntry.get(2));
+    assertThat(mfm.get(MEM_METRIC)).containsOnly(
       new Function(AVG, RATE));
+
+    metricEntry = (List<List<Function>>) multimap.get(BYTES_IN_METRIC);
+    mfm = new HashMap<String, List<Function>>();
+    mfm.put(BYTES_IN_METRIC, metricEntry.get(0));
 
     assertThat(mfm.get(BYTES_IN_METRIC))
       .contains(Function.DEFAULT_VALUE_FUNCTION);
 
+    metricEntry = (List<List<Function>>) multimap.get(BYTES_NOT_AFUNCTION_METRIC);
+    mfm = new HashMap<String, List<Function>>();
+    mfm.put(BYTES_NOT_AFUNCTION_METRIC, metricEntry.get(0));
+
     assertThat(mfm.get(BYTES_NOT_AFUNCTION_METRIC))
       .contains(Function.DEFAULT_VALUE_FUNCTION);
 
+  }
+
+  @Test
+  public void testRateCalculationOnMetricsWithEqualValues() throws Exception {
+    Map<Long, Double> metricValues = new TreeMap<>();
+    metricValues.put(1454016368371L, 1011.25);
+    metricValues.put(1454016428371L, 1011.25);
+    metricValues.put(1454016488371L, 1011.25);
+    metricValues.put(1454016548371L, 1011.25);
+    metricValues.put(1454016608371L, 1011.25);
+    metricValues.put(1454016668371L, 1011.25);
+    metricValues.put(1454016728371L, 1011.25);
+
+    // Calculate rate
+    Map<Long, Double> rates = HBaseTimelineMetricStore.updateValuesAsRate(new TreeMap<>(metricValues), false);
+
+    // Make sure rate is zero
+    for (Map.Entry<Long, Double> rateEntry : rates.entrySet()) {
+      Assert.assertEquals("Rate should be zero, key = " + rateEntry.getKey()
+          + ", value = " + rateEntry.getValue(), 0.0, rateEntry.getValue());
+    }
+  }
+
+  @Test
+  public void testDiffCalculation() throws Exception {
+    Map<Long, Double> metricValues = new TreeMap<>();
+    metricValues.put(1454016368371L, 1011.25);
+    metricValues.put(1454016428371L, 1010.25);
+    metricValues.put(1454016488371L, 1012.25);
+    metricValues.put(1454016548371L, 1010.25);
+    metricValues.put(1454016608371L, 1010.25);
+
+    Map<Long, Double> rates = HBaseTimelineMetricStore.updateValuesAsRate(new TreeMap<>(metricValues), true);
+
+    Assert.assertTrue(rates.size()==4);
+    Assert.assertTrue(rates.containsValue(-1.0));
+    Assert.assertTrue(rates.containsValue(2.0));
+    Assert.assertTrue(rates.containsValue(0.0));
   }
 }

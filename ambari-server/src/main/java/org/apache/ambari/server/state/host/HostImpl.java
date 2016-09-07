@@ -65,8 +65,8 @@ import org.apache.ambari.server.state.fsm.SingleArcTransition;
 import org.apache.ambari.server.state.fsm.StateMachine;
 import org.apache.ambari.server.state.fsm.StateMachineFactory;
 import org.apache.ambari.server.topology.TopologyManager;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -77,7 +77,7 @@ import com.google.inject.persist.Transactional;
 
 public class HostImpl implements Host {
 
-  private static final Log LOG = LogFactory.getLog(HostImpl.class);
+  private static final Logger LOG = LoggerFactory.getLogger(HostImpl.class);
   private static final String HARDWAREISA = "hardware_isa";
   private static final String HARDWAREMODEL = "hardware_model";
   private static final String INTERFACES = "interfaces";
@@ -255,7 +255,7 @@ public class HostImpl implements Host {
       hostEntity.setHostStateEntity(hostStateEntity);
       hostStateEntity.setHealthStatus(gson.toJson(new HostHealthStatus(HealthStatus.UNKNOWN, "")));
       if (persisted) {
-        persist();
+        hostStateDAO.create(hostStateEntity);
       }
     } else {
       stateMachine.setCurrentState(hostStateEntity.getCurrentState());
@@ -295,7 +295,10 @@ public class HostImpl implements Host {
         + e.hostInfo.toString()
         + ", registrationTime=" + e.registrationTime
         + ", agentVersion=" + agentVersion);
+
       host.persist();
+      host.clusters.updateHostMappings(host);
+
       //todo: proper host joined notification
       boolean associatedWithCluster = false;
       try {
@@ -401,6 +404,8 @@ public class HostImpl implements Host {
           + ", host=" + e.getHostName()
           + ", lastHeartbeatTime=" + host.getLastHeartbeatTime());
       host.setHealthStatus(new HostHealthStatus(HealthStatus.UNKNOWN, host.getHealthStatus().getHealthReport()));
+
+      topologyManager.onHostHeartBeatLost(host);
     }
   }
 
@@ -869,8 +874,9 @@ public class HostImpl implements Host {
 
   @Override
   public String getOsFamily() {
-	  String majorVersion = getHostAttributes().get(OS_RELEASE_VERSION).split("\\.")[0];
-	  return getHostAttributes().get(OSFAMILY) + majorVersion;
+    Map<String, String> hostAttributes = getHostAttributes();
+    String majorVersion = hostAttributes.get(OS_RELEASE_VERSION).split("\\.")[0];
+	  return hostAttributes.get(OSFAMILY) + majorVersion;
   }
 
   @Override
@@ -1211,12 +1217,15 @@ public class HostImpl implements Host {
           try {
             clusters.getClusterById(clusterEntity.getClusterId()).refresh();
           } catch (AmbariException e) {
-            LOG.error(e);
+            LOG.error("Error while looking up the cluster", e);
             throw new RuntimeException("Cluster '" + clusterEntity.getClusterId() + "' was removed", e);
           }
         }
         persisted = true;
       } else {
+        //refresh entities from active session
+        getHostEntity();
+        getHostStateEntity();
         saveIfPersisted();
       }
     } finally {
@@ -1321,20 +1330,25 @@ public class HostImpl implements Host {
   }
 
   /**
-   * Get a map of configType with all applicable config tags.
-   *
-   * @param cluster  the cluster
-   *
-   * @return Map of configType -> HostConfig
+   * {@inheritDoc}
    */
   @Override
-  public Map<String, HostConfig> getDesiredHostConfigs(Cluster cluster) throws AmbariException {
+  public Map<String, HostConfig> getDesiredHostConfigs(Cluster cluster,
+      Map<String, DesiredConfig> clusterDesiredConfigs) throws AmbariException {
     Map<String, HostConfig> hostConfigMap = new HashMap<String, HostConfig>();
-    Map<String, DesiredConfig> clusterDesiredConfigs = (cluster == null) ? new HashMap<String, DesiredConfig>() : cluster.getDesiredConfigs();
+
+    if( null == cluster ){
+      clusterDesiredConfigs = new HashMap<String, DesiredConfig>();
+    }
+
+    // per method contract, fetch if not supplied
+    if (null == clusterDesiredConfigs) {
+      clusterDesiredConfigs = cluster.getDesiredConfigs();
+    }
 
     if (clusterDesiredConfigs != null) {
       for (Map.Entry<String, DesiredConfig> desiredConfigEntry
-              : clusterDesiredConfigs.entrySet()) {
+          : clusterDesiredConfigs.entrySet()) {
         HostConfig hostConfig = new HostConfig();
         hostConfig.setDefaultVersionTag(desiredConfigEntry.getValue().getTag());
         hostConfigMap.put(desiredConfigEntry.getKey(), hostConfig);
@@ -1346,7 +1360,7 @@ public class HostImpl implements Host {
     if (configGroups != null && !configGroups.isEmpty()) {
       for (ConfigGroup configGroup : configGroups.values()) {
         for (Map.Entry<String, Config> configEntry : configGroup
-                .getConfigurations().entrySet()) {
+            .getConfigurations().entrySet()) {
 
           String configType = configEntry.getKey();
           // HostConfig config holds configType -> versionTag, per config group
@@ -1356,16 +1370,17 @@ public class HostImpl implements Host {
             hostConfigMap.put(configType, hostConfig);
             if (cluster != null) {
               Config conf = cluster.getDesiredConfigByType(configType);
-              if(conf == null)
+              if(conf == null) {
                 LOG.error("Config inconsistency exists:"+
                     " unknown configType="+configType);
-              else
+              } else {
                 hostConfig.setDefaultVersionTag(conf.getTag());
+              }
             }
           }
           Config config = configEntry.getValue();
           hostConfig.getConfigGroupOverrides().put(configGroup.getId(),
-                  config.getTag());
+              config.getTag());
         }
       }
     }
@@ -1460,6 +1475,7 @@ public class HostImpl implements Host {
     }
     return hostStateEntity;
   }
+
 }
 
 

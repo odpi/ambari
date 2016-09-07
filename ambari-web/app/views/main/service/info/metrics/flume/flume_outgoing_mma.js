@@ -30,26 +30,14 @@ App.ChartServiceMetricsFlume_OutgoingMMA = App.ChartLinearTimeView.extend({
   renderer: 'line',
   title: Em.I18n.t('services.service.info.metrics.flume.outgoing.mma'),
 
-  ajaxIndex: 'service.metrics.flume.outgoing_event_take_success_count',
-  yAxisFormatter: App.ChartLinearTimeView.CreateRateFormatter('',
-      App.ChartLinearTimeView.DefaultFormatter),
+  ajaxIndex: 'service.metrics.flume.outgoing_event_take_success_count.mma',
+  displayUnit: '/s',
 
-  transformToSeries: function (jsonData) {
-    var seriesArray = [];
-    var self = this;
-
-    if (Em.get(jsonData, "metrics.flume.flume.CHANNEL.EventTakeSuccessCount.rate")) {
-      for ( var cname in jsonData.metrics.flume.flume.CHANNEL.EventTakeSuccessCount.rate) {
-        if(cname != "sum"){
-          var seriesName = Em.I18n.t('services.service.info.metrics.flume.outgoing_mma').format(cname);
-          var seriesData = jsonData.metrics.flume.flume.CHANNEL.EventTakeSuccessCount.rate[cname];
-          if (seriesData) {
-            seriesArray.push(self.transformData(seriesData, seriesName));
-          }
-        }
-      }
+  seriesTemplate: {
+    path: 'metrics.flume.flume.CHANNEL.EventTakeSuccessCount.rate',
+    displayName: function (name) {
+      return Em.I18n.t('services.service.info.metrics.flume.outgoing_mma').format(name);
     }
-    return seriesArray;
   },
 
   colorForSeries: function (series) {

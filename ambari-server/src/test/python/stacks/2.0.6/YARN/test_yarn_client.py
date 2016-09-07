@@ -39,55 +39,56 @@ class TestYarnClient(RMFTestCase):
                        classname = "YarnClient",
                        command = "configure",
                        config_file="default.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
     self.assertResourceCalled('Directory', '/var/run/hadoop-yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-yarn/yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-yarn/yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-mapreduce',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-mapreduce/mapred',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-mapreduce',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-mapreduce/mapred',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-yarn',
       owner = 'yarn',
-      recursive = True,
+      group = 'hadoop',
+      create_parents = True,
       ignore_failures = True,
       cd_access = 'a',
     )
@@ -131,10 +132,6 @@ class TestYarnClient(RMFTestCase):
       configurations = self.getConfig()['configurations']['capacity-scheduler'],
       configuration_attributes = self.getConfig()['configuration_attributes']['capacity-scheduler']
     )
-    self.assertResourceCalled('File', '/etc/hadoop/conf/yarn.exclude',
-      owner = 'yarn',
-      group = 'hadoop',
-    )
     self.assertResourceCalled('File', '/etc/security/limits.d/yarn.conf',
       content = Template('yarn.conf.j2'),
       mode = 0644,
@@ -160,12 +157,13 @@ class TestYarnClient(RMFTestCase):
                               )
     self.assertResourceCalled('Directory', '/cgroups_test/cpu',
                               group = 'hadoop',
-                              recursive = True,
+                              create_parents = True,
                               mode = 0755,
                               cd_access="a"
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/mapred-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['mapred-env']['content']),
+                              mode = 0755,
                               owner = 'hdfs',
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/taskcontroller.cfg',
@@ -206,54 +204,55 @@ class TestYarnClient(RMFTestCase):
                        classname = "YarnClient",
                        command = "configure",
                        config_file="secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-yarn/yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-yarn/yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-mapreduce',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-mapreduce/mapred',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-mapreduce',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-mapreduce/mapred',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-yarn',
       owner = 'yarn',
-      recursive = True,
+      group = 'hadoop',
+      create_parents = True,
       ignore_failures = True,
       cd_access = 'a',
     )
@@ -297,10 +296,6 @@ class TestYarnClient(RMFTestCase):
       configurations = self.getConfig()['configurations']['capacity-scheduler'],
       configuration_attributes = self.getConfig()['configuration_attributes']['capacity-scheduler']
     )
-    self.assertResourceCalled('File', '/etc/hadoop/conf/yarn.exclude',
-      owner = 'yarn',
-      group = 'hadoop',
-    )
     self.assertResourceCalled('File', '/etc/security/limits.d/yarn.conf',
       content = Template('yarn.conf.j2'),
       mode = 0644,
@@ -326,12 +321,13 @@ class TestYarnClient(RMFTestCase):
     )
     self.assertResourceCalled('Directory', '/cgroups_test/cpu',
                               group = 'hadoop',
-                              recursive = True,
+                              create_parents = True,
                               mode = 0755,
                               cd_access="a"
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/mapred-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['mapred-env']['content']),
+                              mode = 0755,
                               owner = 'root',
                               )
     self.assertResourceCalled('File', '/usr/lib/hadoop/sbin/task-controller',
@@ -379,55 +375,56 @@ class TestYarnClient(RMFTestCase):
                        command = "restart",
                        config_file="default.json",
                        config_overrides = { 'roleParams' : { "component_category": "CLIENT" } },
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
     self.assertResourceCalled('Directory', '/var/run/hadoop-yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-yarn/yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-yarn/yarn',
       owner = 'yarn',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-mapreduce',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop-mapreduce/mapred',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-mapreduce',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-mapreduce/mapred',
       owner = 'mapred',
       group = 'hadoop',
-      recursive = True,
+      create_parents = True,
       cd_access = 'a',
     )
     self.assertResourceCalled('Directory', '/var/log/hadoop-yarn',
       owner = 'yarn',
-      recursive = True,
+      group = 'hadoop',
+      create_parents = True,
       ignore_failures = True,
       cd_access = 'a',
     )
@@ -471,10 +468,6 @@ class TestYarnClient(RMFTestCase):
       configurations = self.getConfig()['configurations']['capacity-scheduler'],
       configuration_attributes = self.getConfig()['configuration_attributes']['capacity-scheduler']
     )
-    self.assertResourceCalled('File', '/etc/hadoop/conf/yarn.exclude',
-      owner = 'yarn',
-      group = 'hadoop',
-    )
     self.assertResourceCalled('File', '/etc/security/limits.d/yarn.conf',
       content = Template('yarn.conf.j2'),
       mode = 0644,
@@ -500,12 +493,13 @@ class TestYarnClient(RMFTestCase):
                               )
     self.assertResourceCalled('Directory', '/cgroups_test/cpu',
                               group = 'hadoop',
-                              recursive = True,
+                              create_parents = True,
                               mode = 0755,
                               cd_access="a"
     )
     self.assertResourceCalled('File', '/etc/hadoop/conf/mapred-env.sh',
                               content = InlineTemplate(self.getConfig()['configurations']['mapred-env']['content']),
+                              mode = 0755,
                               owner = 'hdfs',
                               )
     self.assertResourceCalled('File', '/etc/hadoop/conf/taskcontroller.cfg',
@@ -541,22 +535,22 @@ class TestYarnClient(RMFTestCase):
     self.assertNoMoreResources()
 
 
-  @patch.object(functions, "get_hdp_version", new=MagicMock(return_value="2.2.0.0-2041"))
+  @patch.object(functions, "get_stack_version", new=MagicMock(return_value="2.2.0.0-2041"))
   def test_upgrade(self):
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/yarn_client.py",
                    classname = "YarnClient",
                    command = "restart",
                    config_file="client-upgrade.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
-    self.assertResourceCalled("Execute", ('hdp-select', 'set', 'hadoop-client', '2.2.1.0-2067'), sudo=True)
+    self.assertResourceCalled("Execute", ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'hadoop-client', '2.2.1.0-2067'), sudo=True)
 
-    # for now, it's enough that hdp-select is confirmed
+    # for now, it's enough that <stack-selector-tool> is confirmed
 
-  @patch.object(functions, "get_hdp_version", new = MagicMock(return_value='2.3.0.0-1234'))
-  def test_pre_rolling_restart_23(self):
+  @patch.object(functions, "get_stack_version", new = MagicMock(return_value='2.3.0.0-1234'))
+  def test_pre_upgrade_restart_23(self):
     config_file = self.get_src_folder()+"/test/python/stacks/2.0.6/configs/default.json"
     with open(config_file, "r") as f:
       json_content = json.load(f)
@@ -566,21 +560,21 @@ class TestYarnClient(RMFTestCase):
     mocks_dict = {}
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/yarn_client.py",
                        classname = "YarnClient",
-                       command = "pre_rolling_restart",
+                       command = "pre_upgrade_restart",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES,
-                       call_mocks = [(0, None), (0, None)],
+                       call_mocks = [(0, None, ''), (0, None)],
                        mocks_dict = mocks_dict)
 
-    self.assertResourceCalled('Execute', ('hdp-select', 'set', 'hadoop-client', version), sudo=True)
+    self.assertResourceCalledIgnoreEarlier('Execute', ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'hadoop-client', version), sudo=True)
     self.assertNoMoreResources()
 
     self.assertEquals(1, mocks_dict['call'].call_count)
     self.assertEquals(1, mocks_dict['checked_call'].call_count)
     self.assertEquals(
-      ('conf-select', 'set-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'set-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['checked_call'].call_args_list[0][0][0])
     self.assertEquals(
-      ('conf-select', 'create-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'create-conf-dir', '--package', 'hadoop', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['call'].call_args_list[0][0][0])

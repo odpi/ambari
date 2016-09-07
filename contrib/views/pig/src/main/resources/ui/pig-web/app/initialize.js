@@ -64,7 +64,22 @@ App.IsodateTransform = DS.Transform.extend({
   },
   serialize: function (deserialized) {
     if (deserialized) {
-      return moment(deserialized).format('X');
+      return moment(deserialized).format('x');
+    }
+    return deserialized;
+  }
+});
+
+App.ScriptdateTransform = DS.Transform.extend({
+  deserialize: function (serialized) {
+    if (serialized) {
+      return moment(serialized).toDate();
+    }
+    return serialized;
+  },
+  serialize: function (deserialized) {
+    if (deserialized) {
+      return moment(deserialized).utc().format('YYYY-MM-DDTHH:mm:ss') + 'Z';
     }
     return deserialized;
   }
@@ -185,3 +200,4 @@ require("components/pigHelper");
 require("components/scriptListRow");
 require("components/tabControl");
 require("components/pathInput");
+require("components/highlightErrors");

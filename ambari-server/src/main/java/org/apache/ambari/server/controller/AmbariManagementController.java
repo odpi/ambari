@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,22 +18,36 @@
 
 package org.apache.ambari.server.controller;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.RoleCommand;
 import org.apache.ambari.server.actionmanager.ActionManager;
 import org.apache.ambari.server.agent.ExecutionCommand;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.controller.internal.DeleteStatusMetaData;
 import org.apache.ambari.server.controller.internal.RequestStageContainer;
+import org.apache.ambari.server.controller.logging.LoggingSearchPropertyProvider;
+import org.apache.ambari.server.controller.metrics.MetricPropertyProviderFactory;
 import org.apache.ambari.server.controller.metrics.timeline.cache.TimelineMetricCacheProvider;
+import org.apache.ambari.server.events.AmbariEvent;
+import org.apache.ambari.server.events.publishers.AmbariEventPublisher;
 import org.apache.ambari.server.metadata.RoleCommandOrder;
+import org.apache.ambari.server.orm.entities.ExtensionLinkEntity;
 import org.apache.ambari.server.scheduler.ExecutionScheduleManager;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
+import org.apache.ambari.server.security.encryption.CredentialStoreService;
 import org.apache.ambari.server.security.ldap.LdapBatchDto;
 import org.apache.ambari.server.security.ldap.LdapSyncDto;
 import org.apache.ambari.server.stageplanner.RoleGraphFactory;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.ConfigHelper;
+import org.apache.ambari.server.state.HostState;
 import org.apache.ambari.server.state.MaintenanceState;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.ServiceComponent;
@@ -45,12 +59,6 @@ import org.apache.ambari.server.state.ServiceOsSpecific;
 import org.apache.ambari.server.state.State;
 import org.apache.ambari.server.state.configgroup.ConfigGroupFactory;
 import org.apache.ambari.server.state.scheduler.RequestExecutionFactory;
-
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * Management controller interface.
@@ -64,7 +72,7 @@ public interface AmbariManagementController {
    *
    * @return the Ambari endpoint URI
    */
-  public String getAmbariServerURI(String path);
+  String getAmbariServerURI(String path);
 
 
   // ----- Create -----------------------------------------------------------
@@ -75,8 +83,9 @@ public interface AmbariManagementController {
    * @param request  the request object which defines the cluster to be created
    *
    * @throws AmbariException thrown if the cluster cannot be created
+   * @throws AuthorizationException thrown if the authenticated user is not authorized to perform this operation
    */
-  public void createCluster(ClusterRequest request) throws AmbariException;
+  void createCluster(ClusterRequest request) throws AmbariException, AuthorizationException;
 
   /**
    * Create the host component defined by the attributes in the given request object.
@@ -85,8 +94,8 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException thrown if the host component cannot be created
    */
-  public void createHostComponents(
-      Set<ServiceComponentHostRequest> requests) throws AmbariException;
+  void createHostComponents(
+      Set<ServiceComponentHostRequest> requests) throws AmbariException, AuthorizationException;
 
   /**
    * Creates a configuration.
@@ -95,8 +104,16 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException when the configuration cannot be created.
    */
-  public ConfigurationResponse createConfiguration(ConfigurationRequest request)
-      throws AmbariException;
+  ConfigurationResponse createConfiguration(ConfigurationRequest request)
+      throws AmbariException, AuthorizationException;
+
+  /**
+   * Create cluster config
+   * TODO move this method to Cluster? doesn't seem to be on its place
+   * @return config created
+   */
+  Config createConfig(Cluster cluster, String type, Map<String, String> properties,
+                      String versionTag, Map<String, Map<String, String>> propertiesAttributes);
 
   /**
    * Creates users.
@@ -105,7 +122,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException when the user cannot be created.
    */
-  public void createUsers(Set<UserRequest> requests) throws AmbariException;
+  void createUsers(Set<UserRequest> requests) throws AmbariException;
 
   /**
    * Creates groups.
@@ -114,7 +131,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException when the groups cannot be created.
    */
-  public void createGroups(Set<GroupRequest> requests) throws AmbariException;
+  void createGroups(Set<GroupRequest> requests) throws AmbariException;
 
   /**
    * Creates members of the group.
@@ -123,7 +140,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException when the members cannot be created.
    */
-  public void createMembers(Set<MemberRequest> requests) throws AmbariException;
+  void createMembers(Set<MemberRequest> requests) throws AmbariException;
 
 
   // ----- Read -------------------------------------------------------------
@@ -136,9 +153,10 @@ public interface AmbariManagementController {
    * @return a set of cluster responses
    *
    * @throws AmbariException thrown if the resource cannot be read
+   * @throws AuthorizationException thrown if the authenticated user is not authorized to perform this operation
    */
-  public Set<ClusterResponse> getClusters(Set<ClusterRequest> requests)
-      throws AmbariException;
+  Set<ClusterResponse> getClusters(Set<ClusterRequest> requests)
+      throws AmbariException, AuthorizationException;
 
   /**
    * Get the host components identified by the given request objects.
@@ -150,7 +168,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException thrown if the resource cannot be read
    */
-  public Set<ServiceComponentHostResponse> getHostComponents(
+  Set<ServiceComponentHostResponse> getHostComponents(
       Set<ServiceComponentHostRequest> requests) throws AmbariException;
 
   /**
@@ -162,20 +180,8 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the configurations could not be read
    */
-  public Set<ConfigurationResponse> getConfigurations(
+  Set<ConfigurationResponse> getConfigurations(
       Set<ConfigurationRequest> requests) throws AmbariException;
-
-  /**
-   * Gets the task status identified by the given request objects.
-   *
-   * @param requests   the request objects
-   *
-   * @return  a set of task status responses
-   *
-   * @throws AmbariException if the configurations could not be read
-   */
-  public Set<TaskStatusResponse> getTaskStatus(Set<TaskStatusRequest> requests)
-      throws AmbariException;
 
   /**
    * Get service config version history
@@ -195,8 +201,8 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the users could not be read
    */
-  public Set<UserResponse> getUsers(Set<UserRequest> requests)
-      throws AmbariException;
+  Set<UserResponse> getUsers(Set<UserRequest> requests)
+      throws AmbariException, AuthorizationException;
 
   /**
    * Gets the user groups identified by the given request objects.
@@ -207,7 +213,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the groups could not be read
    */
-  public Set<GroupResponse> getGroups(Set<GroupRequest> requests)
+  Set<GroupResponse> getGroups(Set<GroupRequest> requests)
       throws AmbariException;
 
   /**
@@ -219,7 +225,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the members could not be read
    */
-  public Set<MemberResponse> getMembers(Set<MemberRequest> requests)
+  Set<MemberResponse> getMembers(Set<MemberRequest> requests)
       throws AmbariException;
 
 
@@ -237,10 +243,11 @@ public interface AmbariManagementController {
    * @return a track action response
    *
    * @throws AmbariException thrown if the resource cannot be updated
+   * @throws AuthorizationException thrown if the authenticated user is not authorized to perform this operation
    */
-  public RequestStatusResponse updateClusters(Set<ClusterRequest> requests,
+  RequestStatusResponse updateClusters(Set<ClusterRequest> requests,
                                               Map<String, String> requestProperties)
-      throws AmbariException;
+      throws AmbariException, AuthorizationException;
 
   /**
    * Updates the users specified.
@@ -249,7 +256,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the resources cannot be updated
    */
-  public void updateUsers(Set<UserRequest> requests) throws AmbariException;
+  void updateUsers(Set<UserRequest> requests) throws AmbariException, AuthorizationException;
 
   /**
    * Updates the groups specified.
@@ -258,7 +265,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the resources cannot be updated
    */
-  public void updateGroups(Set<GroupRequest> requests) throws AmbariException;
+  void updateGroups(Set<GroupRequest> requests) throws AmbariException;
 
   /**
    * Updates the members of the group specified.
@@ -267,7 +274,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the resources cannot be updated
    */
-  public void updateMembers(Set<MemberRequest> requests) throws AmbariException;
+  void updateMembers(Set<MemberRequest> requests) throws AmbariException;
 
 
   // ----- Delete -----------------------------------------------------------
@@ -279,7 +286,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException thrown if the resource cannot be deleted
    */
-  public void deleteCluster(ClusterRequest request) throws AmbariException;
+  void deleteCluster(ClusterRequest request) throws AmbariException;
 
   /**
    * Delete the host component identified by the given request object.
@@ -290,8 +297,8 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException thrown if the resource cannot be deleted
    */
-  public RequestStatusResponse deleteHostComponents(
-      Set<ServiceComponentHostRequest> requests) throws AmbariException;
+  DeleteStatusMetaData deleteHostComponents(
+      Set<ServiceComponentHostRequest> requests) throws AmbariException, AuthorizationException;
 
   /**
    * Deletes the users specified.
@@ -300,7 +307,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the resources cannot be deleted
    */
-  public void deleteUsers(Set<UserRequest> requests) throws AmbariException;
+  void deleteUsers(Set<UserRequest> requests) throws AmbariException;
 
   /**
    * Deletes the user groups specified.
@@ -309,7 +316,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the resources cannot be deleted
    */
-  public void deleteGroups(Set<GroupRequest> requests) throws AmbariException;
+  void deleteGroups(Set<GroupRequest> requests) throws AmbariException;
 
   /**
    * Deletes the group members specified.
@@ -318,7 +325,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if the resources cannot be deleted
    */
-  public void deleteMembers(Set<MemberRequest> requests) throws AmbariException;
+  void deleteMembers(Set<MemberRequest> requests) throws AmbariException;
 
   /**
    * Create the action defined by the attributes in the given request object.
@@ -329,7 +336,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException thrown if the action cannot be created
    */
-  public RequestStatusResponse createAction(ExecuteActionRequest actionRequest, Map<String, String> requestProperties)
+  RequestStatusResponse createAction(ExecuteActionRequest actionRequest, Map<String, String> requestProperties)
       throws AmbariException;
 
   /**
@@ -341,7 +348,7 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if the resources cannot be read
    */
-  public Set<StackResponse> getStacks(Set<StackRequest> requests) throws AmbariException;
+  Set<StackResponse> getStacks(Set<StackRequest> requests) throws AmbariException;
 
   /**
    * Update stacks from the files at stackRoot.
@@ -349,7 +356,53 @@ public interface AmbariManagementController {
    * @return a track action response
    * @throws AmbariException if
    */
-  public RequestStatusResponse updateStacks() throws AmbariException;
+  RequestStatusResponse updateStacks() throws AmbariException;
+
+  /**
+   * Create a link between an extension and a stack
+   *
+   * @throws AmbariException if we fail to link the extension to the stack
+   */
+  public void createExtensionLink(ExtensionLinkRequest request) throws AmbariException;
+
+  /**
+   * Update a link between an extension and a stack
+   *
+   * @throws AmbariException if we fail to link the extension to the stack
+   */
+  public void updateExtensionLink(ExtensionLinkRequest request) throws AmbariException;
+
+  /**
+   * Update a link between an extension and a stack
+   *
+   * @throws AmbariException if we fail to link the extension to the stack
+   */
+  public void updateExtensionLink(ExtensionLinkEntity linkEntity) throws AmbariException;
+
+  /**
+   * Delete a link between an extension and a stack
+   *
+   * @throws AmbariException if we fail to unlink the extension from the stack
+   */
+  public void deleteExtensionLink(ExtensionLinkRequest request) throws AmbariException;
+
+  /**
+   * Get supported extensions.
+   *
+   * @param requests the extensions
+   * @return a set of extensions responses
+   * @throws  AmbariException if the resources cannot be read
+   */
+  public Set<ExtensionResponse> getExtensions(Set<ExtensionRequest> requests) throws AmbariException;
+
+  /**
+   * Get supported extension versions.
+   *
+   * @param requests the extension versions
+   * @return a set of extension versions responses
+   * @throws  AmbariException if the resources cannot be read
+   */
+  public Set<ExtensionVersionResponse> getExtensionVersions(Set<ExtensionVersionRequest> requests) throws AmbariException;
 
   /**
    * Get supported stacks versions.
@@ -360,8 +413,7 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if the resources cannot be read
    */
-  public Set<StackVersionResponse> getStackVersions(Set<StackVersionRequest> requests) throws AmbariException;
-
+  Set<StackVersionResponse> getStackVersions(Set<StackVersionRequest> requests) throws AmbariException;
 
   /**
    * Get repositories by stack name, version and operating system.
@@ -372,7 +424,7 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if the resources cannot be read
    */
-  public Set<RepositoryResponse> getRepositories(Set<RepositoryRequest> requests) throws AmbariException;
+  Set<RepositoryResponse> getRepositories(Set<RepositoryRequest> requests) throws AmbariException;
 
   /**
    * Updates repositories by stack name, version and operating system.
@@ -381,7 +433,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException
    */
-  public void updateRepositories(Set<RepositoryRequest> requests) throws AmbariException;
+  void updateRepositories(Set<RepositoryRequest> requests) throws AmbariException;
 
   /**
    * Verifies repositories' base urls.
@@ -390,7 +442,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if verification of any of urls fails
    */
-  public void verifyRepositories(Set<RepositoryRequest> requests) throws AmbariException;
+  void verifyRepositories(Set<RepositoryRequest> requests) throws AmbariException;
 
   /**
    * Get repositories by stack name, version.
@@ -401,7 +453,7 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if the resources cannot be read
    */
-  public Set<StackServiceResponse> getStackServices(Set<StackServiceRequest> requests) throws AmbariException;
+  Set<StackServiceResponse> getStackServices(Set<StackServiceRequest> requests) throws AmbariException;
 
 
   /**
@@ -413,7 +465,7 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if the resources cannot be read
    */
-  public Set<StackConfigurationResponse> getStackConfigurations(Set<StackConfigurationRequest> requests) throws AmbariException;
+  Set<StackConfigurationResponse> getStackConfigurations(Set<StackConfigurationRequest> requests) throws AmbariException;
 
 
   /**
@@ -425,8 +477,7 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if the resources cannot be read
    */
-  public Set<StackServiceComponentResponse> getStackComponents(Set<StackServiceComponentRequest> requests) throws AmbariException;
-
+  Set<StackServiceComponentResponse> getStackComponents(Set<StackServiceComponentRequest> requests) throws AmbariException;
 
   /**
    * Get operating systems by stack name, version.
@@ -437,7 +488,7 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if the resources cannot be read
    */
-  public Set<OperatingSystemResponse> getOperatingSystems(Set<OperatingSystemRequest> requests) throws AmbariException;
+  Set<OperatingSystemResponse> getOperatingSystems(Set<OperatingSystemRequest> requests) throws AmbariException;
 
   /**
    * Get all top-level services of Ambari, not related to certain cluster.
@@ -449,7 +500,7 @@ public interface AmbariManagementController {
    * @throws  AmbariException if the resources cannot be read
    */
 
-  public Set<RootServiceResponse> getRootServices(Set<RootServiceRequest> requests) throws AmbariException;
+  Set<RootServiceResponse> getRootServices(Set<RootServiceRequest> requests) throws AmbariException;
   /**
    * Get all components of top-level services of Ambari, not related to certain cluster.
    *
@@ -459,7 +510,7 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if the resources cannot be read
    */
-  public Set<RootServiceComponentResponse> getRootServiceComponents(Set<RootServiceComponentRequest> requests) throws AmbariException;
+  Set<RootServiceComponentResponse> getRootServiceComponents(Set<RootServiceComponentRequest> requests) throws AmbariException;
 
 
   // ----- Common utility methods --------------------------------------------
@@ -474,14 +525,14 @@ public interface AmbariManagementController {
    *
    * @throws  AmbariException if service name is null or empty
    */
-  public String findServiceName(Cluster cluster, String componentName) throws AmbariException;
+  String findServiceName(Cluster cluster, String componentName) throws AmbariException;
 
   /**
    * Get the clusters for this management controller.
    *
    * @return the clusters
    */
-  public Clusters getClusters();
+  Clusters getClusters();
 
   /**
    * Get config helper
@@ -495,56 +546,63 @@ public interface AmbariManagementController {
    *
    * @return the meta info
    */
-  public AmbariMetaInfo getAmbariMetaInfo();
+  AmbariMetaInfo getAmbariMetaInfo();
 
   /**
    * Get the service factory for this management controller.
    *
    * @return the service factory
    */
-  public ServiceFactory getServiceFactory();
+  ServiceFactory getServiceFactory();
 
   /**
    * Get the service component factory for this management controller.
    *
    * @return the service component factory
    */
-  public ServiceComponentFactory getServiceComponentFactory();
+  ServiceComponentFactory getServiceComponentFactory();
 
   /**
    * Get the root service response factory for this management controller.
    *
    * @return the root service response factory
    */
-  public AbstractRootServiceResponseFactory getRootServiceResponseFactory();
+  AbstractRootServiceResponseFactory getRootServiceResponseFactory();
 
   /**
    * Get the config group factory for this management controller.
    *
    * @return the config group factory
    */
-  public ConfigGroupFactory getConfigGroupFactory();
+  ConfigGroupFactory getConfigGroupFactory();
 
   /**
    * Get the role graph factory for this management controller.
    *
    * @return the role graph factory
    */
-  public RoleGraphFactory getRoleGraphFactory();
+  RoleGraphFactory getRoleGraphFactory();
 
   /**
     * Get the action manager for this management controller.
     *
     * @return the action manager
     */
-  public ActionManager getActionManager();
+  ActionManager getActionManager();
 
   /**
    * Get the authenticated user's name.
    *
    * @return the authenticated user's name
    */
-  public String getAuthName();
+  String getAuthName();
+
+  /**
+   * Get the authenticated user's id.
+   *
+   * @return the authenticated user's name
+   */
+  int getAuthId();
 
   /**
    * Create and persist the request stages and return a response containing the
@@ -564,14 +622,14 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException is thrown if the stages can not be created
    */
-  public RequestStatusResponse createAndPersistStages(Cluster cluster, Map<String, String> requestProperties,
-                                                      Map<String, String> requestParameters,
-                                                      Map<State, List<Service>> changedServices,
-                                                      Map<State, List<ServiceComponent>> changedComponents,
-                                                      Map<String, Map<State, List<ServiceComponentHost>>> changedHosts,
-                                                      Collection<ServiceComponentHost> ignoredHosts,
-                                                      boolean runSmokeTest, boolean reconfigureClients)
-                                                      throws AmbariException;
+  RequestStatusResponse createAndPersistStages(Cluster cluster, Map<String, String> requestProperties,
+                                                Map<String, String> requestParameters,
+                                                Map<State, List<Service>> changedServices,
+                                                Map<State, List<ServiceComponent>> changedComponents,
+                                                Map<String, Map<State, List<ServiceComponentHost>>> changedHosts,
+                                                Collection<ServiceComponentHost> ignoredHosts,
+                                                boolean runSmokeTest, boolean reconfigureClients)
+                                                throws AmbariException;
 
   /**
    * Add stages to the request.
@@ -591,54 +649,60 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if stages can't be created
    */
-  public RequestStageContainer addStages(RequestStageContainer requestStages, Cluster cluster, Map<String, String> requestProperties,
-                                 Map<String, String> requestParameters,
-                                 Map<State, List<Service>> changedServices,
-                                 Map<State, List<ServiceComponent>> changedComponents,
-                                 Map<String, Map<State, List<ServiceComponentHost>>> changedHosts,
-                                 Collection<ServiceComponentHost> ignoredHosts,
-                                 boolean runSmokeTest, boolean reconfigureClients) throws AmbariException;
+  RequestStageContainer addStages(RequestStageContainer requestStages, Cluster cluster, Map<String, String> requestProperties,
+                             Map<String, String> requestParameters,
+                             Map<State, List<Service>> changedServices,
+                             Map<State, List<ServiceComponent>> changedComponents,
+                             Map<String, Map<State, List<ServiceComponentHost>>> changedHosts,
+                             Collection<ServiceComponentHost> ignoredHosts,
+                             boolean runSmokeTest, boolean reconfigureClients) throws AmbariException;
 
   /**
    * Getter for the url of JDK, stored at server resources folder
    */
-  public String getJdkResourceUrl();
+  String getJdkResourceUrl();
 
   /**
    * Getter for the java home, stored in ambari.properties
    */
-  public String getJavaHome();
+  String getJavaHome();
 
   /**
    * Getter for the jdk name, stored in ambari.properties
    */
-  public String getJDKName();
+  String getJDKName();
 
   /**
    * Getter for the jce name, stored in ambari.properties
    */
-  public String getJCEName();
+  String getJCEName();
 
   /**
    * Getter for the name of server database
    */
-  public String getServerDB();
+  String getServerDB();
 
   /**
    * Getter for the url of Oracle JDBC driver, stored at server resources folder
    */
-  public String getOjdbcUrl();
+  String getOjdbcUrl();
 
   /**
    * Getter for the url of MySQL JDBC driver, stored at server resources folder
    */
-  public String getMysqljdbcUrl();
+  String getMysqljdbcUrl();
 
   /**
-   * Return a healthy host if found otherwise any random host
+   * Chooses a healthy host from the list of candidate hosts randomly. If there
+   * are no healthy hosts, then this method will return {@code null}.
+   * <p/>
+   * The host's {@link HostState} is used to determine if a host is healthy.
+   *
+   * @return a random healthy host, or {@code null}.
    * @throws AmbariException
+   * @see {@link HostState#HEALTHY}
    */
-  public String getHealthyHost(Set<String> hostList) throws AmbariException;
+  String getHealthyHost(Set<String> hostList) throws AmbariException;
 
 
   /**
@@ -651,8 +715,8 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if configuration tags can not be obtained
    */
-  public Map<String, Map<String,String>> findConfigurationTagsWithOverrides(
-          Cluster cluster, String hostName) throws AmbariException;
+  Map<String, Map<String,String>> findConfigurationTagsWithOverrides(
+        Cluster cluster, String hostName) throws AmbariException;
 
   /**
    * Returns parameters for RCA database
@@ -660,18 +724,18 @@ public interface AmbariManagementController {
    * @return the map with parameters for RCA db
    *
    */
-  public Map<String, String> getRcaParameters();
+  Map<String, String> getRcaParameters();
 
   /**
    * Get the Factory to create Request schedules
    * @return the request execution factory
    */
-  public RequestExecutionFactory getRequestExecutionFactory();
+  RequestExecutionFactory getRequestExecutionFactory();
 
   /**
    * Get Execution Schedule Manager
    */
-  public ExecutionScheduleManager getExecutionScheduleManager();
+  ExecutionScheduleManager getExecutionScheduleManager();
 
   /**
    * Get cached clusterUpdateResults, used only for service config versions currently
@@ -682,8 +746,10 @@ public interface AmbariManagementController {
 
   /**
    * Get JobTracker hostname
+   * HDP-1.x is not supported anymore
    */
-  public String getJobTrackerHost(Cluster cluster);
+  @Deprecated
+  String getJobTrackerHost(Cluster cluster);
 
   /**
    * Gets the effective maintenance state for a host component
@@ -691,20 +757,20 @@ public interface AmbariManagementController {
    * @return the maintenance state
    * @throws AmbariException
    */
-  public MaintenanceState getEffectiveMaintenanceState(ServiceComponentHost sch)
+  MaintenanceState getEffectiveMaintenanceState(ServiceComponentHost sch)
       throws AmbariException;
 
   /**
    * Get Role Command Order
    */
-  public RoleCommandOrder getRoleCommandOrder(Cluster cluster);
+  RoleCommandOrder getRoleCommandOrder(Cluster cluster);
 
   /**
    * Performs a test if LDAP server is reachable.
    *
    * @return true if connection to LDAP was established
    */
-  public boolean checkLdapConfigured();
+  boolean checkLdapConfigured();
 
   /**
    * Retrieves groups and users from external LDAP.
@@ -712,7 +778,7 @@ public interface AmbariManagementController {
    * @return ldap sync DTO
    * @throws AmbariException if LDAP is configured incorrectly
    */
-  public LdapSyncDto getLdapSyncInfo() throws AmbariException;
+  LdapSyncDto getLdapSyncInfo() throws AmbariException;
 
   /**
    * Synchronizes local users and groups with given data.
@@ -724,7 +790,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if synchronization data was invalid
    */
-  public LdapBatchDto synchronizeLdapUsersAndGroups(
+  LdapBatchDto synchronizeLdapUsersAndGroups(
       LdapSyncRequest userRequest, LdapSyncRequest groupRequest) throws AmbariException;
 
   /**
@@ -732,7 +798,7 @@ public interface AmbariManagementController {
    *
    * @return true if LDAP sync is in progress
    */
-  public boolean isLdapSyncInProgress();
+  boolean isLdapSyncInProgress();
 
   /**
    * Get configurations which are specific for a cluster (!not a service).
@@ -740,7 +806,7 @@ public interface AmbariManagementController {
    * @return
    * @throws AmbariException
    */
-  public Set<StackConfigurationResponse> getStackLevelConfigurations(Set<StackLevelConfigurationRequest> requests) throws AmbariException;
+  Set<StackConfigurationResponse> getStackLevelConfigurations(Set<StackLevelConfigurationRequest> requests) throws AmbariException;
 
   /**
    * @param serviceInfo service info for a given service
@@ -759,7 +825,7 @@ public interface AmbariManagementController {
    *
    * @throws AmbariException if an error occurs during the rack change registration
    */
-  public void registerRackChange(String clusterName) throws AmbariException;
+  void registerRackChange(String clusterName) throws AmbariException;
 
   /**
    * Initialize cluster scoped widgets and widgetLayouts for different stack
@@ -768,13 +834,13 @@ public interface AmbariManagementController {
    * @param cluster @Cluster object
    * @param service @Service object
    */
-  public void initializeWidgetsAndLayouts(Cluster cluster, Service service) throws AmbariException;
+  void initializeWidgetsAndLayouts(Cluster cluster, Service service) throws AmbariException;
 
   /**
    * Gets an execution command for host component life cycle command
    * @return
    */
-  public ExecutionCommand getExecutionCommand(Cluster cluster,
+  ExecutionCommand getExecutionCommand(Cluster cluster,
                                               ServiceComponentHost scHost,
                                               RoleCommand roleCommand) throws AmbariException;
 
@@ -786,5 +852,42 @@ public interface AmbariManagementController {
   Set<StackConfigurationDependencyResponse> getStackConfigurationDependencies(Set<StackConfigurationDependencyRequest> requests) throws AmbariException;
 
   TimelineMetricCacheProvider getTimelineMetricCacheProvider();
+
+  /**
+   * Gets the {@link MetricPropertyProviderFactory} that was injected into this
+   * class. This is a terrible pattern.
+   *
+   * @return the injected {@link MetricPropertyProviderFactory}
+   */
+  MetricPropertyProviderFactory getMetricPropertyProviderFactory();
+
+  /**
+   * Gets the LoggingSearchPropertyProvider instance.
+   *
+   * @return the injected {@link LoggingSearchPropertyProvider}
+   */
+  LoggingSearchPropertyProvider getLoggingSearchPropertyProvider();
+
+  /**
+   * Returns KerberosHelper instance
+   * @return
+   */
+  KerberosHelper getKerberosHelper();
+
+  /**
+   * Returns the CredentialStoreService implementation associated with this
+   * controller
+   * @return CredentialStoreService
+   */
+  CredentialStoreService getCredentialStoreService();
+
+  /**
+   * Gets an {@link AmbariEventPublisher} which can be used to send and receive
+   * {@link AmbariEvent}s.
+   *
+   * @return
+   */
+  AmbariEventPublisher getAmbariEventPublisher();
+
 }
 

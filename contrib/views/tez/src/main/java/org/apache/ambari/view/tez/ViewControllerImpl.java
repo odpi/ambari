@@ -18,18 +18,17 @@
 
 package org.apache.ambari.view.tez;
 
-import java.lang.String;
-import java.util.HashMap;
-import java.util.Map;
-
-import org.apache.ambari.view.ViewContext;
-import org.apache.ambari.view.cluster.Cluster;
-import org.apache.ambari.view.utils.ambari.AmbariApi;
-import org.slf4j.LoggerFactory;
-import org.slf4j.Logger;
-
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import org.apache.ambari.view.ViewContext;
+import org.apache.ambari.view.tez.exceptions.TezWebAppException;
+import org.apache.ambari.view.utils.ambari.AmbariApi;
+import org.apache.ambari.view.utils.ambari.AmbariApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Implementation of controller to handle requests for the tez View.
@@ -39,6 +38,7 @@ public class ViewControllerImpl implements ViewController {
 
   private AmbariApi ambariApi;
 
+  private static final Logger LOG = LoggerFactory.getLogger(ViewControllerImpl.class);
 
   @Inject
   public ViewControllerImpl(ViewContext viewContext) {
@@ -54,13 +54,57 @@ public class ViewControllerImpl implements ViewController {
    */
   @Override
   public ViewStatus getViewStatus() {
+
     ViewStatus status = new ViewStatus();
     Map<String, String> parameters = new HashMap<String, String>();
-    parameters.put(ViewController.PARAM_YARN_ATS_URL, ambariApi.getServices().getTimelineServerUrl());
-    parameters.put(ViewController.PARAM_YARN_RESOURCEMANAGER_URL, ambariApi.getServices().getRMUrl());
+    parameters.put(ViewController.PARAM_YARN_ATS_URL, getActiveATSUrl());
+    parameters.put(ViewController.PARAM_YARN_RESOURCEMANAGER_URL, getActiveRMUrl());
+    parameters.put(ViewController.PARAM_YARN_PROTOCOL, getYARNProtocol());
     status.setParameters(parameters);
     return status;
   }
 
+  @Override
+  public String getActiveATSUrl() {
+    try {
+      return ambariApi.getServices().getTimelineServerUrl();
+    } catch (AmbariApiException ex) {
+      String message = "Failed to find YARN Timeline Server location!";
+      LOG.error(message, ex);
+      throw new TezWebAppException(message, ex);
+    }
+  }
+
+  @Override
+  public String getActiveRMUrl() {
+    try {
+      return ambariApi.getServices().getRMUrl();
+    } catch (AmbariApiException ex) {
+      String message = "Failed to find Active ResourceManager location!";
+      LOG.error(message, ex);
+      throw new TezWebAppException(message, ex);
+    }
+  }
+
+  @Override
+  public String getYARNProtocol() {
+    try {
+      return ambariApi.getServices().getYARNProtocol();
+    } catch (AmbariApiException ex) {
+      String message = "Failed to find YARN http/https protocol configuration value!";
+      LOG.error(message, ex);
+      throw new TezWebAppException(message, ex);
+    }
+  }
+
+  @Override
+  public String getRMAuthenticationType() {
+    return ambariApi.getServices().getHadoopHttpWebAuthType();
+  }
+
+  @Override
+  public String getATSAuthenticationType() {
+    return ambariApi.getServices().getTimelineServerAuthType();
+  }
 }
 

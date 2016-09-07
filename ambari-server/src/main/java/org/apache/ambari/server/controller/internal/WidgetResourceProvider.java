@@ -333,7 +333,7 @@ public class WidgetResourceProvider extends AbstractControllerResourceProvider {
   }
 
   @Override
-  public RequestStatus deleteResources(Predicate predicate)
+  public RequestStatus deleteResources(Request request, Predicate predicate)
       throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
     final Set<Map<String, Object>> propertyMaps = getPropertyMaps(predicate);
 
@@ -382,9 +382,9 @@ public class WidgetResourceProvider extends AbstractControllerResourceProvider {
     boolean hasPermissionForClusterScope = false;
     for (GrantedAuthority grantedAuthority : securityContext.getAuthentication().getAuthorities()) {
       if (((AmbariGrantedAuthority) grantedAuthority).getPrivilegeEntity().getPermission().getId()
-              == PermissionEntity.AMBARI_ADMIN_PERMISSION ||
+              == PermissionEntity.AMBARI_ADMINISTRATOR_PERMISSION ||
               ((AmbariGrantedAuthority) grantedAuthority).getPrivilegeEntity().getPermission().getId()
-                      == PermissionEntity.CLUSTER_OPERATE_PERMISSION) {
+                      == PermissionEntity.CLUSTER_ADMINISTRATOR_PERMISSION) {
         hasPermissionForClusterScope = true;
       }
     }

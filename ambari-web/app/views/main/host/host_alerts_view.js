@@ -24,9 +24,10 @@ App.MainHostAlertsView = App.TableView.extend({
   templateName: require('templates/main/host/host_alerts'),
 
   content: function () {
-    var criticalAlerts = [];
-    var warningAlerts = [];
-    var otherAlerts = [];
+    var criticalAlerts = [],
+      warningAlerts = [],
+      okAlerts = [],
+      otherAlerts = [];
     var content = this.get('controller.content');
     if (content) {
       content.forEach(function (alert) {
@@ -37,11 +38,14 @@ App.MainHostAlertsView = App.TableView.extend({
           case 'WARNING':
             warningAlerts.push(alert);
             break;
+          case 'OK':
+            okAlerts.push(alert);
+            break;
           default:
             otherAlerts.push(alert);
         }
       });
-      return [].concat(criticalAlerts, warningAlerts, otherAlerts);
+      return [].concat(criticalAlerts, warningAlerts, okAlerts, otherAlerts);
     } else {
       return [];
     }
@@ -51,6 +55,18 @@ App.MainHostAlertsView = App.TableView.extend({
     var hostName = this.get('parentView.controller.content.hostName');
     App.router.get('mainAlertInstancesController').loadAlertInstancesByHost(hostName);
     App.router.set('mainAlertInstancesController.isUpdating', true);
+
+    // on load alters should be sorted by state
+    var controllerName = this.get('controller.name'),
+      savedSortConditions = App.db.getSortingStatuses(controllerName) || [];
+    if (savedSortConditions.everyProperty('status', 'sorting')) {
+      savedSortConditions.push({
+        name: "state",
+        status: "sorting_asc"
+      });
+      App.db.setSortingStatuses(controllerName, savedSortConditions);
+    }
+
     this._super();
   },
 
@@ -61,9 +77,7 @@ App.MainHostAlertsView = App.TableView.extend({
   /**
    * @type {number}
    */
-  totalCount: function () {
-    return this.get('content.length');
-  }.property('content.length'),
+  totalCount: Em.computed.alias('content.length'),
 
   colPropAssoc: ['', 'serviceName', 'label', 'latestTimestamp', 'state', 'text'],
 
@@ -202,9 +216,7 @@ App.MainHostAlertsView = App.TableView.extend({
    * Filtered number of all content number information displayed on the page footer bar
    * @returns {String}
    */
-  filteredContentInfo: function () {
-    return this.t('alerts.filters.filteredAlertsInfo').format(this.get('filteredCount'), this.get('totalCount'));
-  }.property('filteredCount', 'totalCount'),
+  filteredContentInfo: Em.computed.i18nFormat('alerts.filters.filteredAlertsInfo', 'filteredCount', 'totalCount'),
 
   /**
    * Determines how display "back"-link - as link or text

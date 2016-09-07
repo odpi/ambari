@@ -18,16 +18,16 @@
 
 package org.apache.ambari.view.filebrowser;
 
+import org.apache.ambari.view.ClusterType;
 import org.apache.ambari.view.ViewInstanceDefinition;
+import org.apache.ambari.view.utils.ambari.ValidatorUtils;
 import org.apache.ambari.view.validation.ValidationResult;
 import org.apache.ambari.view.validation.Validator;
-
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class PropertyValidator implements Validator {
+  protected static final Logger LOG = LoggerFactory.getLogger(PropertyValidator.class);
 
   public static final String WEBHDFS_URL = "webhdfs.url";
 
@@ -38,14 +38,18 @@ public class PropertyValidator implements Validator {
 
   @Override
   public ValidationResult validateProperty(String property, ViewInstanceDefinition viewInstanceDefinition, ValidationContext validationContext) {
+
+    // if associated with cluster(local or remote), no need to validate associated properties
+    ClusterType clusterType = viewInstanceDefinition.getClusterType();
+    if (clusterType == ClusterType.LOCAL_AMBARI || clusterType == ClusterType.REMOTE_AMBARI) {
+      return ValidationResult.SUCCESS;
+    }
+
     if (property.equals(WEBHDFS_URL)) {
       String webhdfsUrl = viewInstanceDefinition.getPropertyMap().get(WEBHDFS_URL);
-      if (webhdfsUrl != null) {
-        try {
-          new URI(webhdfsUrl);
-        } catch (URISyntaxException e) {
-          return new InvalidPropertyValidationResult(false, "Must be valid URL");
-        }
+      if (!ValidatorUtils.validateHdfsURL(webhdfsUrl)) {
+        LOG.error("Invalid webhdfs.url = {}", webhdfsUrl);
+        return new InvalidPropertyValidationResult(false, "Must be valid URL");
       }
     }
     return ValidationResult.SUCCESS;

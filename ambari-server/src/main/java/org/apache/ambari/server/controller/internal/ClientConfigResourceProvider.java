@@ -17,42 +17,24 @@
  */
 package org.apache.ambari.server.controller.internal;
 
-import com.google.gson.Gson;
-import com.google.inject.assistedinject.Assisted;
-import com.google.inject.assistedinject.AssistedInject;
-import com.google.inject.persist.Transactional;
-import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.configuration.Configuration;
-import org.apache.ambari.server.controller.AmbariManagementController;
-import org.apache.ambari.server.controller.MaintenanceStateHelper;
-import org.apache.ambari.server.controller.ServiceComponentHostRequest;
-import org.apache.ambari.server.controller.ServiceComponentHostResponse;
-import org.apache.ambari.server.controller.spi.NoSuchParentResourceException;
-import org.apache.ambari.server.controller.spi.NoSuchResourceException;
-import org.apache.ambari.server.controller.spi.Predicate;
-import org.apache.ambari.server.controller.spi.Request;
-import org.apache.ambari.server.controller.spi.RequestStatus;
-import org.apache.ambari.server.controller.spi.Resource;
-import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
-import org.apache.ambari.server.controller.spi.SystemException;
-import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
-import org.apache.ambari.server.controller.utilities.PropertyHelper;
-import org.apache.ambari.server.stack.StackManager;
-import org.apache.ambari.server.state.ClientConfigFileDefinition;
-import org.apache.ambari.server.state.Cluster;
-import org.apache.ambari.server.state.Clusters;
-import org.apache.ambari.server.state.ComponentInfo;
-import org.apache.ambari.server.state.Config;
-import org.apache.ambari.server.state.ConfigHelper;
-import org.apache.ambari.server.state.DesiredConfig;
-import org.apache.ambari.server.state.PropertyInfo.PropertyType;
-import org.apache.ambari.server.state.ServiceInfo;
-import org.apache.ambari.server.state.ServiceOsSpecific;
-import org.apache.ambari.server.state.StackId;
-import org.apache.ambari.server.utils.StageUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.AGENT_STACK_RETRY_COUNT;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.AGENT_STACK_RETRY_ON_UNAVAILABILITY;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.DB_NAME;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.GROUP_LIST;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.HOST_SYS_PREPPED;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JAVA_HOME;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JAVA_VERSION;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JCE_NAME;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JDK_LOCATION;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JDK_NAME;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.MYSQL_JDBC_URL;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.NOT_MANAGED_HDFS_PATH_LIST;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.ORACLE_JDBC_URL;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.PACKAGE_LIST;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SERVICE_REPO_INFO;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_NAME;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_VERSION;
+import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.USER_LIST;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -73,21 +55,43 @@ import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.DB_NAME;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.GROUP_LIST;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JAVA_HOME;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JAVA_VERSION;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JCE_NAME;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JDK_LOCATION;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.JDK_NAME;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.MYSQL_JDBC_URL;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.ORACLE_JDBC_URL;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.PACKAGE_LIST;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.SERVICE_REPO_INFO;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_NAME;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.STACK_VERSION;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.USER_LIST;
-import static org.apache.ambari.server.agent.ExecutionCommand.KeyNames.HOST_SYS_PREPPED;
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.controller.MaintenanceStateHelper;
+import org.apache.ambari.server.controller.ServiceComponentHostRequest;
+import org.apache.ambari.server.controller.ServiceComponentHostResponse;
+import org.apache.ambari.server.controller.spi.NoSuchParentResourceException;
+import org.apache.ambari.server.controller.spi.NoSuchResourceException;
+import org.apache.ambari.server.controller.spi.Predicate;
+import org.apache.ambari.server.controller.spi.Request;
+import org.apache.ambari.server.controller.spi.RequestStatus;
+import org.apache.ambari.server.controller.spi.Resource;
+import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
+import org.apache.ambari.server.controller.spi.SystemException;
+import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
+import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.state.ClientConfigFileDefinition;
+import org.apache.ambari.server.state.Cluster;
+import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.ComponentInfo;
+import org.apache.ambari.server.state.Config;
+import org.apache.ambari.server.state.ConfigHelper;
+import org.apache.ambari.server.state.DesiredConfig;
+import org.apache.ambari.server.state.PropertyInfo.PropertyType;
+import org.apache.ambari.server.state.ServiceInfo;
+import org.apache.ambari.server.state.ServiceOsSpecific;
+import org.apache.ambari.server.state.StackId;
+import org.apache.ambari.server.utils.SecretReference;
+import org.apache.ambari.server.utils.StageUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.gson.Gson;
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
+import com.google.inject.persist.Transactional;
 
 /**
  * Resource provider for client config resources.
@@ -171,8 +175,8 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
 
     Configuration configs = new Configuration();
     Map<String, String> configMap = configs.getConfigsMap();
-    String TMP_PATH = configMap.get(Configuration.SERVER_TMP_DIR_KEY);
-    String pythonCmd = configMap.get(Configuration.AMBARI_PYTHON_WRAP_KEY);
+    String TMP_PATH = configMap.get(Configuration.SERVER_TMP_DIR.getKey());
+    String pythonCmd = configMap.get(Configuration.AMBARI_PYTHON_WRAP.getKey());
     AmbariManagementController managementController = getManagementController();
     ConfigHelper configHelper = managementController.getConfigHelper();
     Cluster cluster = null;
@@ -191,7 +195,7 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
               getComponent(stackId.getStackName(), stackId.getStackVersion(), serviceName, componentName);
       packageFolder = managementController.getAmbariMetaInfo().
               getService(stackId.getStackName(), stackId.getStackVersion(), serviceName).getServicePackageFolder();
-                   
+
       String commandScript = componentInfo.getCommandScript().getScript();
       List<ClientConfigFileDefinition> clientConfigFiles = componentInfo.getClientConfigFiles();
 
@@ -201,11 +205,13 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
 
       String resourceDirPath = configs.getResourceDirPath();
       String packageFolderAbsolute = resourceDirPath + File.separator + packageFolder;
-      
+
       String commandScriptAbsolute = packageFolderAbsolute + File.separator + commandScript;
 
 
       Map<String, Map<String, String>> configurations = new TreeMap<String, Map<String, String>>();
+      Map<String, Long> configVersions = new TreeMap<String, Long>();
+      Map<String, Map<PropertyType, Set<String>>> configPropertiesTypes = new TreeMap<>();
       Map<String, Map<String, Map<String, String>>> configurationAttributes = new TreeMap<String, Map<String, Map<String, String>>>();
 
       Map<String, DesiredConfig> desiredClusterConfigs = cluster.getDesiredConfigs();
@@ -244,6 +250,8 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
           }
 
           configurations.put(clusterConfig.getType(), props);
+          configVersions.put(clusterConfig.getType(), clusterConfig.getVersion());
+          configPropertiesTypes.put(clusterConfig.getType(), clusterConfig.getPropertiesTypes());
 
           Map<String, Map<String, String>> attrs = new TreeMap<String, Map<String, String>>();
           configHelper.cloneAttributesMap(clusterConfig.getPropertiesAttributes(), attrs);
@@ -257,9 +265,21 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
         }
       }
 
-      // Hack - Remove passwords from configs
-      if (configurations.get(Configuration.HIVE_CONFIG_TAG)!=null) {
-        configurations.get(Configuration.HIVE_CONFIG_TAG).remove(Configuration.HIVE_METASTORE_PASSWORD_PROPERTY);
+      ConfigHelper.processHiddenAttribute(configurations, configurationAttributes, componentName, true);
+
+      for(Map.Entry<String, Map<String, Map<String, String>>> configurationAttributesEntry : configurationAttributes.entrySet()){
+        Map<String, Map<String, String>> attrs = configurationAttributesEntry.getValue();
+        // remove internal attributes like "hidden"
+        attrs.remove("hidden");
+      }
+
+      // replace passwords on password references
+      for(Map.Entry<String, Map<String, String>> configEntry: configurations.entrySet()) {
+        String configType = configEntry.getKey();
+        Map<String, String> configProperties = configEntry.getValue();
+        Long configVersion = configVersions.get(configType);
+        Map<PropertyType, Set<String>> propertiesTypes = configPropertiesTypes.get(configType);
+        SecretReference.replacePasswordsWithReferences(propertiesTypes, configProperties, configType, configVersion);
       }
 
       Map<String, Set<String>> clusterHostInfo = null;
@@ -293,7 +313,8 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
       hostLevelParams.put(ORACLE_JDBC_URL, managementController.getOjdbcUrl());
       hostLevelParams.put(HOST_SYS_PREPPED, configs.areHostsSysPrepped());
       hostLevelParams.putAll(managementController.getRcaParameters());
-      hostLevelParams.putAll(managementController.getRcaParameters());
+      hostLevelParams.put(AGENT_STACK_RETRY_ON_UNAVAILABILITY, configs.isAgentStackRetryOnInstallEnabled());
+      hostLevelParams.put(AGENT_STACK_RETRY_COUNT, configs.getAgentStackRetryOnInstallCount());
 
       // Write down os specific info for the service
       ServiceOsSpecific anyOs = null;
@@ -316,13 +337,17 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
       String packageList = gson.toJson(packages);
       hostLevelParams.put(PACKAGE_LIST, packageList);
 
-      Set<String> userSet = configHelper.getPropertyValuesWithPropertyType(stackId, PropertyType.USER, cluster);
+      Set<String> userSet = configHelper.getPropertyValuesWithPropertyType(stackId, PropertyType.USER, cluster, desiredClusterConfigs);
       String userList = gson.toJson(userSet);
       hostLevelParams.put(USER_LIST, userList);
 
-      Set<String> groupSet = configHelper.getPropertyValuesWithPropertyType(stackId, PropertyType.GROUP, cluster);
+      Set<String> groupSet = configHelper.getPropertyValuesWithPropertyType(stackId, PropertyType.GROUP, cluster, desiredClusterConfigs);
       String groupList = gson.toJson(groupSet);
       hostLevelParams.put(GROUP_LIST, groupList);
+
+      Set<String> notManagedHdfsPathSet = configHelper.getPropertyValuesWithPropertyType(stackId,PropertyType.NOT_MANAGED_HDFS_PATH, cluster, desiredClusterConfigs);
+      String notManagedHdfsPathList = gson.toJson(notManagedHdfsPathSet);
+      hostLevelParams.put(NOT_MANAGED_HDFS_PATH_LIST, notManagedHdfsPathList);
 
       String jsonConfigurations = null;
       Map<String, Object> commandParams = new HashMap<String, Object>();
@@ -386,15 +411,12 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
       } catch (TimeoutException e) {
         LOG.error("Generate client configs script was killed due to timeout ", e);
         throw new SystemException("Generate client configs script was killed due to timeout ", e);
-      } catch (InterruptedException e) {
+      } catch (InterruptedException | IOException e) {
         LOG.error("Failed to run generate client configs script for a component " + componentName, e);
         throw new SystemException("Failed to run generate client configs script for a component " + componentName, e);
       } catch (ExecutionException e) {
         LOG.error(e.getMessage(),e);
         throw new SystemException(e.getMessage() + " " + e.getCause());
-      } catch (IOException e) {
-        LOG.error("Failed to run generate client configs script for a component " + componentName, e);
-        throw new SystemException("Failed to run generate client configs script for a component " + componentName, e);
       }
 
     } catch (AmbariException e) {
@@ -414,7 +436,7 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
   }
 
   @Override
-  public RequestStatus deleteResources(Predicate predicate)
+  public RequestStatus deleteResources(Request request, Predicate predicate)
           throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
 
     throw new SystemException("The request is not supported");
@@ -463,13 +485,14 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
       commandLineThread.join(timeout);
       logStreamThread.join(timeout);
       Integer returnCode = commandLineThread.getReturnCode();
-      if (returnCode == null)
+      if (returnCode == null) {
         throw new TimeoutException();
-      else if (returnCode != 0)
+      } else if (returnCode != 0) {
         throw new ExecutionException(String.format("Execution of \"%s\" returned %d.", commandLine, returnCode),
                 new Throwable(logStream.getOutput()));
-      else
+      } else {
         return commandLineThread.returnCode;
+      }
     } catch (InterruptedException ex) {
       commandLineThread.interrupt();
       Thread.currentThread().interrupt();
@@ -484,7 +507,7 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
     private Integer returnCode;
 
     public void setReturnCode(Integer exit) {
-      this.returnCode = exit;
+      returnCode = exit;
     }
 
     public Integer getReturnCode() {
@@ -496,6 +519,7 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
     }
 
 
+    @Override
     public void run() {
       try {
         setReturnCode(process.waitFor());
@@ -512,14 +536,15 @@ public class ClientConfigResourceProvider extends AbstractControllerResourceProv
     private StringBuilder output;
 
     public LogStreamReader(InputStream is) {
-      this.reader = new BufferedReader(new InputStreamReader(is));
-      this.output = new StringBuilder("");
+      reader = new BufferedReader(new InputStreamReader(is));
+      output = new StringBuilder("");
     }
 
     public String getOutput() {
-      return this.output.toString();
+      return output.toString();
     }
 
+    @Override
     public void run() {
       try {
         String line = reader.readLine();

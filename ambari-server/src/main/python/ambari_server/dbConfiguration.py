@@ -20,7 +20,7 @@ limitations under the License.
 import glob
 import os
 
-from ambari_commons import OSConst
+from ambari_commons import OSConst, OSCheck
 from ambari_commons.exceptions import FatalException
 from ambari_commons.logging_utils import get_silent, print_error_msg, print_info_msg, print_warning_msg, set_silent
 from ambari_commons.os_family_impl import OsFamilyImpl
@@ -40,12 +40,23 @@ SETUP_DB_CONNECT_ATTEMPTS = 3
 
 USERNAME_PATTERN = "^[a-zA-Z_][a-zA-Z0-9_\-]*$"
 PASSWORD_PATTERN = "^[a-zA-Z0-9_-]*$"
-DATABASE_NAMES = ["postgres", "oracle", "mysql", "mssql", "sqlanywhere"]
+CUSTOM_JDBC_DB_NAMES = ["postgres", "mysql", "mssql", "oracle", "hsqldb", "sqlanywhere", "bdb"]
+DATABASE_NAMES = ["postgres", "oracle", "mysql", "mssql", "sqlanywhere", "bdb"]
 DATABASE_FULL_NAMES = {"oracle": "Oracle", "mysql": "MySQL", "mssql": "Microsoft SQL Server", "postgres":
-  "PostgreSQL", "sqlanywhere": "SQL Anywhere"}
-
+  "PostgreSQL", "sqlanywhere": "SQL Anywhere", "bdb" : "Berkeley DB"}
+LINUX_DBMS_KEYS_LIST = [ 'embedded', 'oracle', 'mysql', 'postgres', 'mssql', 'sqlanywhere', 'bdb']
 AMBARI_DATABASE_NAME = "ambari"
 AMBARI_DATABASE_TITLE = "ambari"
+
+TAR_GZ_ARCHIVE_TYPE = ".tar.gz"
+
+default_connectors_map = { "mssql":"sqljdbc4.jar",
+                           "mysql":"mysql-connector-java.jar",
+                           "postgres":"postgresql-jdbc.jar",
+                           "oracle":"ojdbc.jar",
+                           "sqlanywhere":"sajdbc4.jar",
+                           "hsqldb":"hsqldb.jar",
+                           "bdb": 'je-5.0.73.jar'}
 
 STORAGE_TYPE_LOCAL = 'local'
 STORAGE_TYPE_REMOTE = 'remote'
@@ -118,14 +129,17 @@ class DBMSConfig(object):
   #
   # Main method. Configures the database according to the options and the existing properties.
   #
-  def configure_database(self, properties):
+  def configure_database(self, properties, options):
     result = self._prompt_db_properties()
     if result:
       #DB setup should be done last after doing any setup.
       if self._is_local_database():
-        self._setup_local_server(properties)
+        self._setup_local_server(properties, options)
+        # this issue appears only for Suse. Postgres need /var/run/postgresql dir but do not create it
+        if OSCheck.is_suse_family():
+          self._create_postgres_lock_directory()
       else:
-        self._setup_remote_server(properties)
+        self._setup_remote_server(properties, options)
     return result
 
   def setup_database(self):
@@ -166,12 +180,12 @@ class DBMSConfig(object):
   #
 
   @staticmethod
-  def _read_password_from_properties(properties):
+  def _read_password_from_properties(properties, options):
     database_password = DEFAULT_PASSWORD
     password_file = get_value_from_properties(properties, JDBC_PASSWORD_PROPERTY, "")
     if password_file:
       if is_alias_string(password_file):
-        database_password = decrypt_password_for_alias(properties, JDBC_RCA_PASSWORD_ALIAS)
+        database_password = decrypt_password_for_alias(properties, JDBC_RCA_PASSWORD_ALIAS, options)
       else:
         if os.path.isabs(password_file) and os.path.exists(password_file):
           with open(password_file, 'r') as file:
@@ -212,7 +226,10 @@ class DBMSConfig(object):
     #linux_prompt_db_properties(args)
     return False
 
-  def _setup_local_server(self, properties):
+  def _create_postgres_lock_directory(self):
+    pass
+
+  def _setup_local_server(self, properties, options):
     pass
 
   def _setup_local_database(self):
@@ -221,7 +238,7 @@ class DBMSConfig(object):
   def _reset_local_database(self):
     pass
 
-  def _setup_remote_server(self, properties):
+  def _setup_remote_server(self, properties, options):
     pass
 
   def _setup_remote_database(self):
@@ -327,16 +344,9 @@ class DBMSConfigFactoryWindows(DBMSConfigFactory):
 class DBMSConfigFactoryLinux(DBMSConfigFactory):
   def __init__(self):
     from ambari_server.dbConfiguration_linux import createPGConfig, createOracleConfig, createMySQLConfig, \
-      createMSSQLConfig, createSQLAConfig
+      createMSSQLConfig, createSQLAConfig, createBDBConfig
 
-    self.DBMS_KEYS_LIST = [
-      'embedded',
-      'oracle',
-      'mysql',
-      'postgres',
-      'mssql',
-      'sqlanywhere'
-    ]
+    self.DBMS_KEYS_LIST = LINUX_DBMS_KEYS_LIST
 
     self.DRIVER_KEYS_LIST = [
       'oracle',
@@ -344,16 +354,19 @@ class DBMSConfigFactoryLinux(DBMSConfigFactory):
       'postgres',
       'mssql',
       'hsqldb',
-      'sqlanywhere'
+      'sqlanywhere',
+      'bdb'
     ]
 
     self.DBMS_LIST = [
       DBMSDesc(self.DBMS_KEYS_LIST[3], STORAGE_TYPE_LOCAL, 'PostgreSQL', 'Embedded', createPGConfig),
       DBMSDesc(self.DBMS_KEYS_LIST[1], STORAGE_TYPE_REMOTE, 'Oracle', '', createOracleConfig),
-      DBMSDesc(self.DBMS_KEYS_LIST[2], STORAGE_TYPE_REMOTE, 'MySQL', '', createMySQLConfig),
+      DBMSDesc(self.DBMS_KEYS_LIST[2], STORAGE_TYPE_REMOTE, 'MySQL / MariaDB', '', createMySQLConfig),
       DBMSDesc(self.DBMS_KEYS_LIST[3], STORAGE_TYPE_REMOTE, 'PostgreSQL', '', createPGConfig),
       DBMSDesc(self.DBMS_KEYS_LIST[4], STORAGE_TYPE_REMOTE, 'Microsoft SQL Server', 'Tech Preview', createMSSQLConfig),
-      DBMSDesc(self.DBMS_KEYS_LIST[5], STORAGE_TYPE_REMOTE, 'SQL Anywhere', '', createSQLAConfig)
+      DBMSDesc(self.DBMS_KEYS_LIST[5], STORAGE_TYPE_REMOTE, 'SQL Anywhere', '', createSQLAConfig),
+      DBMSDesc(self.DBMS_KEYS_LIST[6], STORAGE_TYPE_REMOTE, 'BDB', '', createBDBConfig)
+
     ]
 
     self.DBMS_DICT = \
@@ -372,6 +385,8 @@ class DBMSConfigFactoryLinux(DBMSConfigFactory):
       self.DBMS_KEYS_LIST[3] + '-' + STORAGE_TYPE_REMOTE: 3,
       self.DBMS_KEYS_LIST[5] + '-': 5,
       self.DBMS_KEYS_LIST[5] + '-' + STORAGE_TYPE_REMOTE: 5,
+      self.DBMS_KEYS_LIST[6] + '-': 6,
+      self.DBMS_KEYS_LIST[6] + '-' + STORAGE_TYPE_LOCAL: 6,
     }
 
     self.DBMS_PROMPT_PATTERN = "[{0}] - {1}{2}\n"

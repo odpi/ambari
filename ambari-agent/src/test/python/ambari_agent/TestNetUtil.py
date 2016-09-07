@@ -41,7 +41,7 @@ class TestNetUtil(unittest.TestCase):
     httpsConMock.return_value = ca_connection
 
     # test 200
-    netutil = NetUtil.NetUtil()
+    netutil = NetUtil.NetUtil(MagicMock())
     self.assertTrue(netutil.checkURL("url")[0])
 
     # test fail
@@ -59,13 +59,13 @@ class TestNetUtil(unittest.TestCase):
   def test_try_to_connect(self, event_mock,
                             sleepMock):
     event_mock.return_value = False
-    netutil = NetUtil.NetUtil()
+    netutil = NetUtil.NetUtil(MagicMock())
     checkURL = MagicMock(name="checkURL")
     checkURL.return_value = True, "test"
     netutil.checkURL = checkURL
 
     # one successful get
-    self.assertEqual((0, True), netutil.try_to_connect("url", 10))
+    self.assertEqual((0, True, False), netutil.try_to_connect("url", 10))
 
     # got successful after N retries
     gets = [[True, ""], [False, ""], [False, ""]]
@@ -73,9 +73,30 @@ class TestNetUtil(unittest.TestCase):
     def side_effect(*args):
       return gets.pop()
     checkURL.side_effect = side_effect
-    self.assertEqual((2, True), netutil.try_to_connect("url", 10))
+    self.assertEqual((2, True, False), netutil.try_to_connect("url", 10))
 
     # max retries
     checkURL.side_effect = None
     checkURL.return_value = False, "test"
-    self.assertEqual((5,False), netutil.try_to_connect("url", 5))
+    self.assertEqual((5, False, False), netutil.try_to_connect("url", 5))
+
+  def test_get_agent_heartbeat_idle_interval_sec(self):
+    netutil = NetUtil.NetUtil(MagicMock())
+
+    heartbeat_interval = netutil.get_agent_heartbeat_idle_interval_sec(1, 10, 32)
+
+    self.assertEqual(heartbeat_interval, 3)
+
+  def test_get_agent_heartbeat_idle_interval_sec_max(self):
+    netutil = NetUtil.NetUtil(MagicMock())
+
+    heartbeat_interval = netutil.get_agent_heartbeat_idle_interval_sec(1, 10, 1500)
+
+    self.assertEqual(heartbeat_interval, netutil.HEARTBEAT_IDLE_INTERVAL_DEFAULT_MAX_SEC)
+
+  def test_get_agent_heartbeat_idle_interval_sec_min(self):
+    netutil = NetUtil.NetUtil(MagicMock())
+
+    heartbeat_interval = netutil.get_agent_heartbeat_idle_interval_sec(1, 10, 5)
+
+    self.assertEqual(heartbeat_interval, 1)

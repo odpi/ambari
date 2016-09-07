@@ -18,17 +18,20 @@
 
 package org.apache.ambari.server.stack;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.state.ServiceInfo;
 import org.apache.ambari.server.state.stack.ServiceMetainfoXml;
+import org.apache.ambari.server.state.stack.StackRoleCommandOrder;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.xml.bind.JAXBException;
-import java.io.File;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Encapsulates IO operations on a stack definition service directory.
@@ -38,6 +41,11 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
    * metrics file
    */
   private Map<String, File> metricsFileMap = new HashMap<String, File>();
+
+  /**
+   * advisor file
+   */
+  private File advisorFile;
 
   /**
    * alerts file
@@ -55,6 +63,16 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
   private File kerberosDescriptorFile;
 
   /**
+   * RCO file
+   */
+  private File rcoFile;
+
+  /**
+   * role command order
+   */
+  private StackRoleCommandOrder roleCommandOrder;
+
+  /**
    * widgets descriptor file
    */
   private Map<String, File> widgetsDescriptorFileMap = new HashMap<String, File>();
@@ -63,6 +81,11 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
    * package directory path
    */
   protected String packageDir;
+
+  /**
+   * upgrades directory path
+   */
+  protected File upgradesDir;
 
   /**
    * service metainfo file object representation
@@ -78,6 +101,11 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
    * package directory name
    */
   protected static final String PACKAGE_FOLDER_NAME = "package";
+
+  /**
+   * upgrades directory name
+   */
+  protected static final String UPGRADES_FOLDER_NAME = "upgrades";
 
   /**
    * service metainfo file name
@@ -104,29 +132,6 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
   public ServiceDirectory(String servicePath) throws AmbariException {
     super(servicePath);
     parsePath();
-
-    File af = new File(directory.getAbsolutePath()
-        + File.separator + AmbariMetaInfo.SERVICE_ALERT_FILE_NAME);
-    alertsFile = af.exists() ? af : null;
-
-    File kdf = new File(directory.getAbsolutePath()
-        + File.separator + AmbariMetaInfo.KERBEROS_DESCRIPTOR_FILE_NAME);
-    kerberosDescriptorFile = kdf.exists() ? kdf : null;
-
-    if (metaInfoXml.getServices() != null) {
-      for (ServiceInfo serviceInfo : metaInfoXml.getServices()) {
-        File mf = new File(directory.getAbsolutePath()
-                + File.separator + serviceInfo.getMetricsFileName());
-        metricsFileMap.put(serviceInfo.getName(), mf.exists() ? mf : null);
-
-        File wdf = new File(directory.getAbsolutePath()
-                + File.separator + serviceInfo.getWidgetsFileName());
-        widgetsDescriptorFileMap.put(serviceInfo.getName(), wdf.exists() ? wdf : null);
-      }
-    }
-
-    File themeFile = new File(directory.getAbsolutePath() + File.separator + AmbariMetaInfo.SERVICE_THEME_FILE_NAME);
-    this.themeFile = themeFile.exists() ? themeFile : null;
   }
 
   /**
@@ -139,6 +144,15 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
   }
 
   /**
+   * Obtain the upgrades directory path.
+   *
+   * @return upgrades directory path
+   */
+  public File getUpgradesDir() {
+    return upgradesDir;
+  }
+
+  /**
    * Obtain the metrics file.
    *
    * @return metrics file
@@ -146,6 +160,22 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
   public File getMetricsFile(String serviceName) {
     return metricsFileMap.get(serviceName);
   }
+
+  /**
+   * Obtain the advisor file.
+   *
+   * @return advisor file
+   */
+  public File getAdvisorFile() {
+    return advisorFile;
+  }
+
+  /**
+   * Obtain the advisor name.
+   *
+   * @return advisor name
+   */
+  public abstract String getAdvisorName(String serviceName);
 
   /**
    * Obtain the alerts file.
@@ -193,9 +223,54 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
   }
 
   /**
+   * Obtain the object representation of the service role_command_order.json file
+   *
+   * @return object representation of the service role_command_order.json file
+   */
+  public StackRoleCommandOrder getRoleCommandOrder() {
+    return roleCommandOrder;
+  }
+
+  /**
    * Parse the service directory.
    */
-  protected abstract void parsePath() throws AmbariException;
+  protected void parsePath() throws AmbariException {
+    calculateDirectories();
+    parseMetaInfoFile();
+
+    File af = new File(directory, AmbariMetaInfo.SERVICE_ALERT_FILE_NAME);
+    alertsFile = af.exists() ? af : null;
+
+    File kdf = new File(directory, AmbariMetaInfo.KERBEROS_DESCRIPTOR_FILE_NAME);
+    kerberosDescriptorFile = kdf.exists() ? kdf : null;
+
+    File rco = new File(directory, AmbariMetaInfo.RCO_FILE_NAME);
+    if (rco.exists()) {
+      rcoFile = rco;
+      parseRoleCommandOrder();
+    }
+
+    if (metaInfoXml.getServices() != null) {
+      for (ServiceInfo serviceInfo : metaInfoXml.getServices()) {
+        File mf = new File(directory, serviceInfo.getMetricsFileName());
+        metricsFileMap.put(serviceInfo.getName(), mf.exists() ? mf : null);
+
+        File wdf = new File(directory, serviceInfo.getWidgetsFileName());
+        widgetsDescriptorFileMap.put(serviceInfo.getName(), wdf.exists() ? wdf : null);
+      }
+    }
+
+    File advFile = new File(directory, AmbariMetaInfo.SERVICE_ADVISOR_FILE_NAME);
+    advisorFile = advFile.exists() ? advFile : null;
+
+    File themeFile = new File(directory, AmbariMetaInfo.SERVICE_THEME_FILE_NAME);
+    this.themeFile = themeFile.exists() ? themeFile : null;
+  }
+
+  /**
+   * Calculate the service specific directories.
+   */
+  protected abstract void calculateDirectories();
 
   /**
    * Unmarshal the metainfo file into its object representation.
@@ -212,13 +287,37 @@ public abstract class ServiceDirectory extends StackDefinitionDirectory {
 
     try {
       metaInfoXml = unmarshaller.unmarshal(ServiceMetainfoXml.class, f);
-    } catch (JAXBException e) {
+    } catch (Exception e) {
       metaInfoXml = new ServiceMetainfoXml();
       metaInfoXml.setValid(false);
       String msg = String.format("Unable to parse service metainfo.xml file '%s' ", f.getAbsolutePath());
-      metaInfoXml.setErrors(msg);
-      LOG.warn(msg);
+      metaInfoXml.addError(msg);
+      LOG.warn(msg, e);
       metaInfoXml.setSchemaVersion(getAbsolutePath().replace(f.getParentFile().getParentFile().getParent()+File.separator, ""));
+    }
+  }
+
+  /**
+   * Parse role command order file
+   */
+  private void parseRoleCommandOrder() {
+    if (rcoFile == null)
+      return;
+
+    try {
+      ObjectMapper mapper = new ObjectMapper();
+      TypeReference<Map<String, Object>> rcoElementTypeReference = new TypeReference<Map<String, Object>>() {};
+      HashMap<String, Object> result = mapper.readValue(rcoFile, rcoElementTypeReference);
+      LOG.info("Role command order info was loaded from file: {}", rcoFile.getAbsolutePath());
+
+      roleCommandOrder = new StackRoleCommandOrder(result);
+
+      if (LOG.isDebugEnabled() && rcoFile != null) {
+        LOG.debug("Role Command Order for " + rcoFile.getAbsolutePath());
+        roleCommandOrder.printRoleCommandOrder(LOG);
+      }
+    } catch (IOException e) {
+      LOG.error(String.format("Can not read role command order info %s", rcoFile.getAbsolutePath()), e);
     }
   }
 

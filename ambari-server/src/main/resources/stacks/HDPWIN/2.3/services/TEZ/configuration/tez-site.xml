@@ -16,7 +16,6 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-
 <configuration supports_final="true">
   <property>
     <name>tez.am.view-acls</name>
@@ -27,13 +26,13 @@
     <value-attributes>
       <empty-value-valid>true</empty-value-valid>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>tez.cluster.additional.classpath.prefix</name>
     <value>C:\hdp\hadoop\share\hadoop\common\lib\hadoop-lzo-0.4.19.{{hdp_stack_version}}.jar</value>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>tez.lib.uris</name>
     <value>file:///C:/hdp/tez-0.7.0.{{hdp_stack_version}}/tez-0.7.0.{{hdp_stack_version}}.tar.gz</value>
@@ -41,8 +40,8 @@
       Specifying a single .tar.gz or .tgz assumes that a compressed version of the tez libs is being used. This is uncompressed into a tezlibs directory when running containers, and tezlibs/;tezlibs/lib/ are added to the classpath (after . and .*).
       If multiple files are specified - files are localized as regular files, contents of directories are localized as regular files (non-recursive).
     </description>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>tez.runtime.optimize.local.fetch</name>
     <value>true</value>
@@ -50,8 +49,8 @@
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>tez.task.generate.counters.per.io</name>
     <value>true</value>
@@ -59,8 +58,8 @@
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>tez.runtime.sorter.class</name>
     <value>PIPELINED</value>
@@ -79,8 +78,8 @@
       </entries>
       <selection-cardinality>1</selection-cardinality>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>tez.runtime.pipelined.sorter.sort.threads</name>
     <value>2</value>
@@ -94,8 +93,8 @@
         <name>tez.runtime.sorter.class</name>
       </property>
     </depends-on>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>tez.runtime.io.sort.mb</name>
     <value>272</value>
@@ -110,5 +109,6 @@
         <name>tez.runtime.sorter.class</name>
       </property>
     </depends-on>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

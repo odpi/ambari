@@ -61,9 +61,7 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
       value: '',
       defaultValue: 'custom',
       disabled: false,
-      isAll: function () {
-        return this.get('value') == 'all';
-      }.property('value')
+      isAll: Em.computed.equal('value', 'all')
     }),
     method: {
       label: Em.I18n.t('alerts.actions.manage_alert_notifications_popup.method'),
@@ -155,6 +153,16 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
   }),
 
   /**
+   * List of available options for Enable or Disable
+   * used in settings of SelectedAlertNotification
+   * @type {Object}
+   */
+  enableOrDisable: {
+    enable: "enable",
+    disable: "disable"
+  },
+
+  /**
    * List of available Notification types
    * used in Type combobox
    * @type {Array}
@@ -172,7 +180,7 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
    * List of available SNMP versions
    * @type {Array}
    */
-  SNMPVersions: ['SNMPv1', 'SNMPv2c', 'SNMPv3'],
+  SNMPVersions: ['SNMPv1', 'SNMPv2c'],
 
   /**
    * List of all Alert Notifications
@@ -201,6 +209,60 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
    * @type {{name: string, value: string}}
    */
   newCustomProperty: {name: '', value: ''},
+
+  /**
+   * Check if custom property name exists in the <code>inputFields.customProperties</code>
+   *
+   * @type {boolean}
+   */
+  isNewCustomPropertyExists: function () {
+    return this.get('inputFields.customProperties').mapProperty('name').contains(this.get('newCustomProperty.name'));
+  }.property('newCustomProperty.name'),
+
+  /**
+   * Check if custom property name exists in the <code>ignoredCustomProperties</code>
+   *
+   * @type {boolean}
+   */
+  isNewCustomPropertyIgnored: function () {
+    return this.get('ignoredCustomProperties').contains(this.get('newCustomProperty.name'));
+  }.property('newCustomProperty.name'),
+
+  /**
+   * Check if custom property name is valid according to the <code>validator.isValidConfigKey</code>
+   *
+   * @type {boolean}
+   */
+  isNewCustomPropertyNameValid: function () {
+    return validator.isValidConfigKey(this.get('newCustomProperty.name'));
+  }.property('newCustomProperty.name'),
+
+  /**
+   * Error message for the new custom property name
+   *
+   * @type {string}
+   */
+  errorMessageForNewCustomPropertyName: function () {
+    var isNewCustomPropertyIgnored = this.get('isNewCustomPropertyIgnored');
+    var isNewCustomPropertyExists = this.get('isNewCustomPropertyExists');
+    var flag = this.get('isNewCustomPropertyNameValid');
+    if (flag) {
+      if (isNewCustomPropertyExists || isNewCustomPropertyIgnored) {
+        return Em.I18n.t('alerts.notifications.addCustomPropertyPopup.error.propertyExists');
+      }
+    }
+    else {
+      return Em.I18n.t('alerts.notifications.addCustomPropertyPopup.error.invalidPropertyName');
+    }
+    return '';
+  }.property('isNewCustomPropertyNameValid', 'isNewCustomPropertyExists', 'isNewCustomPropertyIgnored'),
+
+  /**
+   * If some error with new custom property
+   *
+   * @type {boolean}
+   */
+  isErrorWithNewCustomPropertyName: Em.computed.bool('errorMessageForNewCustomPropertyName'),
 
   /**
    * List custom property names that shouldn't be displayed on Edit page
@@ -236,6 +298,14 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
       {
         errorKey: 'smtpPortError',
         validator: 'smtpPortValidation'
+      },
+      {
+        errorKey: 'smtpUsernameError',
+        validator: 'smtpUsernameValidation'
+      },
+      {
+        errorKey: 'smtpPasswordError',
+        validator: 'smtpPasswordValidation'
       },
       {
         errorKey: 'passwordError',
@@ -384,19 +454,19 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
           this.smtpPortValidation();
           this.hostsValidation();
           this.portValidation();
+          this.smtpUsernameValidation();
+          this.smtpPasswordValidation();
           this.retypePasswordValidation();
         },
 
-        isEmailMethodSelected: function () {
-          return this.get('controller.inputFields.method.value') === 'EMAIL';
-        }.property('controller.inputFields.method.value'),
+        isEmailMethodSelected: Em.computed.equal('controller.inputFields.method.value', 'EMAIL'),
 
         methodObserver: function () {
           var currentMethod = this.get('controller.inputFields.method.value'),
             validationMap = self.get('validationMap');
           self.get('methods').forEach(function (method) {
             var validations = validationMap[method];
-            if (method == currentMethod) {
+            if (method === currentMethod) {
               validations.mapProperty('validator').forEach(function (key) {
                 this.get(key).call(this);
               }, this);
@@ -420,9 +490,12 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
             if (!newName) {
               this.set('nameError', true);
               errorMessage = Em.I18n.t('alerts.actions.manage_alert_notifications_popup.error.name.empty');
-            } else if (newName && newName != this.get('currentName') && self.get('alertNotifications').mapProperty('name').contains(newName)) {
+            } else if (newName && newName !== this.get('currentName') && self.get('alertNotifications').mapProperty('name').contains(newName)) {
               this.set('nameError', true);
               errorMessage = Em.I18n.t('alerts.actions.manage_alert_notifications_popup.error.name.existed');
+            } else if (newName && !validator.isValidAlertNotificationName(newName)){
+              this.set('nameError', true);
+              errorMessage = Em.I18n.t('form.validator.alertNotificationName');
             } else {
               this.set('nameError', false);
             }
@@ -434,6 +507,9 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
             } else if (newName && self.get('alertNotifications').mapProperty('name').contains(newName)) {
               this.set('nameError', true);
               errorMessage = Em.I18n.t('alerts.actions.manage_alert_notifications_popup.error.name.existed');
+            } else if (newName && !validator.isValidAlertNotificationName(newName)){
+              this.set('nameError', true);
+              errorMessage = Em.I18n.t('form.validator.alertNotificationName');
             } else {
               this.set('nameError', false);
             }
@@ -477,7 +553,7 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
 
         hostsValidation: function() {
           var inputValue = this.get('controller.inputFields.host.value').trim(),
-            hostError = false;;
+            hostError = false;
           if (!this.get('isEmailMethodSelected')) {
             var array = inputValue.split(',');
             hostError = array.some(function(hostname) {
@@ -500,6 +576,36 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
           }
         }.observes('controller.inputFields.port.value'),
 
+        smtpUsernameValidation: function () {
+          var smtpUsernameError = false;
+          var errorMessage = null;
+          if(this.get('isEmailMethodSelected')) {
+            if (this.get('controller.inputFields.SMTPUseAuthentication.value')) {
+              if (Em.isBlank(this.get('controller.inputFields.SMTPUsername.value'))) {
+                smtpUsernameError = true;
+                errorMessage = Em.I18n.t('alerts.notifications.error.SMTPUsername');
+              }
+            }
+          }
+          this.set('smtpUsernameError', smtpUsernameError);
+          this.set('controller.inputFields.SMTPUsername.errorMsg', errorMessage);
+        }.observes('controller.inputFields.SMTPUsername.value', 'controller.inputFields.SMTPUseAuthentication.value'),
+
+        smtpPasswordValidation: function () {
+          var smtpPasswordError = false;
+          var errorMessage = null;
+          if(this.get('isEmailMethodSelected')) {
+            if (this.get('controller.inputFields.SMTPUseAuthentication.value')) {
+              if (Em.isBlank(this.get('controller.inputFields.SMTPPassword.value'))) {
+                smtpPasswordError = true;
+                errorMessage = Em.I18n.t('alerts.notifications.error.SMTPPassword');
+              }
+            }
+          }
+          this.set('smtpPasswordError', smtpPasswordError);
+          this.set('controller.inputFields.SMTPPassword.errorMsg', errorMessage);
+        }.observes('controller.inputFields.SMTPPassword.value','controller.inputFields.SMTPUseAuthentication.value'),
+
         retypePasswordValidation: function () {
           var passwordValue = this.get('controller.inputFields.SMTPPassword.value');
           var retypePasswordValue = this.get('controller.inputFields.retypeSMTPPassword.value');
@@ -512,12 +618,11 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
           }
         }.observes('controller.inputFields.retypeSMTPPassword.value', 'controller.inputFields.SMTPPassword.value'),
 
-        setParentErrors: function () {
-          var hasErrors = this.get('nameError') || this.get('emailToError') || this.get('emailFromError') ||
-            this.get('smtpPortError') || this.get('hostError') || this.get('portError') || this.get('passwordError');
-          this.set('parentView.hasErrors', hasErrors);
-        }.observes('nameError', 'emailToError', 'emailFromError', 'smtpPortError', 'hostError', 'portError', 'passwordError'),
+        someErrorExists: Em.computed.or('nameError', 'emailToError', 'emailFromError', 'smtpPortError', 'hostError', 'portError', 'smtpUsernameError', 'smtpPasswordError', 'passwordError'),
 
+        setParentErrors: function () {
+          this.set('parentView.hasErrors', this.get('someErrorExists'));
+        }.observes('someErrorExists'),
 
         groupsSelectView: Em.Select.extend({
           attributeBindings: ['disabled'],
@@ -562,33 +667,25 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
          * Determines if all alert-groups are selected
          * @type {boolean}
          */
-        allGroupsSelected: function () {
-          return this.get('groupSelect.selection.length') === this.get('groupSelect.content.length');
-        }.property('groupSelect.selection.length', 'groupSelect.content.length', 'groupSelect.disabled'),
+        allGroupsSelected: Em.computed.equalProperties('groupSelect.selection.length', 'groupSelect.content.length'),
 
         /**
          * Determines if no one alert-group is selected
          * @type {boolean}
          */
-        noneGroupsSelected: function () {
-          return this.get('groupSelect.selection.length') === 0;
-        }.property('groupSelect.selection.length', 'groupSelect.content.length', 'groupSelect.disabled'),
+        noneGroupsSelected: Em.computed.empty('groupSelect.selection'),
 
         /**
          * Determines if all severities are selected
          * @type {boolean}
          */
-        allSeveritySelected: function () {
-          return this.get('severitySelect.selection.length') === this.get('severitySelect.content.length');
-        }.property('severitySelect.selection.length', 'severitySelect.content.length'),
+        allSeveritySelected: Em.computed.equalProperties('severitySelect.selection.length', 'severitySelect.content.length'),
 
         /**
          * Determines if no one severity is selected
          * @type {boolean}
          */
-        noneSeveritySelected: function () {
-          return this.get('severitySelect.selection.length') === 0;
-        }.property('severitySelect.selection.length', 'severitySelect.content.length'),
+        noneSeveritySelected: Em.computed.empty('severitySelect.selection'),
 
         /**
          * Select all severities
@@ -613,9 +710,7 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
 
       primary: Em.I18n.t('common.save'),
 
-      disablePrimary: function () {
-        return this.get('isSaving') || this.get('hasErrors');
-      }.property('isSaving', 'hasErrors'),
+      disablePrimary: Em.computed.or('isSaving', 'hasErrors'),
 
       onPrimary: function () {
         this.set('isSaving', true);
@@ -672,7 +767,7 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
         properties: properties
       }
     };
-    if (inputFields.get('allGroups.value') == 'custom') {
+    if (inputFields.get('allGroups.value') === 'custom') {
       apiObject.AlertTarget.groups = inputFields.get('groups.value').mapProperty('id');
     }
     return apiObject;
@@ -715,6 +810,13 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
    * @method updateAlertNotification
    */
   updateAlertNotification: function (apiObject) {
+    if(apiObject!=null){
+      if(apiObject.AlertTarget.global == false){
+        this.get('selectedAlertNotification').set('global',false);
+      } else {
+        this.get('selectedAlertNotification').set('global',true);
+      }
+    }
     return App.ajax.send({
       name: 'alerts.update_alert_notification',
       sender: this,
@@ -788,6 +890,40 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
   },
 
   /**
+   * Enable or Disable Notification button handler
+   * @method enableOrDisableAlertNotification
+   */
+  enableOrDisableAlertNotification: function (e) {
+    var enabled = (e.context === "disable")?false:true;
+    return App.ajax.send({
+      name: 'alerts.update_alert_notification',
+      sender: this,
+      data: {
+        data: {
+          "AlertTarget": {
+            "enabled": enabled
+          }
+        },
+        id: this.get('selectedAlertNotification.id')
+      },
+      success: 'enableOrDisableAlertNotificationSuccessCallback',
+      error: 'saveErrorCallback'
+    });
+  },
+
+  /**
+   * Success callback for <code>enableOrDisableAlertNotification</code>
+   * @method enableOrDisableAlertNotificationSuccessCallback
+   */
+  enableOrDisableAlertNotificationSuccessCallback: function () {
+    this.loadAlertNotifications();
+    var createEditPopup = this.get('createEditPopup');
+    if (createEditPopup) {
+      createEditPopup.hide();
+    }
+  },
+
+  /**
    * Show popup with form for new custom property
    * @method addCustomPropertyHandler
    * @return {App.ModalPopup}
@@ -797,51 +933,17 @@ App.ManageAlertNotificationsController = Em.Controller.extend({
 
     return App.ModalPopup.show({
 
+      controllerBinding: 'App.router.manageAlertNotificationsController',
+
       header: Em.I18n.t('alerts.notifications.addCustomPropertyPopup.header'),
 
       primary: Em.I18n.t('common.add'),
 
       bodyClass: Em.View.extend({
-
-        /**
-         * If some error with new custom property
-         * @type {boolean}
-         */
-        isError: false,
-
-        controller: this,
-
-        /**
-         * Error message for new custom property (invalid name, existed name etc)
-         * @type {string}
-         */
-        errorMessage: '',
-
-        /**
-         * Check new custom property for errors with its name
-         * @method errorHandler
-         */
-        errorsHandler: function () {
-          var name = this.get('controller.newCustomProperty.name');
-          var flag = validator.isValidConfigKey(name);
-          if (flag) {
-            if (this.get('controller.inputFields.customProperties').mapProperty('name').contains(name) ||
-              this.get('controller.ignoredCustomProperties').contains(name)) {
-              this.set('errorMessage', Em.I18n.t('alerts.notifications.addCustomPropertyPopup.error.propertyExists'));
-              flag = false;
-            }
-          }
-          else {
-            this.set('errorMessage', Em.I18n.t('alerts.notifications.addCustomPropertyPopup.error.invalidPropertyName'));
-          }
-          this.set('isError', !flag);
-          this.set('parentView.disablePrimary', !flag);
-        }.observes('controller.newCustomProperty.name'),
-
         templateName: require('templates/main/alerts/add_custom_config_to_alert_notification_popup')
       }),
 
-      disablePrimary: true,
+      disablePrimary: Em.computed.alias('controller.isErrorWithNewCustomPropertyName'),
 
       onPrimary: function () {
         self.addCustomProperty();

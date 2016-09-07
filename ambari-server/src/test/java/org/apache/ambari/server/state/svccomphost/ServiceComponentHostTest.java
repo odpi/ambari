@@ -133,7 +133,7 @@ public class ServiceComponentHostTest {
     Cluster c1 = clusters.getCluster(clusterName);
     helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
     c1.createClusterVersion(stackId, stackId.getStackVersion(), "admin",
-        RepositoryVersionState.UPGRADING);
+        RepositoryVersionState.INSTALLING);
   }
 
   @After
@@ -594,7 +594,7 @@ public class ServiceComponentHostTest {
     sch.setDesiredState(State.INSTALLED);
     sch.setState(State.INSTALLING);
     sch.setStackVersion(new StackId("HDP-1.2.0"));
-    ServiceComponentHostResponse r = sch.convertToResponse();
+    ServiceComponentHostResponse r = sch.convertToResponse(null);
     Assert.assertEquals("HDFS", r.getServiceName());
     Assert.assertEquals("DATANODE", r.getComponentName());
     Assert.assertEquals(hostName1, r.getHostname());
@@ -752,7 +752,7 @@ public class ServiceComponentHostTest {
 
     helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
     cluster.createClusterVersion(stackId, stackId.getStackVersion(), "admin",
-        RepositoryVersionState.UPGRADING);
+        RepositoryVersionState.INSTALLING);
 
     ServiceComponentHost sch1 = createNewServiceComponentHost(cluster, "HDFS", "NAMENODE", hostName);
     ServiceComponentHost sch2 = createNewServiceComponentHost(cluster, "HDFS", "DATANODE", hostName);
@@ -770,8 +770,8 @@ public class ServiceComponentHostTest {
     sch3.setState(State.INSTALLING);
     sch3.setStackVersion(new StackId(stackVersion));
 
-    Assert.assertFalse(sch1.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch2.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch2.convertToResponse(null).isStaleConfig());
 
     makeConfig(cluster, "global", "version1",
         new HashMap<String,String>() {{
@@ -792,45 +792,35 @@ public class ServiceComponentHostTest {
         new HashMap<String,String>() {{ put("a", "c"); }}, new HashMap<String, Map<String,String>>());
 
     // HDP-x/HDFS does not define type 'foo', so changes do not count to stale
-    Assert.assertFalse(sch1.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch2.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch2.convertToResponse(null).isStaleConfig());
 
     makeConfig(cluster, "hdfs-site", "version1",
         new HashMap<String,String>() {{ put("a", "b"); }}, new HashMap<String, Map<String,String>>());
 
     // HDP-x/HDFS/hdfs-site is not on the actual, but it is defined, so it is stale
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
 
     actual.put("hdfs-site", new HashMap<String, String>() {{ put ("tag", "version1"); }});
 
     sch1.updateActualConfigs(actual);
-    // previous value from cache
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    //reset restartRequired flag + invalidating isStale cache
-    // after start/restart command execution completed
-    sch1.setRestartRequired(false);
     // HDP-x/HDFS/hdfs-site up to date, only for sch1
-    Assert.assertFalse(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
 
     sch2.updateActualConfigs(actual);
-    // previous value from cache
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
-    //reset restartRequired flag + invalidating isStale cache(
-    // after start/restart command execution completed)
-    sch2.setRestartRequired(false);
     // HDP-x/HDFS/hdfs-site up to date for both
-    Assert.assertFalse(sch1.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch2.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch2.convertToResponse(null).isStaleConfig());
 
     makeConfig(cluster, "hdfs-site", "version2",
         new HashMap<String, String>() {{ put("dfs.journalnode.http-address", "http://foo"); }},
         new HashMap<String, Map<String,String>>());
 
     // HDP-x/HDFS/hdfs-site updated to changed property
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
 
     actual.get("hdfs-site").put("tag", "version2");
     sch1.updateActualConfigs(actual);
@@ -840,8 +830,8 @@ public class ServiceComponentHostTest {
     sch1.setRestartRequired(false);
     sch2.setRestartRequired(false);
     // HDP-x/HDFS/hdfs-site updated to changed property
-    Assert.assertFalse(sch1.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch2.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch2.convertToResponse(null).isStaleConfig());
 
     // make a host override
     final Host host = clusters.getHostsForCluster(clusterName).get(hostName);
@@ -861,29 +851,19 @@ public class ServiceComponentHostTest {
     cluster.addConfigGroup(configGroup);
 
     // HDP-x/HDFS/hdfs-site updated host to changed property
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
 
     actual.get("hdfs-site").put(configGroup.getId().toString(), "version3");
     sch2.updateActualConfigs(actual);
-    // previous value from cache
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
-    //reset restartRequired flag + invalidating isStale cache
-    // after start/restart command execution completed
-    sch2.setRestartRequired(false);
     // HDP-x/HDFS/hdfs-site updated host to changed property
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch2.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch2.convertToResponse(null).isStaleConfig());
 
     sch1.updateActualConfigs(actual);
-    // previous value from cache
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    //reset restartRequired flag + invalidating isStale cache
-    // after start/restart command execution completed
-    sch1.setRestartRequired(false);
     // HDP-x/HDFS/hdfs-site updated host to changed property
-    Assert.assertFalse(sch1.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch2.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch2.convertToResponse(null).isStaleConfig());
 
     // change 'global' property only affecting global/HDFS
     makeConfig(cluster, "global", "version2",
@@ -893,9 +873,9 @@ public class ServiceComponentHostTest {
         put("mapred_log_dir_prefix", "/foo2"); // MR2 only
       }}, new HashMap<String, Map<String,String>>());
 
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch3.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch3.convertToResponse(null).isStaleConfig());
 
     // Change core-site property, only HDFS property
     makeConfig(cluster, "core-site", "version1",
@@ -904,9 +884,9 @@ public class ServiceComponentHostTest {
         put("fs.trash.interval", "360"); // HDFS only
       }}, new HashMap<String, Map<String,String>>());
 
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch3.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch3.convertToResponse(null).isStaleConfig());
 
     actual.put("core-site", new HashMap<String, String>() {{
       put("tag", "version1");
@@ -926,9 +906,9 @@ public class ServiceComponentHostTest {
     configGroup.persist();
     cluster.addConfigGroup(configGroup);
 
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch3.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch3.convertToResponse(null).isStaleConfig());
 
     // Test actual configs are updated for deleted config group
     Long id = configGroup.getId();
@@ -937,28 +917,18 @@ public class ServiceComponentHostTest {
     tags.put(id.toString(), "version2");
     actual.put("core-site", tags);
     sch3.updateActualConfigs(actual);
-    // previous value from cache
-    Assert.assertTrue(sch3.convertToResponse().isStaleConfig());
-    //reset restartRequired flag + invalidating isStale cache
-    // after start/restart command execution completed
-    sch3.setRestartRequired(false);
 
-    Assert.assertFalse(sch3.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch3.convertToResponse(null).isStaleConfig());
 
     cluster.deleteConfigGroup(id);
     Assert.assertNull(cluster.getConfigGroups().get(id));
 
     sch3.updateActualConfigs(actual);
-    Assert.assertTrue(sch3.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch3.convertToResponse(null).isStaleConfig());
 
     tags.remove(id.toString());
     sch3.updateActualConfigs(actual);
-    // previous value from cache
-    Assert.assertTrue(sch3.convertToResponse().isStaleConfig());
-    //reset restartRequired flag + invalidating isStale cache
-    // after start/restart command execution completed
-    sch3.setRestartRequired(false);
-    Assert.assertFalse(sch3.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch3.convertToResponse(null).isStaleConfig());
   }
 
   @Test
@@ -977,7 +947,7 @@ public class ServiceComponentHostTest {
 
     helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
     cluster.createClusterVersion(stackId, stackId.getStackVersion(), "admin",
-        RepositoryVersionState.UPGRADING);
+        RepositoryVersionState.INSTALLING);
 
     ServiceComponentHost sch1 = createNewServiceComponentHost(cluster, "HDFS", "NAMENODE", hostName);
     ServiceComponentHost sch2 = createNewServiceComponentHost(cluster, "HDFS", "DATANODE", hostName);
@@ -995,8 +965,8 @@ public class ServiceComponentHostTest {
     sch3.setState(State.INSTALLING);
     sch3.setStackVersion(new StackId(stackVersion));
 
-    Assert.assertFalse(sch1.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch2.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch2.convertToResponse(null).isStaleConfig());
 
     makeConfig(cluster, "global", "version1",
         new HashMap<String,String>() {{
@@ -1024,16 +994,16 @@ public class ServiceComponentHostTest {
        }});
       }});
     // HDP-x/HDFS does not define type 'foo', so changes do not count to stale
-    Assert.assertFalse(sch1.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch2.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch3.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch2.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch3.convertToResponse(null).isStaleConfig());
     actual = new HashMap<String, Map<String, String>>() {{
       put("global", new HashMap<String,String>() {{ put("tag", "version1"); }});
       put("mapred-site", new HashMap<String,String>() {{ put("tag", "version1"); }});
     }};
     sch3.setRestartRequired(false);
     sch3.updateActualConfigs(actual);
-    Assert.assertFalse(sch3.convertToResponse().isStaleConfig());
+    Assert.assertFalse(sch3.convertToResponse(null).isStaleConfig());
 
     // Now add config-attributes
     Map<String, Map<String, String>> c1PropAttributes = new HashMap<String, Map<String,String>>();
@@ -1046,9 +1016,9 @@ public class ServiceComponentHostTest {
     sch1.setRestartRequired(false);
     sch2.setRestartRequired(false);
     sch3.setRestartRequired(false);
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch3.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch3.convertToResponse(null).isStaleConfig());
 
     // Now change config-attributes
     Map<String, Map<String, String>> c2PropAttributes = new HashMap<String, Map<String,String>>();
@@ -1061,9 +1031,9 @@ public class ServiceComponentHostTest {
     sch1.setRestartRequired(false);
     sch2.setRestartRequired(false);
     sch3.setRestartRequired(false);
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch3.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch3.convertToResponse(null).isStaleConfig());
 
     // Now change config-attributes
     makeConfig(cluster, "hdfs-site", "version4",
@@ -1073,9 +1043,9 @@ public class ServiceComponentHostTest {
     sch1.setRestartRequired(false);
     sch2.setRestartRequired(false);
     sch3.setRestartRequired(false);
-    Assert.assertTrue(sch1.convertToResponse().isStaleConfig());
-    Assert.assertTrue(sch2.convertToResponse().isStaleConfig());
-    Assert.assertFalse(sch3.convertToResponse().isStaleConfig());
+    Assert.assertTrue(sch1.convertToResponse(null).isStaleConfig());
+    Assert.assertTrue(sch2.convertToResponse(null).isStaleConfig());
+    Assert.assertFalse(sch3.convertToResponse(null).isStaleConfig());
   }
 
   /**
@@ -1109,7 +1079,7 @@ public class ServiceComponentHostTest {
 
     helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
     cluster.createClusterVersion(stackId, stackId.getStackVersion(), "admin",
-        RepositoryVersionState.UPGRADING);
+        RepositoryVersionState.INSTALLING);
 
     HostEntity hostEntity = hostDAO.findByName(hostName);
     Assert.assertNotNull(hostEntity);
@@ -1153,7 +1123,7 @@ public class ServiceComponentHostTest {
 
     helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
     cluster.createClusterVersion(stackId, stackId.getStackVersion(), "admin",
-        RepositoryVersionState.UPGRADING);
+        RepositoryVersionState.INSTALLING);
 
     HostEntity hostEntity = hostDAO.findByName(hostName);
     ServiceComponentHost sch1 = createNewServiceComponentHost(cluster, "HDFS", "NAMENODE", hostName);

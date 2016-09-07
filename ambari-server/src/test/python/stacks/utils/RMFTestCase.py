@@ -29,6 +29,7 @@ import pprint
 import itertools
 from mock.mock import MagicMock, patch
 import platform
+import re
 
 with patch("platform.linux_distribution", return_value = ('Suse','11','Final')):
   from resource_management.core.environment import Environment
@@ -47,6 +48,8 @@ MAX_SHOWN_DICT_LEN = 10
 
 
 class RMFTestCase(TestCase):
+  # provides more verbose output when comparing assertion failures
+  maxDiff = None
 
   # (default) build all paths to test stack scripts
   TARGET_STACKS = 'TARGET_STACKS'
@@ -61,7 +64,7 @@ class RMFTestCase(TestCase):
                     config_dict=None,
                     # common mocks for all the scripts
                     config_overrides = None,
-                    hdp_stack_version = None,
+                    stack_version = None,
                     checked_call_mocks = itertools.cycle([(0, "OK.")]),
                     call_mocks = itertools.cycle([(0, "OK.")]),
                     os_type=('Suse','11','Final'),
@@ -70,7 +73,8 @@ class RMFTestCase(TestCase):
                     target=TARGET_STACKS,
                     mocks_dict={},
                     try_install=False,
-                    command_args=[]):
+                    command_args=[],
+                    log_out_files=False):
     norm_path = os.path.normpath(path)
     src_dir = RMFTestCase.get_src_folder()
     if target == self.TARGET_STACKS:
@@ -82,7 +86,7 @@ class RMFTestCase(TestCase):
       configs_path = os.path.join(src_dir, PATH_TO_CUSTOM_ACTION_TESTS, "configs")
     elif target == self.TARGET_COMMON_SERVICES:
       base_path = os.path.join(src_dir, PATH_TO_COMMON_SERVICES)
-      configs_path = os.path.join(src_dir, PATH_TO_STACK_TESTS, hdp_stack_version, "configs")
+      configs_path = os.path.join(src_dir, PATH_TO_STACK_TESTS, stack_version, "configs")
     else:
       raise RuntimeError("Wrong target value %s", target)
     script_path = os.path.join(base_path, norm_path)
@@ -97,6 +101,9 @@ class RMFTestCase(TestCase):
       self.config_dict = config_dict
     else:
       raise RuntimeError("Please specify either config_file_path or config_dict parameter")
+
+    self.config_dict["configurations"]["cluster-env"]["stack_tools"] = RMFTestCase.get_stack_tools()
+    self.config_dict["configurations"]["cluster-env"]["stack_features"] = RMFTestCase.get_stack_features()
 
     if config_overrides:
       for key, value in config_overrides.iteritems():
@@ -113,11 +120,12 @@ class RMFTestCase(TestCase):
     try:
       with patch.object(platform, 'linux_distribution', return_value=os_type):
         script_module = imp.load_source(classname, script_path)
+        Script.instance = None
+        script_class_inst = RMFTestCase._get_attr(script_module, classname)()
+        script_class_inst.log_out_files = log_out_files
+        method = RMFTestCase._get_attr(script_class_inst, command)
     except IOError, err:
       raise RuntimeError("Cannot load class %s from %s: %s" % (classname, norm_path, err.message))
-    
-    script_class_inst = RMFTestCase._get_attr(script_module, classname)()
-    method = RMFTestCase._get_attr(script_class_inst, command)
     
     # Reload params import, otherwise it won't change properties during next import
     if 'params' in sys.modules:  
@@ -138,14 +146,15 @@ class RMFTestCase(TestCase):
         with patch('resource_management.core.shell.call', side_effect=call_mocks) as mocks_dict['call']:
           with patch.object(Script, 'get_config', return_value=self.config_dict) as mocks_dict['get_config']: # mocking configurations
             with patch.object(Script, 'get_tmp_dir', return_value="/tmp") as mocks_dict['get_tmp_dir']:
-              with patch('resource_management.libraries.functions.get_kinit_path', return_value=kinit_path_local) as mocks_dict['get_kinit_path']:
-                with patch.object(platform, 'linux_distribution', return_value=os_type) as mocks_dict['linux_distribution']:
-                  with patch.object(os, "environ", new=os_env) as mocks_dict['environ']:
-                    if not try_install:
-                      with patch.object(Script, 'install_packages') as install_mock_value:
+              with patch.object(Script, 'post_start') as mocks_dict['post_start']:
+                with patch('resource_management.libraries.functions.get_kinit_path', return_value=kinit_path_local) as mocks_dict['get_kinit_path']:
+                  with patch.object(platform, 'linux_distribution', return_value=os_type) as mocks_dict['linux_distribution']:
+                    with patch.object(os, "environ", new=os_env) as mocks_dict['environ']:
+                      if not try_install:
+                        with patch.object(Script, 'install_packages') as install_mock_value:
+                          method(RMFTestCase.env, *command_args)
+                      else:
                         method(RMFTestCase.env, *command_args)
-                    else:
-                      method(RMFTestCase.env, *command_args)
 
     sys.path.remove(scriptsdir)
   
@@ -159,6 +168,24 @@ class RMFTestCase(TestCase):
   @staticmethod
   def _getCommonServicesFolder():
     return os.path.join(RMFTestCase.get_src_folder(), PATH_TO_COMMON_SERVICES)
+
+  @staticmethod
+  def get_stack_tools():
+    """
+    Read stack_tools config property from resources/stacks/HDP/2.0.6/properties/stack_tools.json
+    """
+    stack_tools_file = os.path.join(RMFTestCase.get_src_folder(), PATH_TO_STACKS, "2.0.6", "properties", "stack_tools.json")
+    with open(stack_tools_file, "r") as f:
+      return f.read()
+
+  @staticmethod
+  def get_stack_features():
+    """
+    Read stack_features config property from resources/stacks/HDP/2.0.6/properties/stack_features.json
+    """
+    stack_features_file = os.path.join(RMFTestCase.get_src_folder(), PATH_TO_STACKS, "2.0.6", "properties", "stack_features.json")
+    with open(stack_features_file, "r") as f:
+      return f.read()
 
   @staticmethod
   def _getStackTestsFolder():
@@ -223,18 +250,64 @@ class RMFTestCase(TestCase):
       s = self.reindent(s, intendation)
       print s
     print(self.reindent("self.assertNoMoreResources()", intendation))
-  
+
+  def assertResourceCalledIgnoreEarlier(self, resource_type, name, **kwargs):
+    """
+    Fast fowards past earlier resources called, popping them off the list until the specified
+    resource is hit. If it's not found, then an assertion is thrown that there are no more
+    resources.
+    """
+    with patch.object(UnknownConfiguration, '__getattr__', return_value=lambda: "UnknownConfiguration()"):
+      while len(RMFTestCase.env.resource_list) >= 0:
+        # no more items means exit the loop
+        self.assertNotEqual(len(RMFTestCase.env.resource_list), 0, "The specified resource was not found in the call stack.")
+
+        # take the next resource and try it out
+        resource = RMFTestCase.env.resource_list.pop(0)
+        try:
+          self.assertEquals(resource_type, resource.__class__.__name__)
+          self.assertEquals(name, resource.name)
+          self.assertEquals(kwargs, resource.arguments)
+          break
+        except AssertionError:
+          pass
+
   def assertResourceCalled(self, resource_type, name, **kwargs):
     with patch.object(UnknownConfiguration, '__getattr__', return_value=lambda: "UnknownConfiguration()"):
-      self.assertNotEqual(len(RMFTestCase.env.resource_list), 0, "There was no more resources executed!")
+      self.assertNotEqual(len(RMFTestCase.env.resource_list), 0, "There were no more resources executed!")
       resource = RMFTestCase.env.resource_list.pop(0)
 
       self.assertEquals(resource_type, resource.__class__.__name__)
       self.assertEquals(name, resource.name)
       self.assertEquals(kwargs, resource.arguments)
-    
+
+  def assertResourceCalledRegexp(self, resource_type, name, **kwargs):
+    with patch.object(UnknownConfiguration, '__getattr__', return_value=lambda: "UnknownConfiguration()"):
+      self.assertNotEqual(len(RMFTestCase.env.resource_list), 0, "There were no more resources executed!")
+      resource = RMFTestCase.env.resource_list.pop(0)
+      
+      self.assertRegexpMatches(resource.__class__.__name__, resource_type)
+      self.assertRegexpMatches(resource.name, name)
+      for key in set(resource.arguments.keys()) | set(kwargs.keys()):
+        resource_value = resource.arguments.get(key, '')
+        actual_value = kwargs.get(key, '')
+        if self.isstring(resource_value):
+          self.assertRegexpMatches(resource_value, actual_value,
+                                   msg="Key '%s': '%s' does not match with '%s'" % (key, resource_value, actual_value))
+        else: # check only the type of a custom object
+          self.assertEquals(resource_value.__class__.__name__, actual_value.__class__.__name__)
+
+  def assertRegexpMatches(self, value, pattern, msg=None):
+    if not re.match(pattern, value):
+      raise AssertionError, msg or 'pattern %s does not match %s' % (pattern, value)
+
+  def isstring(self, s):
+    if (sys.version_info[0] == 3):
+      return isinstance(s, str)
+    return isinstance(s, basestring)
+
   def assertNoMoreResources(self):
-    self.assertEquals(len(RMFTestCase.env.resource_list), 0, "There was other resources executed!")
+    self.assertEquals(len(RMFTestCase.env.resource_list), 0, "There were other resources executed!")
     
   def assertResourceCalledByIndex(self, index, resource_type, name, **kwargs):
     resource = RMFTestCase.env.resource_list[index]

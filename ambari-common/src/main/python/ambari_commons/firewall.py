@@ -18,8 +18,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
-import subprocess
-import shlex
 from ambari_commons import OSCheck, OSConst
 from ambari_commons.logging_utils import print_warning_msg
 from ambari_commons.os_family_impl import OsFamilyImpl
@@ -48,6 +46,8 @@ class FirewallLinux(Firewall):
       return UbuntuFirewallChecks()
     elif self.OS_TYPE == OSConst.OS_FEDORA and int(self.OS_VERSION) >= 18:
       return Fedora18FirewallChecks()
+    elif OSCheck.is_redhat_family() and int(self.OS_VERSION) >= 7:
+      return RedHat7FirewallChecks()
     elif OSCheck.is_suse_family():
       return SuseFirewallChecks()
     else:
@@ -112,6 +112,29 @@ class UbuntuFirewallChecks(FirewallChecks):
         result = True
     return result
 
+class RedHat7FirewallChecks(FirewallChecks):
+  def __init__(self):
+    super(RedHat7FirewallChecks, self).__init__()
+    self.SERVICE_CMD = "systemctl"
+
+  #firewalld added to support default firewall (started from RHEL7/CentOS7)
+  #script default iptables checked as user can use iptables as known from previous RHEL releases.
+  def get_command(self):
+    return "%(servcmd)s is-active %(fwl1)s %(fwl2)s" % {"servcmd":self.SERVICE_CMD,"fwl1":"iptables", "fwl2":"firewalld"}
+
+  def check_result(self):
+    for line in self.stdoutdata.split("\n"):
+      if line.strip() == "active":
+        return True
+    return False
+
+
+  def run_command(self):
+    retcode, out, err = run_os_command(self.get_command())
+    self.returncode = retcode
+    self.stdoutdata = out
+    self.stderrdata = err
+
 class Fedora18FirewallChecks(FirewallChecks):
   def __init__(self):
     super(Fedora18FirewallChecks, self).__init__()
@@ -129,7 +152,7 @@ class Fedora18FirewallChecks(FirewallChecks):
 class SuseFirewallChecks(FirewallChecks):
   def __init__(self):
     super(SuseFirewallChecks, self).__init__()
-    self.FIREWALL_SERVICE_NAME = "SuSEfirewall2"
+    self.FIREWALL_SERVICE_NAME = "rcSuSEfirewall2"
 
   def get_command(self):
     return "%s %s" % (self.FIREWALL_SERVICE_NAME, self.SERVICE_SUBCMD)
@@ -137,9 +160,9 @@ class SuseFirewallChecks(FirewallChecks):
   def check_result(self):
     result = False
     if self.returncode == 0:
-      if "SuSEfirewall2 not active" in self.stdoutdata:
+      if "unused" in self.stdoutdata:
         result = False
-      elif "### iptables" in self.stdoutdata:
+      elif "running" in self.stdoutdata:
         result = True
     return result
 

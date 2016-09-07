@@ -29,7 +29,6 @@ import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
-import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
@@ -89,8 +88,6 @@ public class ClusterService extends BaseService {
   @Produces("text/plain")
   public Response getCluster(String body, @Context HttpHeaders headers, @Context UriInfo ui,
                              @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.GET, clusterName);
     return handleRequest(headers, body, ui, Request.Type.GET, createClusterResource(clusterName));
   }
 
@@ -106,8 +103,6 @@ public class ClusterService extends BaseService {
   @GET
   @Produces("text/plain")
   public Response getClusters(String body, @Context HttpHeaders headers, @Context UriInfo ui) {
-
-    hasPermission(Request.Type.GET, null);
     return handleRequest(headers, body, ui, Request.Type.GET, createClusterResource(null));
   }
 
@@ -126,8 +121,6 @@ public class ClusterService extends BaseService {
    @Produces("text/plain")
    public Response createCluster(String body, @Context HttpHeaders headers, @Context UriInfo ui,
                                  @PathParam("clusterName") String clusterName) {
-
-     hasPermission(Request.Type.POST, clusterName);
      return handleRequest(headers, body, ui, Request.Type.POST, createClusterResource(clusterName));
   }
 
@@ -146,8 +139,6 @@ public class ClusterService extends BaseService {
   @Produces("text/plain")
   public Response updateCluster(String body, @Context HttpHeaders headers, @Context UriInfo ui,
                                 @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.PUT, clusterName);
     return handleRequest(headers, body, ui, Request.Type.PUT, createClusterResource(clusterName));
   }
 
@@ -166,8 +157,6 @@ public class ClusterService extends BaseService {
   @Produces("text/plain")
   public Response deleteCluster(@Context HttpHeaders headers, @Context UriInfo ui,
                                 @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.DELETE, clusterName);
     return handleRequest(headers, null, ui, Request.Type.DELETE, createClusterResource(clusterName));
   }
 
@@ -189,8 +178,6 @@ public class ClusterService extends BaseService {
                                @Context HttpHeaders headers,
                                @Context UriInfo ui,
                                @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.GET, clusterName);
     return handleRequest(headers, body, ui, Request.Type.GET,
         createArtifactResource(clusterName, null));
   }
@@ -215,10 +202,7 @@ public class ClusterService extends BaseService {
                               @Context UriInfo ui,
                               @PathParam("clusterName") String clusterName,
                               @PathParam("artifactName") String artifactName) {
-
-    hasPermission(Request.Type.GET, clusterName);
-    return handleRequest(headers, body, ui, Request.Type.GET,
-        createArtifactResource(clusterName, artifactName));
+    return handleRequest(headers, body, ui, Request.Type.GET, createArtifactResource(clusterName, artifactName));
   }
 
   /**
@@ -240,8 +224,6 @@ public class ClusterService extends BaseService {
                                  @Context UriInfo ui,
                                  @PathParam("clusterName") String clusterName,
                                  @PathParam("artifactName") String artifactName) {
-
-    hasPermission(Request.Type.POST, clusterName);
     return handleRequest(headers, body, ui, Request.Type.POST,
         createArtifactResource(clusterName, artifactName));
   }
@@ -263,8 +245,6 @@ public class ClusterService extends BaseService {
                                   @Context HttpHeaders headers,
                                   @Context UriInfo ui,
                                   @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.PUT, clusterName);
     return handleRequest(headers, body, ui, Request.Type.PUT,
         createArtifactResource(clusterName, null));
   }
@@ -288,8 +268,6 @@ public class ClusterService extends BaseService {
                                 @Context UriInfo ui,
                                 @PathParam("clusterName") String clusterName,
                                 @PathParam("artifactName") String artifactName) {
-
-    hasPermission(Request.Type.PUT, clusterName);
     return handleRequest(headers, body, ui, Request.Type.PUT,
         createArtifactResource(clusterName, artifactName));
   }
@@ -313,8 +291,6 @@ public class ClusterService extends BaseService {
                                  @Context UriInfo ui,
                                  @PathParam("clusterName") String clusterName,
                                  @PathParam("artifactName") String artifactName) {
-
-    hasPermission(Request.Type.DELETE, clusterName);
     return handleRequest(headers, body, ui, Request.Type.DELETE,
         createArtifactResource(clusterName, artifactName));
   }
@@ -336,8 +312,6 @@ public class ClusterService extends BaseService {
                                   @Context HttpHeaders headers,
                                   @Context UriInfo ui,
                                   @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.DELETE, clusterName);
     return handleRequest(headers, body, ui, Request.Type.DELETE,
         createArtifactResource(clusterName, null));
   }
@@ -352,8 +326,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/hosts")
   public HostService getHostHandler(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new HostService(clusterName);
   }
 
@@ -367,8 +339,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/services")
   public ServiceService getServiceHandler(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new ServiceService(clusterName);
   }
 
@@ -382,8 +352,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/configurations")
   public ConfigurationService getConfigurationHandler(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new ConfigurationService(clusterName);
   }
 
@@ -397,8 +365,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/requests")
   public RequestService getRequestHandler(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new RequestService(clusterName);
   }
 
@@ -413,8 +379,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/host_components")
   public HostComponentService getHostComponentHandler(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new HostComponentService(clusterName, null);
   }
 
@@ -429,8 +393,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/kerberos_identities")
   public HostKerberosIdentityService getHostKerberosIdentityHandler(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new HostKerberosIdentityService(clusterName, null);
   }
 
@@ -445,8 +407,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/components")
   public ComponentService getComponentHandler(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new ComponentService(clusterName, null);
   }
 
@@ -460,8 +420,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/workflows")
   public WorkflowService getWorkflowHandler(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new WorkflowService(clusterName);
   }
 
@@ -475,8 +433,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/config_groups")
   public ConfigGroupService getConfigGroupService(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new ConfigGroupService(clusterName);
   }
 
@@ -491,8 +447,6 @@ public class ClusterService extends BaseService {
   @Path("{clusterName}/request_schedules")
   public RequestScheduleService getRequestScheduleService
                              (@Context javax.ws.rs.core.Request request, @PathParam ("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new RequestScheduleService(clusterName);
   }
 
@@ -507,8 +461,6 @@ public class ClusterService extends BaseService {
   @Path("{clusterName}/alert_definitions")
   public AlertDefinitionService getAlertDefinitionService(
       @Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new AlertDefinitionService(clusterName);
   }
 
@@ -525,8 +477,6 @@ public class ClusterService extends BaseService {
   public AlertGroupService getAlertGroups(
       @Context javax.ws.rs.core.Request request,
       @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new AlertGroupService(clusterName);
   }
 
@@ -542,8 +492,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/privileges")
   public PrivilegeService getPrivilegeService(@Context javax.ws.rs.core.Request request, @PathParam ("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new ClusterPrivilegeService(clusterName);
   }
 
@@ -558,8 +506,6 @@ public class ClusterService extends BaseService {
   @Path("{clusterName}/alerts")
   public AlertService getAlertService(
       @Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new AlertService(clusterName, null, null);
   }
 
@@ -577,8 +523,6 @@ public class ClusterService extends BaseService {
   public AlertHistoryService getAlertHistoryService(
       @Context javax.ws.rs.core.Request request,
       @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new AlertHistoryService(clusterName, null, null);
   }
 
@@ -596,8 +540,6 @@ public class ClusterService extends BaseService {
   public AlertNoticeService getAlertNoticeService(
       @Context javax.ws.rs.core.Request request,
       @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new AlertNoticeService(clusterName);
   }
 
@@ -614,8 +556,6 @@ public class ClusterService extends BaseService {
   @Path("{clusterName}/stack_versions")
   public ClusterStackVersionService getClusterStackVersionService(@Context javax.ws.rs.core.Request request,
       @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new ClusterStackVersionService(clusterName);
   }
 
@@ -631,11 +571,24 @@ public class ClusterService extends BaseService {
   public UpgradeService getUpgradeService(
       @Context javax.ws.rs.core.Request request,
       @PathParam("clusterName") String clusterName) {
-
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new UpgradeService(clusterName);
   }
 
+  /**
+   * Gets a list of upgrade summaries.
+   *
+   * @param request the request
+   * @param clusterName the cluster name
+   *
+   * @return the upgrade summary service
+   */
+  @Path("{clusterName}/upgrade_summary")
+  public UpgradeSummaryService getUpgradeSummaryService(
+      @Context javax.ws.rs.core.Request request,
+      @PathParam("clusterName") String clusterName) {
+    return new UpgradeSummaryService(clusterName);
+  }
+  
   /**
    * Gets the pre-upgrade checks service.
    *
@@ -646,7 +599,6 @@ public class ClusterService extends BaseService {
    */
   @Path("{clusterName}/rolling_upgrades_check")
   public PreUpgradeCheckService getPreUpgradeCheckService(@Context javax.ws.rs.core.Request request, @PathParam("clusterName") String clusterName) {
-    hasPermission(Request.Type.valueOf(request.getMethod()), clusterName);
     return new PreUpgradeCheckService(clusterName);
   }
 
@@ -668,6 +620,49 @@ public class ClusterService extends BaseService {
                                                     @PathParam ("clusterName") String clusterName) {
 
     return new WidgetService(clusterName);
+  }
+
+  /**
+   * Gets the credentials service.
+   *
+   * @param request          the request.
+   * @param clusterName         the cluster name.
+   * @return the credentials service.
+   */
+  @Path("{clusterName}/credentials")
+  public CredentialService getCredentials(
+      @Context javax.ws.rs.core.Request request,
+      @PathParam("clusterName") String clusterName) {
+    return new CredentialService(clusterName);
+  }
+
+  /**
+   * Handles: GET /clusters/{clusterID}/kerberos_descriptor
+   * Gets the composite Kerberos descriptor associated with the cluster.
+   *
+   * @param request     the request.
+   * @param clusterName the cluster name.
+   * @return composite Kerberos descriptor resource representation
+   */
+  @Path("{clusterName}/kerberos_descriptors")
+  public ClusterKerberosDescriptorService getCompositeKerberosDescriptor(
+      @Context javax.ws.rs.core.Request request,
+      @PathParam("clusterName") String clusterName) {
+    return new ClusterKerberosDescriptorService(clusterName);
+  }
+
+  /**
+   * Gets the Logging Service
+   *
+   * @param request the request
+   * @param clusterName the cluster name
+   *
+   * @return a new instance of the LoggingService
+   */
+  @Path("{clusterName}/logging")
+  public LoggingService getLogging(@Context javax.ws.rs.core.Request request,
+                                   @PathParam("clusterName") String clusterName) {
+    return new LoggingService(clusterName);
   }
 
   // ----- helper methods ----------------------------------------------------
@@ -698,24 +693,5 @@ public class ClusterService extends BaseService {
     mapIds.put(Resource.Type.Artifact, artifactName);
 
     return createResource(Resource.Type.Artifact, mapIds);
-  }
-
-  /**
-   * Determine whether or not the access specified by the given request type is
-   * permitted for the current user on the cluster resource identified by the
-   * given cluster name.
-   *
-   * @param requestType
-   *          the request method type
-   * @param clusterName
-   *          the name of the cluster resource
-   *
-   * @throws WebApplicationException
-   *           if access is forbidden
-   */
-  private void hasPermission(Request.Type requestType, String clusterName) throws WebApplicationException {
-    if (!clusters.checkPermission(clusterName, requestType == Request.Type.GET)) {
-      throw new WebApplicationException(Response.Status.FORBIDDEN);
-    }
   }
 }

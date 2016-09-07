@@ -17,7 +17,7 @@
  */
 
 var App = require('app');
-var date = require('utils/date');
+var date = require('utils/date/date');
 
 App.WizardStep9HostLogPopupBodyView = Em.View.extend({
 
@@ -27,17 +27,13 @@ App.WizardStep9HostLogPopupBodyView = Em.View.extend({
    * Does host lost heartbeat
    * @type {bool}
    */
-  isHeartbeatLost: function() {
-    return (this.get('parentView.host.status') === 'heartbeat_lost');
-  }.property('parentView.host.status'),
+  isHeartbeatLost: Em.computed.equal('parentView.host.status', 'heartbeat_lost'),
 
   /**
    * Does host doesn't have scheduled tasks for install
    * @type {bool}
    */
-  isNoTasksScheduled: function() {
-    return this.get('parentView.host.isNoTasksForInstall');
-  }.property('parentView.host.isNoTasksForInstall'),
+  isNoTasksScheduled: Em.computed.alias('parentView.host.isNoTasksForInstall'),
 
   /**
    * Is log-box hidden
@@ -140,7 +136,7 @@ App.WizardStep9HostLogPopupBodyView = Em.View.extend({
         taskInfo.set('command', _task.Tasks.command.toLowerCase() === 'service_check' ? '' : _task.Tasks.command.toLowerCase());
         taskInfo.set('commandDetail', App.format.commandDetail(_task.Tasks.command_detail, _task.Tasks.request_inputs));
         taskInfo.set('status', App.format.taskStatus(_task.Tasks.status));
-        taskInfo.set('role', App.format.role(_task.Tasks.role));
+        taskInfo.set('role', App.format.role(_task.Tasks.role, false));
         taskInfo.set('stderr', _task.Tasks.stderr);
         taskInfo.set('stdout', _task.Tasks.stdout);
         taskInfo.set('outputLog', _task.Tasks.output_log);
@@ -251,13 +247,14 @@ App.WizardStep9HostLogPopupBodyView = Em.View.extend({
    * @method createClipBoard
    */
   createClipBoard: function () {
-    var log = $(".task-detail-log-maintext");
+    var log = $(".task-detail-log-maintext"),
+      logRect = log[0].getBoundingClientRect();
     $(".task-detail-log-clipboard-wrap").html('<textarea class="task-detail-log-clipboard"></textarea>');
     $(".task-detail-log-clipboard")
       .html("stderr: \n" + $(".stderr").html() + "\n stdout:\n" + $(".stdout").html())
       .css("display", "block")
-      .width(log.width())
-      .height(log.height())
+      .width(logRect.width)
+      .height(logRect.height)
       .select();
     log.css("display", "none")
   },

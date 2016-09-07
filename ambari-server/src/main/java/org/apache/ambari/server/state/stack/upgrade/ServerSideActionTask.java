@@ -17,7 +17,11 @@
  */
 package org.apache.ambari.server.state.stack.upgrade;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import javax.xml.bind.annotation.XmlAttribute;
+import javax.xml.bind.annotation.XmlElement;
 
 /**
  *
@@ -27,7 +31,17 @@ public abstract class ServerSideActionTask extends Task {
   @XmlAttribute(name="class")
   protected String implClass;
 
+  public static final String actionVerb = "Executing";
+
   public String getImplementationClass() {
     return implClass;
+  }
+
+  @XmlElement(name="message")
+  public List<String> messages = new ArrayList<>();
+
+  @Override
+  public String getActionVerb() {
+    return actionVerb;
   }
 }

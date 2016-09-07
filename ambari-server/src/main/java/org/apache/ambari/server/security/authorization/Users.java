@@ -17,13 +17,7 @@
  */
 package org.apache.ambari.server.security.authorization;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import javax.persistence.EntityManager;
 
 import org.apache.ambari.server.AmbariException;
@@ -48,7 +42,6 @@ import org.apache.ambari.server.security.ldap.LdapUserGroupMemberDto;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -103,9 +96,53 @@ public class Users {
     return users;
   }
 
+  /**
+   * This method works incorrectly, userName is not unique if users have different types
+   * @return One user. Priority is LOCAL -> LDAP -> JWT
+   */
+  @Deprecated
   public User getAnyUser(String userName) {
-    UserEntity userEntity = userDAO.findUserByName(userName);
+    UserEntity userEntity = userDAO.findUserByNameAndType(userName, UserType.LOCAL);
+    if (userEntity == null) {
+      userEntity = userDAO.findUserByNameAndType(userName, UserType.LDAP);
+    }
+    if (userEntity == null) {
+      userEntity = userDAO.findUserByNameAndType(userName, UserType.JWT);
+    }
     return (null == userEntity) ? null : new User(userEntity);
+  }
+
+  public User getUser(String userName, UserType userType) {
+    UserEntity userEntity = userDAO.findUserByNameAndType(userName, userType);
+    return (null == userEntity) ? null : new User(userEntity);
+  }
+
+  public User getUser(Integer userId) {
+    UserEntity userEntity = userDAO.findByPK(userId);
+    return (null == userEntity) ? null : new User(userEntity);
+  }
+
+  /**
+   * Retrieves User then userName is unique in users DB. Will return null if there no user with provided userName or
+   * there are some users with provided userName but with different types.
+   * @param userName
+   * @return User if userName is unique in DB, null otherwise
+   */
+  public User getUserIfUnique(String userName) {
+    List<UserEntity> userEntities = new ArrayList<>();
+    UserEntity userEntity = userDAO.findUserByNameAndType(userName, UserType.LOCAL);
+    if (userEntity != null) {
+      userEntities.add(userEntity);
+    }
+    userEntity = userDAO.findUserByNameAndType(userName, UserType.LDAP);
+    if (userEntity != null) {
+      userEntities.add(userEntity);
+    }
+    userEntity = userDAO.findUserByNameAndType(userName, UserType.JWT);
+    if (userEntity != null) {
+      userEntities.add(userEntity);
+    }
+    return (userEntities.isEmpty() || userEntities.size() > 1) ? null : new User(userEntities.get(0));
   }
 
   /**
@@ -130,15 +167,14 @@ public class Users {
         ldapAuthenticationProvider.authenticate(
             new UsernamePasswordAuthenticationToken(currentUserName, currentUserPassword));
       isLdapUser = true;
-      } catch (BadCredentialsException ex) {
-        throw new AmbariException("Incorrect password provided for LDAP user " +
-            currentUserName);
+      } catch (InvalidUsernamePasswordCombinationException ex) {
+        throw new AmbariException(ex.getMessage());
       }
     }
 
     boolean isCurrentUserAdmin = false;
     for (PrivilegeEntity privilegeEntity: currentUserEntity.getPrincipal().getPrivileges()) {
-      if (privilegeEntity.getPermission().getPermissionName().equals(PermissionEntity.AMBARI_ADMIN_PERMISSION_NAME)) {
+      if (privilegeEntity.getPermission().getPermissionName().equals(PermissionEntity.AMBARI_ADMINISTRATOR_PERMISSION_NAME)) {
         isCurrentUserAdmin = true;
         break;
       }
@@ -225,27 +261,34 @@ public class Users {
    * @throws AmbariException if user already exists
    */
   public void createUser(String userName, String password) throws AmbariException {
-    createUser(userName, password, true, false, false);
+    createUser(userName, password, UserType.LOCAL, true, false);
   }
 
   /**
-   * Creates new local user with provided userName and password.
+   * Creates new user with provided userName and password.
    *
    * @param userName user name
    * @param password password
+   * @param userType user type
    * @param active is user active
    * @param admin is user admin
-   * @param ldapUser is user LDAP
    * @throws AmbariException if user already exists
    */
-  @Transactional
-  public synchronized void createUser(String userName, String password, Boolean active, Boolean admin, Boolean ldapUser) throws AmbariException {
+  public synchronized void createUser(String userName, String password, UserType userType, Boolean active, Boolean
+      admin) throws AmbariException {
+    // if user type is not provided, assume LOCAL since the default
+    // value of user_type in the users table is LOCAL
+    if (userType == null) {
+      throw new AmbariException("UserType not specified.");
+    }
 
-    if (getAnyUser(userName) != null) {
+    // store user name in lower case
+    userName = StringUtils.lowerCase(userName);
+
+    if (getUser(userName, userType) != null) {
       throw new AmbariException("User " + userName + " already exists");
     }
 
-    // create an admin principal to represent this user
     PrincipalTypeEntity principalTypeEntity = principalTypeDAO.findById(PrincipalTypeEntity.USER_PRINCIPAL_TYPE);
     if (principalTypeEntity == null) {
       principalTypeEntity = new PrincipalTypeEntity();
@@ -259,13 +302,18 @@ public class Users {
 
     UserEntity userEntity = new UserEntity();
     userEntity.setUserName(userName);
-    userEntity.setUserPassword(passwordEncoder.encode(password));
+    if (userType == UserType.LOCAL) {
+      //passwords should be stored for local users only
+      userEntity.setUserPassword(passwordEncoder.encode(password));
+    }
     userEntity.setPrincipal(principalEntity);
     if (active != null) {
       userEntity.setActive(active);
     }
-    if (ldapUser != null) {
-      userEntity.setLdapUser(ldapUser);
+
+    userEntity.setUserType(userType);
+    if (userType == UserType.LDAP) {
+      userEntity.setLdapUser(true);
     }
 
     userDAO.create(userEntity);
@@ -275,7 +323,6 @@ public class Users {
     }
   }
 
-  @Transactional
   public synchronized void removeUser(User user) throws AmbariException {
     UserEntity userEntity = userDAO.findByPK(user.getUserId());
     if (userEntity != null) {
@@ -313,7 +360,12 @@ public class Users {
     } else {
       final Set<User> users = new HashSet<User>();
       for (MemberEntity memberEntity: groupEntity.getMemberEntities()) {
-        users.add(new User(memberEntity.getUser()));
+        if (memberEntity.getUser() != null) {
+          users.add(new User(memberEntity.getUser()));
+        } else {
+          LOG.error("Wrong state, not found user for member '{}' (group: '{}')",
+            memberEntity.getMemberId(), memberEntity.getGroup().getGroupName());
+        }
       }
       return users;
     }
@@ -388,9 +440,9 @@ public class Users {
   }
 
   /**
-   * Grants AMBARI.ADMIN privilege to provided user.
+   * Grants AMBARI.ADMINISTRATOR privilege to provided user.
    *
-   * @param user user
+   * @param userId user id
    */
   public synchronized void grantAdminPrivilege(Integer userId) {
     final UserEntity user = userDAO.findByPK(userId);
@@ -407,14 +459,14 @@ public class Users {
   }
 
   /**
-   * Revokes AMBARI.ADMIN privilege from provided user.
+   * Revokes AMBARI.ADMINISTRATOR privilege from provided user.
    *
-   * @param user user
+   * @param userId user id
    */
   public synchronized void revokeAdminPrivilege(Integer userId) {
     final UserEntity user = userDAO.findByPK(userId);
     for (PrivilegeEntity privilege: user.getPrincipal().getPrivileges()) {
-      if (privilege.getPermission().getPermissionName().equals(PermissionEntity.AMBARI_ADMIN_PERMISSION_NAME)) {
+      if (privilege.getPermission().getPermissionName().equals(PermissionEntity.AMBARI_ADMINISTRATOR_PERMISSION_NAME)) {
         user.getPrincipal().getPrivileges().remove(privilege);
         principalDAO.merge(user.getPrincipal()); //explicit merge for Derby support
         userDAO.merge(user);
@@ -492,7 +544,7 @@ public class Users {
    * @return true if user can be removed
    */
   public synchronized boolean isUserCanBeRemoved(UserEntity userEntity){
-    List<PrincipalEntity> adminPrincipals = principalDAO.findByPermissionId(PermissionEntity.AMBARI_ADMIN_PERMISSION);
+    List<PrincipalEntity> adminPrincipals = principalDAO.findByPermissionId(PermissionEntity.AMBARI_ADMINISTRATOR_PERMISSION);
     Set<UserEntity> userEntitysSet = new HashSet<UserEntity>(userDAO.findUsersByPrincipal(adminPrincipals));
     return (userEntitysSet.contains(userEntity) && userEntitysSet.size() < 2) ? false : true;
   }
@@ -652,6 +704,75 @@ public class Users {
 
     // clear cached entities
     entityManagerProvider.get().getEntityManagerFactory().getCache().evictAll();
+  }
+
+  /**
+   * Gets the explicit and implicit authorities for the given user.
+   * <p>
+   * The explicit authorities are the authorities that have be explicitly set by assigning roles to
+   * a user.  For example the Cluster Operator role on a given cluster gives that the ability to
+   * start and stop services in that cluster, among other privileges for that particular cluster.
+   * <p>
+   * The implicit authorities are the authorities that have been given to the roles themselves which
+   * in turn are granted to the users that have been assigned those roles. For example if the
+   * Cluster User role for a given cluster has been given View User access on a specified File View
+   * instance, then all users who have the Cluster User role for that cluster will implicitly be
+   * granted View User access on that File View instance.
+   *
+   * @param userName the username for the relevant user
+   * @param userType the user type for the relevant user
+   * @return the users collection of implicit and explicit granted authorities
+   */
+  public Collection<AmbariGrantedAuthority> getUserAuthorities(String userName, UserType userType) {
+    UserEntity userEntity = userDAO.findUserByNameAndType(userName, userType);
+    if (userEntity == null) {
+      return Collections.emptyList();
+    }
+
+    // get all of the privileges for the user
+    List<PrincipalEntity> principalEntities = new LinkedList<PrincipalEntity>();
+
+    principalEntities.add(userEntity.getPrincipal());
+
+    List<MemberEntity> memberEntities = memberDAO.findAllMembersByUser(userEntity);
+
+    for (MemberEntity memberEntity : memberEntities) {
+      principalEntities.add(memberEntity.getGroup().getPrincipal());
+    }
+
+    List<PrivilegeEntity> privilegeEntities = privilegeDAO.findAllByPrincipal(principalEntities);
+
+    // A list of principals representing roles/permissions. This collection of roles will be used to
+    // find additional authorizations inherited by the authenticated user based on the assigned roles.
+    // For example a File View instance may be set to be accessible to all authenticated user with
+    // the Cluster User role.
+    List<PrincipalEntity> rolePrincipals = new ArrayList<PrincipalEntity>();
+
+    Set<AmbariGrantedAuthority> authorities = new HashSet<>(privilegeEntities.size());
+
+    for (PrivilegeEntity privilegeEntity : privilegeEntities) {
+      // Add the principal representing the role associated with this PrivilegeEntity to the collection
+      // of roles for the authenticated user.
+      PrincipalEntity rolePrincipal = privilegeEntity.getPermission().getPrincipal();
+      if(rolePrincipal != null) {
+        rolePrincipals.add(rolePrincipal);
+      }
+
+      authorities.add(new AmbariGrantedAuthority(privilegeEntity));
+    }
+
+    // If the collections of assigned roles is not empty find the inherited authorizations that are
+    // give to the roles and add them to the collection of (Granted) authorities for the user.
+    if(!rolePrincipals.isEmpty()) {
+      // For each "role" see if any privileges have been granted...
+      List<PrivilegeEntity> rolePrivilegeEntities = privilegeDAO.findAllByPrincipal(rolePrincipals);
+
+      for (PrivilegeEntity privilegeEntity : rolePrivilegeEntities) {
+        authorities.add(new AmbariGrantedAuthority(privilegeEntity));
+      }
+    }
+
+    return authorities;
   }
 
 }

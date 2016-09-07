@@ -73,16 +73,8 @@
 
       <osSpecifics>
         <osSpecific>
-          <osFamily>redhat7,redhat6</osFamily>
+          <osFamily>redhat7,amazon2015,redhat6</osFamily>
           <packages>
-            <package>
-              <name>krb5-server</name>
-              <skipUpgrade>true</skipUpgrade>
-            </package>
-            <package>
-              <name>krb5-libs</name>
-              <skipUpgrade>true</skipUpgrade>
-            </package>
             <package>
               <name>krb5-workstation</name>
               <skipUpgrade>true</skipUpgrade>
@@ -91,16 +83,8 @@
         </osSpecific>
 
         <osSpecific>
-          <osFamily>debian7,ubuntu12,ubuntu14</osFamily>
+          <osFamily>debian7,ubuntu12,ubuntu14,ubuntu16</osFamily>
           <packages>
-            <package>
-              <name>krb5-kdc</name>
-              <skipUpgrade>true</skipUpgrade>
-            </package>
-            <package>
-              <name>krb5-admin-server</name>
-              <skipUpgrade>true</skipUpgrade>
-            </package>
             <package>
               <name>krb5-user</name>
               <skipUpgrade>true</skipUpgrade>
@@ -113,18 +97,10 @@
         </osSpecific>
 
         <osSpecific>
-          <osFamily>suse11</osFamily>
+          <osFamily>suse11,suse12</osFamily>
           <packages>
             <package>
-              <name>krb5</name>
-              <skipUpgrade>true</skipUpgrade>
-            </package>
-            <package>
               <name>krb5-client</name>
-              <skipUpgrade>true</skipUpgrade>
-            </package>
-            <package>
-              <name>krb5-server</name>
               <skipUpgrade>true</skipUpgrade>
             </package>
           </packages>

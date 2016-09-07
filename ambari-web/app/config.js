@@ -26,6 +26,7 @@ App.skipBootstrap = false;
 App.alwaysGoToInstaller = false;
 App.testEnableSecurity = true; // By default enable security is tested; turning it false tests disable security
 App.testNameNodeHA = true;
+App.appURLRoot = '{proxy_root}/'.replace(/\{.+\}/g, ''); // determines application root path name, not related to hash route
 App.apiPrefix = '/api/v1';
 App.defaultStackVersion = 'HDP-2.3';
 App.defaultWindowsStackVersion = 'HDPWIN-2.1';
@@ -41,7 +42,9 @@ App.hostStatusCountersUpdateInterval = 10000;
 App.alertDefinitionsUpdateInterval = 10000;
 App.alertInstancesUpdateInterval = 10000;
 App.alertGroupsUpdateInterval = 10000;
-App.pageReloadTime=3600000;
+App.clusterEnvUpdateInterval = 10000;
+App.pageReloadTime = 3600000;
+App.nnCheckpointAgeAlertThreshold = 12; // in hours
 App.singleNodeInstall = false;
 App.singleNodeAlias = document.location.hostname;
 App.minDiskSpace = 2.0; // minimum disk space required for '/' for each host before install, unit GB
@@ -55,15 +58,17 @@ App.isStormMetricsSupported = true;
 App.healthStatusRed = '#ff0000';
 App.healthStatusGreen = '#5AB400';
 App.healthStatusOrange = '#FF8E00';
-
+App.inactivityRemainTime = 60; // in seconds
+App.enableLogger = true;
 App.stackVersionsAvailable = true;
+App.upgradeHistoryAvailable = false;
+App.enableDigitalClock = false;
 
 // experimental features are automatically enabled if running on brunch server
 App.enableExperimental = false;
 
 App.supports = {
   preUpgradeCheck: true,
-  stackUpgrade: true,
   displayOlderVersions: false,
   autoRollbackHA: false,
   alwaysEnableManagedMySQLForHive: false,
@@ -72,8 +77,17 @@ App.supports = {
   installGanglia: false,
   opsDuringRollingUpgrade: false,
   customizedWidgetLayout: false,
-  enhancedConfigs: true,
-  showPageLoadTime: false
+  showPageLoadTime: false,
+  skipComponentStartAfterInstall: false,
+  preInstallChecks: false,
+  hostComboSearchBox: true,
+  serviceAutoStart: false,
+  logSearch: true,
+  redhatSatellite: false,
+  enableIpa: false,
+  addingNewRepository: false,
+  kerberosStackAdvisor: true,
+  logCountVizualization: false
 };
 
 if (App.enableExperimental) {

@@ -39,6 +39,7 @@ import org.apache.ambari.server.orm.entities.ResourceEntity;
 import org.apache.ambari.server.orm.entities.ResourceTypeEntity;
 import org.apache.ambari.server.orm.entities.ServiceConfigEntity;
 import org.apache.ambari.server.orm.entities.StackEntity;
+import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.cluster.ClusterImpl;
 import org.junit.After;
@@ -86,13 +87,37 @@ public class ServiceConfigDAOTest {
          String userName, Long version, Long serviceConfigId,
          Long createTimestamp, List<ClusterConfigEntity> clusterConfigEntities)
     throws Exception {
+    ServiceConfigEntity serviceConfigEntity = prepareServiceConfig(serviceName,
+        userName, version, serviceConfigId, createTimestamp, clusterConfigEntities);
+    serviceConfigDAO.create(serviceConfigEntity);
+
+    return serviceConfigEntity;
+  }
+
+  private ServiceConfigEntity createServiceConfigWithGroup(String serviceName,
+                                                  String userName, Long version, Long serviceConfigId,
+                                                  Long createTimestamp, List<ClusterConfigEntity> clusterConfigEntities, Long groupId)
+      throws Exception {
+    ServiceConfigEntity serviceConfigEntity = prepareServiceConfig(serviceName,
+        userName, version, serviceConfigId, createTimestamp, clusterConfigEntities);
+    serviceConfigEntity.setGroupId(groupId);
+    serviceConfigDAO.create(serviceConfigEntity);
+
+    return serviceConfigEntity;
+  }
+
+
+  private ServiceConfigEntity prepareServiceConfig(String serviceName,
+                                                  String userName, Long version, Long serviceConfigId,
+                                                  Long createTimestamp, List<ClusterConfigEntity> clusterConfigEntities)
+      throws Exception {
 
     // create an admin resource to represent this cluster
-    ResourceTypeEntity resourceTypeEntity = resourceTypeDAO.findById(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
+    ResourceTypeEntity resourceTypeEntity = resourceTypeDAO.findById(ResourceType.CLUSTER.getId());
     if (resourceTypeEntity == null) {
       resourceTypeEntity = new ResourceTypeEntity();
-      resourceTypeEntity.setId(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
-      resourceTypeEntity.setName(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE_NAME);
+      resourceTypeEntity.setId(ResourceType.CLUSTER.getId());
+      resourceTypeEntity.setName(ResourceType.CLUSTER.name());
       resourceTypeEntity = resourceTypeDAO.merge(resourceTypeEntity);
     }
 
@@ -122,11 +147,9 @@ public class ServiceConfigDAOTest {
     serviceConfigEntity.setClusterConfigEntities(clusterConfigEntities);
     serviceConfigEntity.setClusterEntity(clusterEntity);
     serviceConfigEntity.setStack(clusterEntity.getDesiredStack());
-
-    serviceConfigDAO.create(serviceConfigEntity);
-
     return serviceConfigEntity;
   }
+
 
   @Test
   public void testCreateServiceConfigVersion() throws Exception {
@@ -236,6 +259,30 @@ public class ServiceConfigDAOTest {
       Assert.assertEquals("admin", sce.getUser());
     }
   }
+
+  @Test
+  public void testGetLastServiceConfigsForService() throws Exception {
+    String serviceName = "HDFS";
+    createServiceConfig(serviceName, "admin", 1L, 1L, 1111L, null);
+    createServiceConfig(serviceName, "admin", 2L, 2L, 1010L, null);
+    createServiceConfigWithGroup(serviceName, "admin", 3L, 3L, 2222L, null, 1L);
+    createServiceConfigWithGroup(serviceName, "admin", 5L, 5L, 3333L, null, 2L);
+    createServiceConfigWithGroup(serviceName, "admin", 4L, 4L, 3330L, null, 2L);
+
+    List<ServiceConfigEntity> serviceConfigEntities =
+        serviceConfigDAO.getLastServiceConfigsForService(clusterDAO.findByName("c1").getClusterId(), serviceName);
+
+    Assert.assertNotNull(serviceConfigEntities);
+    Assert.assertEquals(3, serviceConfigEntities.size());
+
+    for (ServiceConfigEntity sce: serviceConfigEntities) {
+     if (sce.getGroupId() != null && sce.getGroupId().equals(2L)) {
+       // Group ID with the highest version should be selected
+       Assert.assertEquals(sce.getVersion(), Long.valueOf(5L));
+     }
+    }
+  }
+
 
   @Test
   public void testGetLastServiceConfig() throws Exception {
@@ -621,11 +668,11 @@ public class ServiceConfigDAOTest {
     
     ConfigGroupEntity configGroupEntity = new ConfigGroupEntity();
 
-    ResourceTypeEntity resourceTypeEntity = resourceTypeDAO.findById(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
+    ResourceTypeEntity resourceTypeEntity = resourceTypeDAO.findById(ResourceType.CLUSTER.getId());
     if (resourceTypeEntity == null) {
       resourceTypeEntity = new ResourceTypeEntity();
-      resourceTypeEntity.setId(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
-      resourceTypeEntity.setName(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE_NAME);
+      resourceTypeEntity.setId(ResourceType.CLUSTER.getId());
+      resourceTypeEntity.setName(ResourceType.CLUSTER.name());
       resourceTypeEntity = resourceTypeDAO.merge(resourceTypeEntity);
     }
 

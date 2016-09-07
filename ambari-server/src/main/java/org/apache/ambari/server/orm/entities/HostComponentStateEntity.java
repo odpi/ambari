@@ -18,7 +18,6 @@
 
 package org.apache.ambari.server.orm.entities;
 
-import javax.persistence.CascadeType;
 import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.EnumType;
@@ -86,8 +85,11 @@ public class HostComponentStateEntity {
   @Column(name = "component_name", nullable = false, insertable = false, updatable = false)
   private String componentName;
 
+  /**
+   * Version reported by host component during last status update.
+   */
   @Column(name = "version", nullable = false, insertable = true, updatable = true)
-  private String version = "UNKNOWN";
+  private String version = State.UNKNOWN.toString();
 
   @Enumerated(value = EnumType.STRING)
   @Column(name = "current_state", nullable = false, insertable = true, updatable = true)
@@ -108,7 +110,7 @@ public class HostComponentStateEntity {
   @JoinColumn(name = "current_stack_id", unique = false, nullable = false, insertable = true, updatable = true)
   private StackEntity currentStack;
 
-  @ManyToOne(cascade = CascadeType.PERSIST)
+  @ManyToOne
   @JoinColumns({
       @JoinColumn(name = "cluster_id", referencedColumnName = "cluster_id", nullable = false),
       @JoinColumn(name = "service_name", referencedColumnName = "service_name", nullable = false),

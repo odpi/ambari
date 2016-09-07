@@ -35,13 +35,9 @@ App.ChartServiceFlumeMetricGraph = App.ChartLinearTimeView.extend({
   hostName: null,
   metricItems: null,
 
-  id: function(){
-    return "service-metrics-flume-metric-graph-" + this.get('metricType') + '-' + this.get('metricName');
-  }.property('metricType', 'metricName'),
+  id: Em.computed.format('service-metrics-flume-metric-graph-{0}-{1}', 'metricType', 'metricName'),
 
-  title: function(){
-    return this.get('metricName');
-  }.property('metricName'),
+  title: Em.computed.alias('metricName'),
 
   ajaxIndex: 'host.host_component.flume.metrics.timeseries',
 
@@ -59,20 +55,25 @@ App.ChartServiceFlumeMetricGraph = App.ChartLinearTimeView.extend({
     return data;
   },
 
-  transformToSeries: function (jsonData) {
-    var seriesArray = [];
-    var self = this;
-    if (jsonData && jsonData.metrics && jsonData.metrics.flume && jsonData.metrics.flume.flume &&
-        jsonData.metrics.flume.flume[this.get('metricType')]) {
-      var metricTypeData = jsonData.metrics.flume.flume[this.get('metricType')];
-      for ( var componentName in metricTypeData) {
-        var seriesName = componentName;
-        var seriesData = metricTypeData[componentName][this.get('metricName')];
+  seriesTemplate: {
+    path: 'metrics.flume.flume'
+  },
+
+  getData: function (jsonData) {
+
+    var dataArray = [],
+      data = Em.get(jsonData, this.get('seriesTemplate.path') + '.' + this.get('metricType'));
+    if (data) {
+      for (var componentName in data) {
+        var seriesData = data[componentName][this.get('metricName')];
         if (seriesData) {
-          seriesArray.push(self.transformData(seriesData, seriesName));
+          dataArray.push({
+            name: componentName,
+            data: seriesData
+          });
         }
       }
     }
-    return seriesArray;
+    return dataArray;
   }
 });

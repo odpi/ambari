@@ -22,6 +22,11 @@ package org.apache.ambari.server.state.alert;
  */
 public enum SourceType {
   /**
+   * Source is from ams metric data.
+   */
+  AMS,
+
+  /**
    * Source is from metric data.
    */
   METRIC,
@@ -50,6 +55,11 @@ public enum SourceType {
    * Source is an http(s)-style request.
    */
   WEB,
+
+  /**
+   * Source is a component state recovery results
+   */
+  RECOVERY,
 
   /**
    * A server-side alert.

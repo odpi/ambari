@@ -90,6 +90,18 @@
               {{/if}}
             </div>
           </div>
+           <div class="row-fluid">
+                <label rel="tooltip" {{translateAttr title="installer.step2.sshPort.toolTip"}} class="ssh-port pull-left span4">
+                    {{t installer.step2.sshPort}}
+                </label>
+
+                <div {{bindAttr class="sshPortError:error :control-group"}}>
+                    {{view view.textFieldView valueBinding="content.installOptions.sshPort" isEnabledBinding="content.installOptions.useSsh" }}
+                    {{#if sshPortError}}
+                        <span class="help-inline">{{sshPortError}}</span>
+                    {{/if}}
+                </div>
+           </div>
           {{#if App.supports.customizeAgentUserAccount}}
             <div class="row-fluid">
               <label rel="tooltip" {{translateAttr title="installer.step2.agentUser.toolTip"}} class="ssh-user pull-left span4">
@@ -133,10 +145,19 @@
 
   <div class="btn-area">
     {{#unless view.parentView.controller.hideBackButton}}
-      <a class="btn pull-left installer-back-btn" {{action back}}>&larr; {{t common.back}}</a>
+      <button class="btn pull-left installer-back-btn" {{action back}} {{bindAttr disabled="App.router.btnClickInProgress"}}>
+        &larr; {{t common.back}}
+        {{#if App.router.backBtnClickInProgress}}
+          {{view App.SpinnerView tagName="span" classNames="service-button-spinner"}}
+        {{/if}}
+      </button>
     {{/unless}}
-    <a class="btn btn-success pull-right" {{bindAttr disabled="isSubmitDisabled"}} {{action evaluateStep target="controller"}}>
-      {{t installer.step2.registerAndConfirm}} &rarr;</a>
+    <button class="btn btn-success pull-right" {{bindAttr disabled="isSubmitDisabled"}} {{action evaluateStep target="controller"}}>
+      {{#if App.router.nextBtnClickInProgress}}
+        {{view App.SpinnerView tagName="span" classNames="service-button-spinner"}}
+      {{/if}}
+      {{t installer.step2.registerAndConfirm}} &rarr;
+    </button>
   </div>
 
 </div>

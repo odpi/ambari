@@ -18,9 +18,32 @@
 
 package org.apache.ambari.server.upgrade;
 
-import com.google.common.reflect.TypeToken;
-import com.google.inject.Inject;
-import com.google.inject.Injector;
+import java.lang.reflect.Type;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+
+import javax.persistence.EntityManager;
+import javax.persistence.TypedQuery;
+import javax.persistence.criteria.CriteriaBuilder;
+import javax.persistence.criteria.CriteriaQuery;
+import javax.persistence.criteria.Expression;
+import javax.persistence.criteria.Predicate;
+import javax.persistence.criteria.Root;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.configuration.Configuration.DatabaseType;
@@ -63,13 +86,13 @@ import org.apache.ambari.server.orm.entities.PrivilegeEntity;
 import org.apache.ambari.server.orm.entities.ResourceEntity;
 import org.apache.ambari.server.orm.entities.ResourceTypeEntity;
 import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntity;
-import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntityPK;
 import org.apache.ambari.server.orm.entities.ServiceDesiredStateEntity;
 import org.apache.ambari.server.orm.entities.ServiceDesiredStateEntityPK;
 import org.apache.ambari.server.orm.entities.StackEntity;
 import org.apache.ambari.server.orm.entities.UserEntity;
 import org.apache.ambari.server.orm.entities.ViewEntity;
 import org.apache.ambari.server.orm.entities.ViewInstanceEntity;
+import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Config;
@@ -82,30 +105,9 @@ import org.apache.ambari.server.view.ViewRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.persistence.EntityManager;
-import javax.persistence.TypedQuery;
-import javax.persistence.criteria.CriteriaBuilder;
-import javax.persistence.criteria.CriteriaQuery;
-import javax.persistence.criteria.Expression;
-import javax.persistence.criteria.Predicate;
-import javax.persistence.criteria.Root;
-import java.lang.reflect.Type;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
+import com.google.common.reflect.TypeToken;
+import com.google.inject.Inject;
+import com.google.inject.Injector;
 
 /**
  * Upgrade catalog for version 1.7.0.
@@ -714,6 +716,7 @@ public class UpgradeCatalog170 extends AbstractUpgradeCatalog {
       for (ClusterConfigMappingEntity configMapping : cluster.getConfigMappingEntities()) {
         if (configMapping.getType().equals(Configuration.MAPREDUCE2_LOG4J_CONFIG_TAG)) {
           configMapping.setSelected(0);
+          configMapping = clusterDAO.mergeConfigMapping(configMapping);
         }
       }
       clusterDAO.merge(cluster);
@@ -765,11 +768,8 @@ public class UpgradeCatalog170 extends AbstractUpgradeCatalog {
 
     List<ClusterEntity> clusterEntities = clusterDAO.findAll();
     for (final ClusterEntity clusterEntity : clusterEntities) {
-      ServiceComponentDesiredStateEntityPK pkHCATInHcatalog = new ServiceComponentDesiredStateEntityPK();
-      pkHCATInHcatalog.setComponentName(componentName);
-      pkHCATInHcatalog.setClusterId(clusterEntity.getClusterId());
-      pkHCATInHcatalog.setServiceName(serviceNameToBeDeleted);
-      ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntityToDelete = serviceComponentDesiredStateDAO.findByPK(pkHCATInHcatalog);
+      ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntityToDelete = serviceComponentDesiredStateDAO.findByName(
+          clusterEntity.getClusterId(), serviceNameToBeDeleted, componentName);
 
       if (serviceComponentDesiredStateEntityToDelete == null) {
         continue;
@@ -799,6 +799,7 @@ public class UpgradeCatalog170 extends AbstractUpgradeCatalog {
       serviceComponentDesiredStateEntity.setDesiredStack(serviceComponentDesiredStateEntityToDelete.getDesiredStack());
       serviceComponentDesiredStateEntity.setDesiredState(serviceComponentDesiredStateEntityToDelete.getDesiredState());
       serviceComponentDesiredStateEntity.setClusterServiceEntity(clusterServiceEntity);
+      serviceComponentDesiredStateDAO.create(serviceComponentDesiredStateEntity);
 
       Iterator<HostComponentDesiredStateEntity> hostComponentDesiredStateIterator = serviceComponentDesiredStateEntityToDelete.getHostComponentDesiredStateEntities().iterator();
       Iterator<HostComponentStateEntity> hostComponentStateIterator = serviceComponentDesiredStateEntityToDelete.getHostComponentStateEntities().iterator();
@@ -1321,7 +1322,7 @@ public class UpgradeCatalog170 extends AbstractUpgradeCatalog {
       userDAO.merge(user);
     }
 
-    final ResourceTypeEntity clusterResourceType = resourceTypeDAO.findById(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
+    final ResourceTypeEntity clusterResourceType = resourceTypeDAO.findById(ResourceType.CLUSTER.getId());
     for (ClusterEntity cluster: clusterDAO.findAll()) {
       final ResourceEntity resourceEntity = new ResourceEntity();
       resourceEntity.setResourceType(clusterResourceType);

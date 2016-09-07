@@ -20,28 +20,22 @@ package org.apache.ambari.server.actionmanager;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.agent.ActionQueue;
 import org.apache.ambari.server.agent.CommandReport;
-import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.ExecuteActionRequest;
-import org.apache.ambari.server.controller.HostsMap;
-import org.apache.ambari.server.events.publishers.AmbariEventPublisher;
-import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.topology.TopologyManager;
+import org.apache.ambari.server.utils.CommandUtils;
 import org.apache.ambari.server.utils.StageUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import com.google.inject.name.Named;
-import com.google.inject.persist.UnitOfWork;
 
 
 /**
@@ -52,26 +46,26 @@ public class ActionManager {
   private static Logger LOG = LoggerFactory.getLogger(ActionManager.class);
   private final ActionScheduler scheduler;
   private final ActionDBAccessor db;
-  private final ActionQueue actionQueue;
   private final AtomicLong requestCounter;
   private final RequestFactory requestFactory;
   private static TopologyManager topologyManager;
 
 
+  /**
+   * Guice-injected Constructor.
+   *
+   * @param db
+   * @param requestFactory
+   * @param scheduler
+   */
   @Inject
-  public ActionManager(@Named("schedulerSleeptime") long schedulerSleepTime,
-                       @Named("actionTimeout") long actionTimeout,
-                       ActionQueue aq, Clusters fsm, ActionDBAccessor db, HostsMap hostsMap,
-                       UnitOfWork unitOfWork,
-                       RequestFactory requestFactory, Configuration configuration,
-                       AmbariEventPublisher ambariEventPublisher) {
-    actionQueue = aq;
+  public ActionManager(ActionDBAccessor db, RequestFactory requestFactory,
+      ActionScheduler scheduler) {
     this.db = db;
-    scheduler = new ActionScheduler(schedulerSleepTime, actionTimeout, db,
-        actionQueue, fsm, 2, hostsMap, unitOfWork, ambariEventPublisher, configuration);
-    requestCounter = new AtomicLong(
-        db.getLastPersistedRequestIdWhenInitialized());
     this.requestFactory = requestFactory;
+    this.scheduler = scheduler;
+
+    requestCounter = new AtomicLong(db.getLastPersistedRequestIdWhenInitialized());
   }
 
   public void start() {
@@ -137,16 +131,21 @@ public class ActionManager {
    * twice
    */
   public void processTaskResponse(String hostname, List<CommandReport> reports,
-                                  Collection<HostRoleCommand> commands) {
+                                  Map<Long, HostRoleCommand> commands) {
     if (reports == null) {
       return;
     }
 
+    Collections.sort(reports, new Comparator<CommandReport>() {
+      @Override
+      public int compare(CommandReport o1, CommandReport o2) {
+        return (int) (o1.getTaskId()-o2.getTaskId());
+      }
+    });
     List<CommandReport> reportsToProcess = new ArrayList<CommandReport>();
-    Iterator<HostRoleCommand> commandIterator = commands.iterator();
     //persist the action response into the db.
     for (CommandReport report : reports) {
-      HostRoleCommand command = commandIterator.next();
+      HostRoleCommand command = commands.get(report.getTaskId());
       if (LOG.isDebugEnabled()) {
         LOG.debug("Processing command report : " + report.toString());
       }
@@ -202,16 +201,12 @@ public class ActionManager {
     return db.getAllTasksByRequestIds(requestIds);
   }
 
-  public List<HostRoleCommand> getTasksByRequestAndTaskIds(Collection<Long> requestIds, Collection<Long> taskIds) {
-    // wrapping in new list as returned list may be Collections.emptyList() which doesn't support add()
-    List<HostRoleCommand> tasks = new ArrayList<HostRoleCommand>(db.getTasksByRequestAndTaskIds(requestIds, taskIds));
-    tasks.addAll(topologyManager.getTasks(requestIds));
-
-    return tasks;
-  }
-
   public Collection<HostRoleCommand> getTasks(Collection<Long> taskIds) {
     return db.getTasks(taskIds);
+  }
+
+  public Map<Long, HostRoleCommand> getTasksMap(Collection<Long> taskIds) {
+    return CommandUtils.convertToTaskIdCommandMap(getTasks(taskIds));
   }
 
   /**
@@ -232,7 +227,9 @@ public class ActionManager {
     for (Request logicalRequest : topologyManager.getRequests(Collections.<Long>emptySet())) {
       //todo: Request.getStatus() returns HostRoleStatus and we are comparing to RequestStatus
       //todo: for now just compare the names as RequestStatus names are a subset of HostRoleStatus names
-      if (status == null || logicalRequest.getStatus().name().equals(status.name())) {
+      HostRoleStatus logicalRequestStatus = logicalRequest.getStatus();
+      if (status == null || (logicalRequestStatus != null
+          && logicalRequest.getStatus().name().equals(status.name()))) {
         requests.add(logicalRequest.getRequestId());
       }
     }

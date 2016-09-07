@@ -15,8 +15,22 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 -->
-<upgrade xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <target>2.2.*</target>
+<upgrade xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="upgrade-pack.xsd">
+  <target>2.2.*.*</target>
+  <target-stack>HDP-2.2.0</target-stack>
+  <type>ROLLING</type>
+  <prerequisite-checks>
+    <!-- List of additional pre-req checks to run in addition to the required pre-reqs -->
+    <check>org.apache.ambari.server.checks.HiveMultipleMetastoreCheck</check>
+    <check>org.apache.ambari.server.checks.MapReduce2JobHistoryStatePreservingCheck</check>
+    <check>org.apache.ambari.server.checks.SecondaryNamenodeDeletedCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesMapReduceDistributedCacheCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesNamenodeHighAvailabilityCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesTezDistributedCacheCheck</check>
+    <check>org.apache.ambari.server.checks.ServicesYarnWorkPreservingCheck</check>
+    <check>org.apache.ambari.server.checks.YarnRMHighAvailabilityCheck</check>
+    <check>org.apache.ambari.server.checks.YarnTimelineServerStatePreservingCheck</check>
+  </prerequisite-checks>
   
   <order>
     <group xsi:type="cluster" name="PRE_CLUSTER" title="Pre {{direction.text.proper}}">
@@ -32,7 +46,8 @@
       </execute-stage>
       <execute-stage service="HDFS" component="NAMENODE" title="Finalize HDFS">
         <task xsi:type="execute">
-          <command>ls</command>
+          <script>foo</script>
+          <function>list</function>
         </task>
       </execute-stage>
       <execute-stage title="Confirm 2">
@@ -87,15 +102,19 @@
         <component>HIVE_SERVER</component>
         <component>WEBHCAT_SERVER</component>
       </service>
-    </group>    
+    </group>
+
+    <group name="OOZIE" title="Oozie">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="OOZIE">
+        <component>OOZIE_SERVER</component>
+        <component>OOZIE_CLIENT</component>
+      </service>
+    </group>
     
     <group xsi:type="cluster" name="POST_CLUSTER" title="Finalize {{direction.text.proper}}">
-      <execute-stage title="Check Unhealthy Hosts" id="unhealthy-hosts">
-        <task xsi:type="manual">
-          <message>The following hosts were unhealthy and should be resolved before finalizing can be completed:
-              {{host-detail-list}}</message>
-        </task>
-      </execute-stage>
       <execute-stage title="Confirm Finalize">
         <task xsi:type="manual">
           <message>Please confirm you are ready to finalize</message>
@@ -103,7 +122,8 @@
       </execute-stage>
       <execute-stage service="HDFS" component="NAMENODE" title="Execute HDFS Finalize">
         <task xsi:type="execute">
-          <command>ls</command>
+          <script>foo</script>
+          <function>list</function>
         </task>
       </execute-stage>
       <execute-stage title="Save Cluster State" service="" component="">
@@ -125,10 +145,10 @@
           </task>
         </pre-upgrade>
         <upgrade>
-          <task xsi:type="restart" />
+          <task xsi:type="restart-task" />
         </upgrade>
         <post-upgrade>
-          <task xsi:type="configure" />
+          <task xsi:type="configure" id="hdp_2_1_1_zookeeper_new_config_type" />
         </post-upgrade>
       </component>
     </service>
@@ -137,29 +157,28 @@
       <component name="NAMENODE">
         <pre-upgrade>
           <task xsi:type="execute" hosts="master">
-            <command>su - {hdfs-user} -c 'dosomething'</command>
+            <script>foo</script>
+            <function>list</function>
           </task>
-          <task xsi:type="configure">
-            <type>hdfs-site</type>
-            <set key="myproperty" value="mynewvalue"/>
-          </task>
+          <task xsi:type="configure" id="hdp_2_1_1_nn_pre_upgrade" />
           <task xsi:type="manual">
             <message>{{direction.verb.proper}} your database</message>
           </task>
         </pre-upgrade>
         <upgrade>
-          <task xsi:type="restart" />
+          <task xsi:type="restart-task" />
         </upgrade>
         <post-upgrade>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>list</function>
           </task>
         </post-upgrade>
       </component>
       <component name="DATANODE">
         <pre-downgrade />
         <upgrade>
-          <task xsi:type="restart" />
+          <task xsi:type="restart-task" />
         </upgrade>
         <post-downgrade>
           <task xsi:type="manual">
@@ -173,25 +192,21 @@
       <component name="RESOURCEMANAGER">
         <pre-upgrade>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>list</function>
           </task>
         </pre-upgrade>
+        <upgrade />
       </component>
       <component name="NODEMANAGER">
         <pre-upgrade>
           <task xsi:type="execute">
-            <command>ls</command>
+            <script>foo</script>
+            <function>list</function>
           </task>
-          <task xsi:type="configure">
-            <type>core-site</type>
-            <transfer operation="copy" from-key="copy-key" to-key="copy-key-to" />
-            <transfer operation="copy" from-type="my-site" from-key="my-copy-key" to-key="my-copy-key-to" />
-            <transfer operation="move" from-key="move-key" to-key="move-key-to" />
-            <transfer operation="delete" delete-key="delete-key" preserve-edits="true">
-            <keep-key>important-key</keep-key>
-            </transfer>
-          </task>
+          <task xsi:type="configure" id="hdp_2_1_1_nm_pre_upgrade"/>
         </pre-upgrade>
+        <upgrade />
       </component>
     </service>
     
@@ -202,39 +217,43 @@
             <summary>HiveServer Port Availability</summary>
             <message>The HiveServer port will now change to 10010 if hive is using a binary transfer mode or 10011 if hive is using an http transport mode. You can use "netstat -anp | grep 1001[01]" to determine if the port is available on each of following HiveServer host(s): {{hosts.all}}. If the port is not available, the process using it must be terminated.</message>
           </task>
+          <task xsi:type="configure" id="hdp_2_1_1_set_transport_mode"/>
+          <task xsi:type="configure" id="hdp_2_1_1_hive_server_foo"/>
+          <task xsi:type="configure" id="hdp_2_1_1_hive_server_conditions"/>
+          <task xsi:type="configure" id="hdp_2_1_1_hive_server_conditions_skip"/>
+        </pre-upgrade>
+        <upgrade />
+       </component>
+     </service>
 
-          <task xsi:type="configure">
-            <condition type="hive-site" key="hive.server2.transport.mode" value="binary">
-              <type>hive-site</type>
-              <key>hive.server2.thrift.port</key>
-              <value>10010</value>
-            </condition>
-            <condition type="hive-site" key="hive.server2.transport.mode" value="http">
-              <type>hive-site</type>
-              <key>hive.server2.http.port</key>
-              <value>10011</value>
-            </condition>
+    <service name="OOZIE">
+      <component name="OOZIE_SERVER">
+        <pre-upgrade>
+          <!-- This is important, do not remove it since UpgradeHelperTest.java :
+          testUpgradeWithMultipleTasksWithMultipleHostTypes() asserts
+          that these tasks each run on their own stage. -->
+          <task xsi:type="execute" hosts="all" sequential="true">
+            <summary>Shut down all Oozie servers</summary>
+            <script>scripts/oozie_server.py</script>
+            <function>stop</function>
           </task>
-          
-          <task xsi:type="configure">
-            <type>hive-site</type>
-            <set key="fooKey" value="fooValue"/>
-            <set key="fooKey2" value="fooValue2"/>
-            <set key="fooKey3" value="fooValue3"/>
-            <transfer operation="copy" from-key="copy-key" to-key="copy-key-to" />
-            <transfer operation="move" from-key="move-key" to-key="move-key-to" />
-            <transfer operation="delete" delete-key="delete-key" />
-            <transfer operation="delete" delete-key="delete-http" if-key="hive.server2.transport.mode" if-type="hive-site" if-value="http" />
-            <transfer operation="delete" delete-key="delete-https-fail" if-key="hive.server2.transport.mode" if-type="hive-site" if-value="https" />
-            <transfer operation="delete" delete-key="delete-prop-fail" if-key="non.existent" if-type="hive-site" if-value="https" />
-            <transfer operation="delete" delete-key="delete-type-fail" if-key="non.existent" if-type="non.existent" if-value="" />
-            <transfer operation="delete" delete-key="delete-null-if-value" if-key="non.existent" if-type="non.existent" />
-            <transfer operation="delete" delete-key="delete-blank-if-key" if-key="" if-type="non.existent" />
-            <transfer operation="delete" delete-key="delete-blank-if-type" if-key="non.existent" if-type="" />
-            <transfer operation="delete" delete-key="delete-thrift" if-key="hive.server2.thrift.port" if-type="hive-site" if-value="10001" />
+
+          <task xsi:type="execute" hosts="any" sequential="true">
+            <summary>Upgrading the Oozie database and creating a new sharelib</summary>
+            <script>scripts/oozie_server_upgrade.py</script>
+            <function>upgrade_oozie_database_and_sharelib</function>
           </task>
         </pre-upgrade>
-       </component>
-     </service>    
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+
+      <component name="OOZIE_CLIENT">
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+    </service>
   </processing>
 </upgrade>

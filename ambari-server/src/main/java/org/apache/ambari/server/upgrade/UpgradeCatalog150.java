@@ -64,9 +64,7 @@ import org.apache.ambari.server.orm.entities.HostEntity;
 import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
 import org.apache.ambari.server.orm.entities.KeyValueEntity;
 import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntity;
-import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntityPK;
 import org.apache.ambari.server.orm.entities.StackEntity;
-import org.apache.ambari.server.orm.entities.UserEntity;
 import org.apache.ambari.server.state.HostComponentAdminState;
 import org.apache.ambari.server.state.PropertyInfo;
 import org.apache.ambari.server.state.ServiceInfo;
@@ -607,24 +605,16 @@ public class UpgradeCatalog150 extends AbstractUpgradeCatalog {
 
     List<ClusterEntity> clusterEntities = clusterDAO.findAll();
     for (final ClusterEntity clusterEntity : clusterEntities) {
-      ServiceComponentDesiredStateEntityPK pkHS = new ServiceComponentDesiredStateEntityPK();
-      pkHS.setComponentName("HISTORYSERVER");
-      pkHS.setClusterId(clusterEntity.getClusterId());
-      pkHS.setServiceName("MAPREDUCE");
-
-      ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntityHS = serviceComponentDesiredStateDAO.findByPK(pkHS);
+      ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntityHS = serviceComponentDesiredStateDAO.findByName(
+          clusterEntity.getClusterId(), "MAPREDUCE", "HISTORYSERVER");
 
       // already have historyserver
       if(serviceComponentDesiredStateEntityHS != null) {
         continue;
       }
 
-      ServiceComponentDesiredStateEntityPK pkJT = new ServiceComponentDesiredStateEntityPK();
-      pkJT.setComponentName("JOBTRACKER");
-      pkJT.setClusterId(clusterEntity.getClusterId());
-      pkJT.setServiceName("MAPREDUCE");
-
-      ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntityJT = serviceComponentDesiredStateDAO.findByPK(pkJT);
+      ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntityJT = serviceComponentDesiredStateDAO.findByName(
+          clusterEntity.getClusterId(), "MAPREDUCE", "JOBTRACKER");
 
       // no jobtracker present probably mapreduce is not installed
       if(serviceComponentDesiredStateEntityJT == null) {
@@ -645,13 +635,16 @@ public class UpgradeCatalog150 extends AbstractUpgradeCatalog {
 
       ClusterServiceEntity clusterServiceEntity = clusterServiceDAO.findByPK(pk);
 
-
       final ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntity = new ServiceComponentDesiredStateEntity();
+      serviceComponentDesiredStateEntity.setClusterId(clusterEntity.getClusterId());
       serviceComponentDesiredStateEntity.setComponentName("HISTORYSERVER");
       serviceComponentDesiredStateEntity.setDesiredStack(clusterEntity.getDesiredStack());
       serviceComponentDesiredStateEntity.setDesiredState(jtServiceComponentDesiredState);
       serviceComponentDesiredStateEntity.setClusterServiceEntity(clusterServiceEntity);
       serviceComponentDesiredStateEntity.setHostComponentDesiredStateEntities(new ArrayList<HostComponentDesiredStateEntity>());
+      serviceComponentDesiredStateEntity.setHostComponentStateEntities(new ArrayList<HostComponentStateEntity>());
+
+      serviceComponentDesiredStateDAO.create(serviceComponentDesiredStateEntity);
 
       final HostEntity host = hostDao.findByName(jtHostname);
       if (host == null) {
@@ -662,36 +655,42 @@ public class UpgradeCatalog150 extends AbstractUpgradeCatalog {
       stateEntity.setHostEntity(host);
       stateEntity.setCurrentState(jtCurrState);
       stateEntity.setCurrentStack(clusterEntity.getDesiredStack());
+      stateEntity.setClusterId(clusterEntity.getClusterId());
 
       final HostComponentDesiredStateEntity desiredStateEntity = new HostComponentDesiredStateEntity();
       desiredStateEntity.setDesiredState(jtHostComponentDesiredState);
       desiredStateEntity.setDesiredStack(clusterEntity.getDesiredStack());
+      desiredStateEntity.setClusterId(clusterEntity.getClusterId());
 
       persistComponentEntities(stateEntity, desiredStateEntity, serviceComponentDesiredStateEntity);
     }
   }
 
-  private void persistComponentEntities(HostComponentStateEntity stateEntity, HostComponentDesiredStateEntity desiredStateEntity, ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntity) {
+  private void persistComponentEntities(HostComponentStateEntity stateEntity,
+                                        HostComponentDesiredStateEntity desiredStateEntity,
+                                        ServiceComponentDesiredStateEntity serviceComponentDesiredStateEntity) {
     ServiceComponentDesiredStateDAO serviceComponentDesiredStateDAO = injector.getInstance(ServiceComponentDesiredStateDAO.class);
     HostComponentStateDAO hostComponentStateDAO = injector.getInstance(HostComponentStateDAO.class);
     HostComponentDesiredStateDAO hostComponentDesiredStateDAO = injector.getInstance(HostComponentDesiredStateDAO.class);
     HostDAO hostDAO = injector.getInstance(HostDAO.class);
 
     HostEntity hostEntity = stateEntity.getHostEntity();
-    hostEntity.addHostComponentStateEntity(stateEntity);
-    hostEntity.addHostComponentDesiredStateEntity(desiredStateEntity);
 
-    serviceComponentDesiredStateEntity.getHostComponentDesiredStateEntities().add(desiredStateEntity);
-
-    desiredStateEntity.setServiceComponentDesiredStateEntity(serviceComponentDesiredStateEntity);
     desiredStateEntity.setHostEntity(hostEntity);
-    stateEntity.setServiceComponentDesiredStateEntity(serviceComponentDesiredStateEntity);
-    stateEntity.setHostEntity(hostEntity);
-
-    hostComponentStateDAO.create(stateEntity);
+    desiredStateEntity.setServiceComponentDesiredStateEntity(serviceComponentDesiredStateEntity);
+    serviceComponentDesiredStateEntity.getHostComponentDesiredStateEntities().add(desiredStateEntity);
     hostComponentDesiredStateDAO.create(desiredStateEntity);
 
-    serviceComponentDesiredStateDAO.create(serviceComponentDesiredStateEntity);
+    stateEntity.setHostEntity(hostEntity);
+    stateEntity.setServiceComponentDesiredStateEntity(serviceComponentDesiredStateEntity);
+    serviceComponentDesiredStateEntity.getHostComponentStateEntities().add(stateEntity);
+    hostComponentStateDAO.create(stateEntity);
+
+    serviceComponentDesiredStateDAO.merge(serviceComponentDesiredStateEntity);
+
+    hostEntity.addHostComponentDesiredStateEntity(desiredStateEntity);
+    hostEntity.addHostComponentStateEntity(stateEntity);
+
     hostDAO.merge(hostEntity);
   }
 
@@ -768,6 +767,7 @@ public class UpgradeCatalog150 extends AbstractUpgradeCatalog {
                   clusterConfigMappingEntity.setUser(defaultUser);
                   clusterConfigMappingEntity.setTag(configEntity.getTag());
                   entities.add(clusterConfigMappingEntity);
+                  clusterDAO.persistConfigMapping(clusterConfigMappingEntity);
                   clusterDAO.merge(clusterEntity);
                 }
               }

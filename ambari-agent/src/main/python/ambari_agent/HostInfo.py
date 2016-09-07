@@ -126,13 +126,14 @@ def get_ntp_service():
 class HostInfoLinux(HostInfo):
   # List of project names to be used to find alternatives folders etc.
   DEFAULT_PROJECT_NAMES = [
-    "hadoop*", "hadoop", "hbase", "hcatalog", "hive", "ganglia",
+    "hadoop*", "hadoop", "hbase", "hcatalog", "hive",
     "oozie", "sqoop", "hue", "zookeeper", "mapred", "hdfs", "flume",
     "storm", "hive-hcatalog", "tez", "falcon", "ambari_qa", "hadoop_deploy",
     "rrdcached", "hcat", "ambari-qa", "sqoop-ambari-qa", "sqoop-ambari_qa",
     "webhcat", "hadoop-hdfs", "hadoop-yarn", "hadoop-mapreduce",
     "knox", "yarn", "hive-webhcat", "kafka", "slider", "storm-slider-client",
-    "ganglia-web", "mahout", "spark", "pig", "phoenix", "ranger", "accumulo"
+    "mahout", "spark", "pig", "phoenix", "ranger", "accumulo",
+    "ambari-metrics-collector", "ambari-metrics-monitor", "atlas", "zeppelin"
   ]
 
 
@@ -145,19 +146,25 @@ class HostInfoLinux(HostInfo):
     "hive", "ambari-qa", "oozie", "hbase", "hcat", "mapred",
     "hdfs", "zookeeper", "flume", "sqoop", "sqoop2",
     "hue", "yarn", "tez", "storm", "falcon", "kafka", "knox", "ams",
-    "hadoop", "spark", "accumulo", "atlas", "mahout", "ranger", "kms"
+    "hadoop", "spark", "accumulo", "atlas", "mahout", "ranger", "kms", "zeppelin"
   ]
   
   # Default set of directories that are checked for existence of files and folders
-  DEFAULT_DIRS = [
+  DEFAULT_BASEDIRS = [
     "/etc", "/var/run", "/var/log", "/usr/lib", "/var/lib", "/var/tmp", "/tmp", "/var",
     "/hadoop", "/usr/hdp"
+  ]
+  
+  # Exact directories names which are checked for existance
+  EXACT_DIRECTORIES = [
+    "/kafka-logs"
   ]
 
   DEFAULT_SERVICE_NAME = "ntpd"
   SERVICE_STATUS_CMD = "%s %s status" % (SERVICE_CMD, DEFAULT_SERVICE_NAME)
 
-  THP_FILE = "/sys/kernel/mm/redhat_transparent_hugepage/enabled"
+  THP_FILE_REDHAT = "/sys/kernel/mm/redhat_transparent_hugepage/enabled"
+  THP_FILE_UBUNTU = "/sys/kernel/mm/transparent_hugepage/enabled"
 
   def __init__(self, config=None):
     super(HostInfoLinux, self).__init__(config)
@@ -173,7 +180,7 @@ class HostInfoLinux(HostInfo):
         result['status'] = "Available"
         results.append(result)
 
-  def checkFolders(self, basePaths, projectNames, existingUsers, dirs):
+  def checkFolders(self, basePaths, projectNames, exactDirectories, existingUsers, dirs):
     foldersToIgnore = []
     for user in existingUsers:
       foldersToIgnore.append(user['homeDir'])
@@ -186,8 +193,15 @@ class HostInfoLinux(HostInfo):
             obj['type'] = self.dirType(path)
             obj['name'] = path
             dirs.append(obj)
+            
+      for path in exactDirectories:
+        if os.path.exists(path):
+          obj = {}
+          obj['type'] = self.dirType(path)
+          obj['name'] = path
+          dirs.append(obj)     
     except:
-      pass
+      logger.exception("Checking folders failed")
 
   def javaProcs(self, list):
     import pwd
@@ -195,7 +209,13 @@ class HostInfoLinux(HostInfo):
     try:
       pids = [pid for pid in os.listdir('/proc') if pid.isdigit()]
       for pid in pids:
-        cmd = open(os.path.join('/proc', pid, 'cmdline'), 'rb').read()
+        try:
+          fp = open(os.path.join('/proc', pid, 'cmdline'), 'rb')
+        except IOError:
+          continue # avoid race condition if this process already died, since the moment we got pids list.
+
+        cmd = fp.read()
+        fp.close()
         cmd = cmd.replace('\0', ' ')
         if not 'AmbariServer' in cmd:
           if 'java' in cmd:
@@ -205,21 +225,26 @@ class HostInfoLinux(HostInfo):
             for filter in self.PROC_FILTER:
               if filter in cmd:
                 dict['hadoop'] = True
-            dict['command'] = cmd.strip()
+            dict['command'] = unicode(cmd.strip(), errors='ignore')
             for line in open(os.path.join('/proc', pid, 'status')):
               if line.startswith('Uid:'):
                 uid = int(line.split()[1])
                 dict['user'] = pwd.getpwuid(uid).pw_name
             list.append(dict)
     except:
-      pass
+      logger.exception("Checking java processes failed")
     pass
 
   def getTransparentHugePage(self):
-    # This file exist only on redhat 6
     thp_regex = "\[(.+)\]"
-    if os.path.isfile(self.THP_FILE):
-      with open(self.THP_FILE) as f:
+    file_name = None
+    if OSCheck.is_ubuntu_family():
+      file_name = self.THP_FILE_UBUNTU
+    elif OSCheck.is_redhat_family():
+      file_name = self.THP_FILE_REDHAT
+
+    if file_name and os.path.isfile(file_name):
+      with open(file_name) as f:
         file_content = f.read()
         return re.search(thp_regex, file_content).groups()[0]
     else:
@@ -290,7 +315,7 @@ class HostInfoLinux(HostInfo):
       dict['existingUsers'] = existingUsers
 
       dirs = []
-      self.checkFolders(self.DEFAULT_DIRS, self.DEFAULT_PROJECT_NAMES, existingUsers, dirs)
+      self.checkFolders(self.DEFAULT_BASEDIRS, self.DEFAULT_PROJECT_NAMES, self.EXACT_DIRECTORIES, existingUsers, dirs)
       dict['stackFoldersAndFiles'] = dirs
 
       self.reportFileHandler.writeHostCheckFile(dict)

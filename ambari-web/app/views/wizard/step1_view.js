@@ -17,132 +17,188 @@
 
 var App = require('app');
 
+require('models/repository');
+
 App.WizardStep1View = Em.View.extend({
 
   templateName: require('templates/wizard/step1'),
 
-  /**
-   * Is Repositories Accordion collapsed
-   * @type {bool}
-   */
-  isRLCollapsed: true,
-
   didInsertElement: function () {
-    if (this.get('isRLCollapsed')) {
-      this.$('.accordion-body').hide();
-    }
     $("[rel=skip-validation-tooltip]").tooltip({ placement: 'right'});
+    $("[rel=use-redhat-tooltip]").tooltip({ placement: 'right'});
+    $('.add-os-button,.redhat-label').tooltip();
+    if (this.get('controller.selectedStack.showAvailable')) {
+      // first time load
+      if (this.get('controller.selectedStack.useRedhatSatellite')) {
+        // restore `use local repo` on page refresh
+        this.get('controller').useLocalRepo();
+      }
+    } else {
+      var selected = this.get('controller.content.stacks') && this.get('controller.content.stacks').findProperty('showAvailable');
+      if (!selected) {
+        // network disconnection
+        Em.trySet(this, 'controller.selectedStack.useLocalRepo', true);
+        Em.trySet(this, 'controller.selectedStack.usePublicRepo', false);
+      }
+    }
+  },
+
+  willDestroyElement: function () {
+    $("[rel=skip-validation-tooltip]").tooltip('destroy');
+    $("[rel=use-redhat-tooltip]").tooltip('destroy');
+    $('.add-os-button,.redhat-label').tooltip('destroy');
   },
 
   /**
-   * List of available stacks
-   * @type {Em.Object[]}
+   * Show possible reasons why Public Repo is disabled
+   *
+   * @returns {App.ModalPopup}
    */
-  stacks: function () {
-    return this.get('controller.content.stacks').toArray().map(function (stack) {
-      return Em.Object.create({
-        name: stack.get('id').replace('-', ' '),
-        isSelected: stack.get('isSelected')
-      });
+  openPublicOptionDisabledWindow: function () {
+    return App.ModalPopup.show({
+      header: Em.I18n.t('installer.step1.selectUseRepoOptions.public.networkLost.popup.title'),
+      bodyClass: Ember.View.extend({
+        templateName: require('templates/wizard/step1/public_option_disabled_window_body')
+      }),
+      secondary: false
     });
-  }.property('controller.selectedStack'),
-
-  operatingSystems: function () {
-    var selectedStack = this.get('controller.selectedStack');
-    return Em.isNone(selectedStack) ? [] : selectedStack.get('operatingSystems');
-  }.property('controller.selectedStack'),
-
-  /**
-   * List of all repositories under selected stack operatingSystems
-   * API and ember data model structure:
-   * stack = [{OS-1},{OS-2}]
-   * OS-1 = [{repository-1},{repository-2}]
-   * OS-2 = [{repository-3},{repository-4}]
-   * @return: [{repository-1},{repository-2},{repository-3},{repository-4}]
-   */
-  allRepositories: function () {
-    var selectedStack = this.get('controller.selectedStack');
-    return Em.isNone(selectedStack) ? [] : selectedStack.get('repositories');
-  }.property('controller.selectedStack'),
-
-  /**
-   * Verify if some repo has empty base-url
-   * @type {bool}
-   */
-  invalidFormatUrlExist: function () {
-    return this.get('allRepositories').someProperty('invalidFormatError', true);
-  }.property('allRepositories.@each.invalidFormatError'),
+  },
 
   /**
    * Disable submit button flag
+   *
    * @type {bool}
    */
-  isSubmitDisabled: function () {
-    return this.get('invalidFormatUrlExist') || this.get('isNoOsChecked') || this.get('invalidUrlExist') || this.get('controller.content.isCheckInProgress');
-  }.property('invalidFormatUrlExist', 'isNoOsChecked', 'invalidUrlExist', 'controller.content.isCheckInProgress'),
+  isSubmitDisabled: Em.computed.or('invalidFormatUrlExist', 'isNoOsChecked', 'isNoOsFilled', 'controller.content.isCheckInProgress', 'App.router.btnClickInProgress'),
 
   /**
-   * Enable error count badge
+   * Show warning message flag
+   *
    * @type {bool}
    */
-  showErrorsWarningCount: function () {
-    return this.get('isSubmitDisabled') && !!this.get('totalErrorCnt');
-  }.property('isSubmitDisabled', 'totalErrorCnt'),
+  showWarning: Em.computed.or('invalidFormatUrlExist', 'isNoOsChecked', 'isNoOsFilled'),
+
+  /**
+   * Onclick handler for recheck repos urls. Used in Advanced Repository Options.
+   */
+  retryRepoUrls: function () {
+    App.router.get('installerController').checkRepoURL(this.get('controller'));
+  },
+
+  /**
+   * Checkbox for use Public repo
+   *
+   * @type {Ember.Checkbox}
+   */
+  usePublicRepoRadioButton: Em.Checkbox.extend({
+    tagName: 'input',
+    attributeBindings: [ 'type', 'checked' ],
+    classNames: [''],
+    checked: Em.computed.alias('controller.selectedStack.usePublicRepo'),
+    type: 'radio',
+
+    click: function () {
+      this.get('controller').usePublicRepo();
+    }
+  }),
+
+  /**
+   * Checkbox for use Public repo
+   *
+   * @type {Ember.Checkbox}
+   */
+  useLocalRepoRadioButton: Em.Checkbox.extend({
+    tagName: 'input',
+    attributeBindings: [ 'type', 'checked' ],
+    classNames: [''],
+    checked: Em.computed.alias('controller.selectedStack.useLocalRepo'),
+    type: 'radio',
+
+    click: function () {
+      this.get('controller').useLocalRepo();
+    }
+  }),
+
+  /**
+   * User already selected all OSes
+   *
+   * @type {boolean}
+   */
+  allOsesSelected: Em.computed.everyBy('controller.selectedStack.operatingSystems', 'isSelected', true),
+
+  /**
+   * Disallow adding OS if all OSes are already added or user select <code>useRedhatSatellite</code>
+   *
+   * @type {boolean}
+   */
+  isAddOsButtonDisabled: Em.computed.or('allOsesSelected', 'controller.selectedStack.useRedhatSatellite'),
+
+  /**
+   * Tooltip for Add OS Button
+   * Empty if this button is enabled
+   *
+   * @type {string}
+   */
+  addOsButtonTooltip: Em.computed.ifThenElse('allOsesSelected', Em.I18n.t('installer.step1.addOs.disabled.tooltip'), ''),
+
+  /**
+   * Tooltip for useRedhatSatellite block
+   * Empty if usage Redhat is enabled
+   *
+   * @type {string}
+   */
+  redhatDisabledTooltip: Em.computed.ifThenElse('controller.selectedStack.usePublicRepo', Em.I18n.t('installer.step1.advancedRepo.useRedhatSatellite.disabled.tooltip'), ''),
+  /**
+   * List of all repositories under selected stack operatingSystems
+   *
+   * @type {App.Repository[]}
+   */
+  allRepositories: function () {
+    return this.getWithDefault('controller.selectedStack.repositories', []);
+  }.property('controller.selectedStack.repositories.[]'),
+
+  /**
+   * Verify if some repo has invalid base-url
+   * Ignore if <code>useRedhatSatellite</code> is true for selected stack
+   *
+   * @type {bool}
+   */
+  invalidFormatUrlExist: function () {
+    if (this.get('controller.selectedStack.useRedhatSatellite')) {
+      return false;
+    }
+    var allRepositories = this.get('allRepositories');
+    if (!allRepositories) {
+      return false;
+    }
+    return allRepositories.someProperty('invalidFormatError', true);
+  }.property('controller.selectedStack.useRedhatSatellite', 'allRepositories.@each.invalidFormatError'),
 
   /**
    * Verify if some invalid repo-urls exist
    * @type {bool}
    */
-  invalidUrlExist: function () {
-    return this.get('allRepositories').someProperty('validation', App.Repository.validation['INVALID']);
-  }.property('allRepositories.@each.validation'),
+  invalidUrlExist: Em.computed.someBy('allRepositories', 'validation', App.Repository.validation.INVALID),
 
   /**
    * If all repo links are unchecked
    * @type {bool}
    */
-  isNoOsChecked: function () {
-    return this.get('operatingSystems').everyProperty('isSelected', false);
-  }.property('operatingSystems.@each.isSelected'),
+  isNoOsChecked: Em.computed.everyBy('controller.selectedStack.operatingSystems', 'isSelected', false),
 
   /**
-   * Overall errors count
-   * @type {number}
+   * If all OSes are empty
+   * @type {bool}
    */
-  totalErrorCnt: function () {
-    var invalidFormatCnt = this.get('allRepositories').filterProperty('invalidFormatError').length;
-    var invalidCnt = this.get('allRepositories').filterProperty('validation', App.Repository.validation['INVALID']).length;
-    if (this.get('isNoOsChecked')) {
-      return 1;
-    } else if (invalidFormatCnt || invalidCnt) {
-      return invalidFormatCnt + invalidCnt;
-    } else {
-      return 0;
+  isNoOsFilled: function () {
+    if (this.get('controller.selectedStack.useRedhatSatellite')) {
+      return false;
     }
-  }.property('allRepositories.@each.invalidFormatError', 'isNoOsChecked', 'allRepositories.@each.validation'),
+    var operatingSystems = this.get('controller.selectedStack.operatingSystems');
+    var selectedOS = operatingSystems.filterProperty('isSelected', true);
+    return selectedOS.everyProperty('isNotFilled', true);
+  }.property('controller.selectedStack.operatingSystems.@each.isSelected', 'controller.selectedStack.operatingSystems.@each.isNotFilled', 'controller.selectedStack.useRedhatSatellite'),
 
-  /**
-   * Checkbox for each stack
-   * @type {Ember.Checkbox}
-   */
-  stackRadioButton: Em.Checkbox.extend({
-    tagName: 'input',
-    attributeBindings: [ 'type', 'checked' ],
-    checked: function () {
-      return this.get('content.isSelected');
-    }.property('content.isSelected'),
-    type: 'radio',
-
-    click: function () {
-      this.get('controller.content.stacks').setEach('isSelected', false);
-      this.get('controller.content.stacks').findProperty('id', this.get('content.name').replace(' ', '-')).set('isSelected', true);
-    }
-  }),
-
-  /**
-   * Popover for repo-url error indicator
-   * @type {Em.View}
-   */
   popoverView: Em.View.extend({
     tagName: 'i',
     classNameBindings: ['repository.validation'],
@@ -153,88 +209,43 @@ App.WizardStep1View = Em.View.extend({
   }),
 
   /**
-   * Onclick handler for Config Group Header. Used to show/hide block
-   * @method onToggleBlock
+   * @type {Em.Checkbox}
    */
-  onToggleBlock: function () {
-    this.$('.accordion-body').toggle('blind', 500);
-    this.set('isRLCollapsed', !this.get('isRLCollapsed'));
-  },
-
-  /**
-   * Onclick handler for recheck repos urls. Used in Advanced Repository Options.
-   */
-  retryRepoUrls: function () {
-    App.router.get('installerController').checkRepoURL(this.get('controller'));
-  },
-
-
-  /**
-   * Onclick handler for checkbox of each repo group
-   * @method updateByCheckbox
-   */
-  updateByCheckbox: function () {
-    //upload to content
-    var operatingSystems = this.get('operatingSystems');
-    if (operatingSystems) {
-      operatingSystems.forEach(function (os) {
-        if (!os.get('isSelected')) {
-          os.get('repositories').forEach(function (repository) {
-            repository.setProperties({
-              baseUrl: repository.get('latestBaseUrl'),
-              validation: App.Repository.validation['PENDING']
-            });
-          });
-        } else {
-          os.get('repositories').forEach(function (repository) {
-            if (this.get('controller.skipValidationChecked')) {
-              repository.set('validation', App.Repository.validation['PENDING']);
-            }
-          }, this);
-        }
-      }, this);
+  redhatCheckBoxView: Em.Checkbox.extend({
+    attributeBindings: [ 'type', 'checked' ],
+    checkedBinding: 'controller.selectedStack.useRedhatSatellite',
+    classNames: ['checkbox'],
+    disabledBinding: 'controller.selectedStack.usePublicRepo',
+    click: function () {
+      // click triggered before value is toggled, so if-statement is inverted
+      if (!this.get('controller.selectedStack.useRedhatSatellite')) {
+        App.ModalPopup.show({
+          header: Em.I18n.t('common.important'),
+          secondary: false,
+          bodyClass: Ember.View.extend({
+            template: Ember.Handlebars.compile(Em.I18n.t('installer.step1.advancedRepo.useRedhatSatellite.warning'))
+          })
+        });
+      }
     }
-  }.observes('operatingSystems.@each.isSelected', 'controller.skipValidationChecked'),
-
-  /**
-   * Onclick handler for undo action of each repo group
-   * @method undoGroupLocalRepository
-   * @param {object} event
-   */
-  undoGroupLocalRepository: function (event) {
-    event.context.setProperties({
-      baseUrl: event.context.get('latestBaseUrl'),
-      validation: App.Repository.validation['PENDING']
-    });
-  },
-
-  /**
-   * Handler for clear icon click
-   * @method clearGroupLocalRepository
-   * @param {object} event
-   */
-  clearGroupLocalRepository: function (event) {
-    if (!event.context.get('isSelected')) {
-      return;
-    }
-    event.context.setProperties({
-      baseUrl: '',
-      validation: App.Repository.validation['PENDING']
-    });
-  },
+  }),
 
   /**
    * Handler when editing any repo BaseUrl
+   *
    * @method editLocalRepository
    */
   editLocalRepository: function () {
     //upload to content
     var repositories = this.get('allRepositories');
+    if (!repositories) {
+      return;
+    }
     repositories.forEach(function (repository) {
-      if (repository.get('lastBaseUrl') != repository.get('baseUrl')) {
+      if (repository.get('lastBaseUrl') !== repository.get('baseUrl')) {
         repository.setProperties({
           lastBaseUrl: repository.get('baseUrl'),
-          validation: App.Repository.validation['PENDING']
+          validation: App.Repository.validation.PENDING
         });
       }
     }, this);

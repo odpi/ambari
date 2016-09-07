@@ -40,11 +40,11 @@ class Heartbeat:
     self.reports = []
     self.collector = alert_collector
 
-  def build(self, id='-1', state_interval=-1, componentsMapped=False):
+  def build(self, id='-1', add_state=False, componentsMapped=False):
     global clusterId, clusterDefinitionRevision, firstContact
     timestamp = int(time.time()*1000)
     queueResult = self.actionQueue.result()
-
+    recovery_timestamp = self.actionQueue.controller.recovery_manager.recovery_timestamp
 
     nodeStatus = { "status" : "HEALTHY",
                    "cause" : "NONE" }
@@ -52,7 +52,8 @@ class Heartbeat:
     heartbeat = { 'responseId'        : int(id),
                   'timestamp'         : timestamp,
                   'hostname'          : hostname(self.config),
-                  'nodeStatus'        : nodeStatus
+                  'nodeStatus'        : nodeStatus,
+                  'recoveryTimestamp' : recovery_timestamp
                 }
 
     rec_status = self.actionQueue.controller.recovery_manager.get_recovery_status()
@@ -74,14 +75,19 @@ class Heartbeat:
     if int(id) == 0:
       componentsMapped = False
 
-    logger.info("Building Heartbeat: {responseId = %s, timestamp = %s, commandsInProgress = %s, componentsMapped = %s}",
-        str(id), str(timestamp), repr(commandsInProgress), repr(componentsMapped))
 
-    if logger.isEnabledFor(logging.DEBUG):
-      logger.debug("Heartbeat: %s", pformat(heartbeat))
+
+    logger.debug("Building Heartbeat: {responseId = %s, timestamp = %s, "
+                "commandsInProgress = %s, componentsMapped = %s,"
+                "recoveryTimestamp = %s}",
+        str(id), str(timestamp), repr(commandsInProgress), repr(componentsMapped), str(recovery_timestamp))
+
+
+    logger.debug("Heartbeat: %s", pformat(heartbeat))
 
     hostInfo = HostInfo(self.config)
-    if (int(id) >= 0) and state_interval > 0 and (int(id) % state_interval) == 0:
+    if add_state:
+      logger.info("Adding host info/state to heartbeat message.")
       nodeInfo = { }
       # for now, just do the same work as registration
       # this must be the last step before returning heartbeat
@@ -90,9 +96,9 @@ class Heartbeat:
       mounts = Hardware.osdisks(self.config)
       heartbeat['mounts'] = mounts
 
-      if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("agentEnv: %s", str(nodeInfo))
-        logger.debug("mounts: %s", str(mounts))
+
+      logger.debug("agentEnv: %s", str(nodeInfo))
+      logger.debug("mounts: %s", str(mounts))
 
     if self.collector is not None:
       heartbeat['alerts'] = self.collector.alerts()

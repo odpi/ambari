@@ -20,6 +20,7 @@ package org.apache.ambari.server.state.stack.upgrade;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.ambari.server.serveraction.upgrades.AutoSkipFailedSummaryAction;
 import org.apache.ambari.server.stack.HostsType;
@@ -43,7 +44,7 @@ public class StageWrapperBuilderTest {
    */
   @Test
   public void testBuildOrder() throws Exception {
-    UpgradeContext upgradeContext = new UpgradeContext(null, null, null, null, Direction.UPGRADE);
+    UpgradeContext upgradeContext = new UpgradeContext(null, null, null, null, Direction.UPGRADE, UpgradeType.ROLLING);
     MockStageWrapperBuilder builder = new MockStageWrapperBuilder(null);
     List<StageWrapper> stageWrappers = builder.build(upgradeContext);
     List<Integer> invocationOrder = builder.getInvocationOrder();
@@ -64,7 +65,7 @@ public class StageWrapperBuilderTest {
    */
   @Test
   public void testAutoSkipCheckInserted() throws Exception {
-    UpgradeContext upgradeContext = new UpgradeContext(null, null, null, null, Direction.UPGRADE);
+    UpgradeContext upgradeContext = new UpgradeContext(null, null, null, null, Direction.UPGRADE, UpgradeType.ROLLING);
     upgradeContext.setAutoSkipComponentFailures(true);
     upgradeContext.setAutoSkipServiceCheckFailures(true);
 
@@ -87,7 +88,6 @@ public class StageWrapperBuilderTest {
 
     ServerActionTask task = (ServerActionTask)(skipSummaryWrapper.getTasks().get(0).getTasks().get(0));
     Assert.assertEquals(AutoSkipFailedSummaryAction.class.getName(), task.implClass);
-
   }
 
   /**
@@ -125,7 +125,7 @@ public class StageWrapperBuilderTest {
      */
     @Override
     public void add(UpgradeContext upgradeContext, HostsType hostsType, String service,
-        boolean clientOnly, ProcessingComponent pc) {
+        boolean clientOnly, ProcessingComponent pc, Map<String, String> params) {
     }
 
     /**

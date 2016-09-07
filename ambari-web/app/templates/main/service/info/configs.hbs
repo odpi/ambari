@@ -19,7 +19,7 @@
 <div id="serviceConfig">
   {{#if dataIsLoaded}}
     {{#if controller.content.isRestartRequired}}
-      {{#isAccessible ADMIN}}
+      {{#isAuthorized "SERVICE.START_STOP"}}
         <div>
           <div class="alert alert-warning clearfix">
             <i class="icon-refresh"></i> {{t services.service.config.restartService.needToRestart}}  <a
@@ -33,11 +33,11 @@
                 <span class="caret"></span>
               </button>
               <ul class="dropdown-menu">
-                <li>
+                <li class="restart-all-components">
                   <a href="#" {{action restartAllStaleConfigComponents target="controller"}}>{{t restart.service.all.affected}}</a>
                 </li>
                 {{#if view.rollingRestartSlaveComponentName}}
-                  <li>
+                  <li class="restart-slave-components">
                     <a href="#" {{action rollingRestartStaleConfigSlaveComponents view.rollingRestartSlaveComponentName target="controller"}}>{{view.rollingRestartActionName}}</a>
                   </li>
                 {{/if}}
@@ -45,21 +45,11 @@
             </div>
           </div>
         </div>
-      {{/isAccessible}}
+      {{/isAuthorized}}
     {{/if}}
     <div class="clearfix"></div>
-    {{view App.ServiceConfigView filterBinding="controller.filter" columnsBinding="controller.filterColumns" canEditBinding="controller.canEdit" showConfigHistoryFeatureBinding="controller.showConfigHistoryFeature"}}
-    {{#isAccessible ADMIN}}
-      {{#unless showConfigHistoryFeature}}
-          <p class="pull-right">
-              <!--<input class="btn btn-primary" type="button" value="Save" {{!bindAttr disabled="isSubmitDisabled"}} />-->
-              <a class="btn" {{action doCancel target="controller"}}>{{t common.cancel}}</a>
-              <a class="btn btn-primary" {{bindAttr disabled="isSubmitDisabled"}}
-                {{action saveStepConfigs target="controller"}}>{{t common.save}}</a>
-          </p>
-      {{/unless}}
-    {{/isAccessible}}
+    {{view App.ServiceConfigView filterBinding="controller.filter" columnsBinding="controller.filterColumns" canEditBinding="controller.canEdit"}}
   {{else}}
-    <div class="spinner"></div>
+    {{view App.SpinnerView}}
   {{/if}}
 </div>

@@ -19,25 +19,31 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <property>
     <name>flume_conf_dir</name>
     <value>/etc/flume/conf</value>
     <description>Location to save configuration files</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>flume_log_dir</name>
     <value>/var/log/flume</value>
     <description>Location to save log files</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>flume_user</name>
+    <display-name>Flume User</display-name>
     <value>flume</value>
     <property-type>USER</property-type>
     <description>Flume User</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <!-- flume-env.sh -->
   <property>
     <name>content</name>
@@ -74,5 +80,9 @@ export JAVA_HOME={{java_home}}
 # export HIVE_HOME=/usr/lib/hive
 # export HCAT_HOME=/usr/lib/hive-hcatalog
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

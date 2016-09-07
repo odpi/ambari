@@ -26,8 +26,6 @@ import org.apache.ambari.server.agent.CommandReport;
 import org.apache.ambari.server.agent.ExecutionCommand;
 import org.apache.ambari.server.orm.entities.RequestEntity;
 
-import com.google.inject.persist.Transactional;
-
 public interface ActionDBAccessor {
 
   /**
@@ -57,7 +55,9 @@ public interface ActionDBAccessor {
   Request getRequest(long requestId);
 
   /**
-   * Abort all outstanding operations associated with the given request
+   * Abort all outstanding operations associated with the given request. This
+   * method uses the {@link HostRoleStatus#SCHEDULED_STATES} to determine which
+   * {@link HostRoleCommand} instances to abort.
    */
   public void abortOperation(long requestId);
 
@@ -65,6 +65,12 @@ public interface ActionDBAccessor {
    * Mark the task as to have timed out
    */
   public void timeoutHostRole(String host, long requestId, long stageId, String role);
+
+  /**
+   * Mark the task as to have timed out
+   */
+  void timeoutHostRole(String host, long requestId, long stageId,
+                       String role, boolean skipSupported);
 
   /**
    * Returns all the pending stages, including queued and not-queued. A stage is
@@ -88,21 +94,19 @@ public interface ActionDBAccessor {
 
   /**
    * Persists all tasks for a given request
-   * @param request request object
+   *
+   * @param request
+   *          request object
    */
-  @Transactional
   void persistActions(Request request) throws AmbariException;
 
-  @Transactional
   void startRequest(long requestId);
 
-  @Transactional
   void endRequest(long requestId);
 
   /**
    * Updates request with link to source schedule
    */
-  @Transactional
   void setSourceScheduleForRequest(long requestId, long scheduleId);
 
   /**
@@ -160,12 +164,6 @@ public interface ActionDBAccessor {
    * Given a list of request ids, get all the tasks that belong to these requests
    */
   public List<HostRoleCommand> getAllTasksByRequestIds(Collection<Long> requestIds);
-
-  /**
-   * Get a list of host role commands where the request id belongs to the input requestIds and
-   * the task id belongs to the input taskIds
-   */
-  public List<HostRoleCommand> getTasksByRequestAndTaskIds(Collection<Long> requestIds, Collection<Long> taskIds);
 
   /**
    * Given a list of task ids, get all the host role commands

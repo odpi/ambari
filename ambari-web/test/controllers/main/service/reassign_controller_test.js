@@ -30,9 +30,36 @@ describe('App.ReassignMasterController', function () {
   });
 
   describe('#totalSteps', function () {
-    it('check', function () {
-      expect(reassignMasterController.get('totalSteps')).to.equal(7);
-      reassignMasterController.set('content.reassign', {service_id:null});
+
+    var cases = [
+      {
+        componentName: 'ZOOKEEPER_SERVER',
+        result: 4
+      },
+      {
+        componentName: 'RESOURCE_MANAGER',
+        result: 4
+      },
+      {
+        componentName: 'OOZIE_SERVER',
+        result: 6
+      },
+      {
+        componentName: 'APP_TIMELINE_SERVER',
+        result: 6
+      },
+      {
+        componentName: 'NAMENODE',
+        result: 6
+      }
+    ];
+
+    cases.forEach(function (c) {
+      it('check ' + c.componentName, function () {
+        reassignMasterController.set('content.reassign', {'component_name': c.componentName});
+        expect(reassignMasterController.get('totalSteps')).to.equal(c.result);
+        reassignMasterController.set('content.reassign', {service_id:null});
+      });
     });
   });
 
@@ -74,6 +101,7 @@ describe('App.ReassignMasterController', function () {
     beforeEach(function () {
       sinon.stub(App.db, 'setMasterComponentHosts', Em.K);
       sinon.stub(reassignMasterController, 'setDBProperty', Em.K);
+      reassignMasterController.saveMasterComponentHosts(stepController);
     });
 
     afterEach(function () {
@@ -81,12 +109,23 @@ describe('App.ReassignMasterController', function () {
       reassignMasterController.setDBProperty.restore();
     });
 
-    it('should save master component hosts', function () {
-      reassignMasterController.saveMasterComponentHosts(stepController);
+    it('setMasterComponentHosts is called once', function () {
       expect(App.db.setMasterComponentHosts.calledOnce).to.be.true;
+    });
+
+    it('setDBProperty is called once', function () {
       expect(reassignMasterController.setDBProperty.calledOnce).to.be.true;
+    });
+
+    it('setMasterComponentHosts is called with valid arguments', function () {
       expect(App.db.setMasterComponentHosts.calledWith(masterComponentHosts)).to.be.true;
+    });
+
+    it('setDBProperty is called with valid arguments', function () {
       expect(reassignMasterController.setDBProperty.calledWith('masterComponentHosts', masterComponentHosts)).to.be.true;
+    });
+
+    it('masterComponentHosts are equal to ' + JSON.stringify(masterComponentHosts), function () {
       expect(reassignMasterController.get('content.masterComponentHosts')).to.eql(masterComponentHosts);
     });
 

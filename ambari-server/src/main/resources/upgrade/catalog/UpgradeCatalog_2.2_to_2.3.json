@@ -316,12 +316,31 @@
             "required-services": [
               "HIVE"
             ]
+          },
+          "storm-cluster-log4j": {
+            "merged-copy": "yes",
+            "required-services": [
+              "STORM"
+            ]
+          },
+          "storm-worker-log4j": {
+            "merged-copy": "yes",
+            "required-services": [
+              "STORM"
+            ]
           }
         }
       },
       "properties": {
         "storm-env": {
-          "nimbus_seeds_supported": "true"
+          "nimbus_seeds_supported": "true",
+          "storm_logs_supported": "true"
+        },
+        "storm-cluster-log4j": {
+          "content": "\n    \n<!--\n Licensed to the Apache Software Foundation (ASF) under one or more\n contributor license agreements.  See the NOTICE file distributed with\n this work for additional information regarding copyright ownership.\n The ASF licenses this file to You under the Apache License, Version 2.0\n (the \"License\"); you may not use this file except in compliance with\n the License.  You may obtain a copy of the License at\n\n     http://www.apache.org/licenses/LICENSE-2.0\n\n Unless required by applicable law or agreed to in writing, software\n distributed under the License is distributed on an \"AS IS\" BASIS,\n WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n See the License for the specific language governing permissions and\n limitations under the License.\n-->\n\n<configuration monitorInterval=\"60\">\n<properties>\n    <property name=\"pattern\">%d{yyyy-MM-dd HH:mm:ss.SSS} %c{1.} [%p] %msg%n</property>\n    <property name=\"patternMetris\">%d %-8r %m%n</property>\n</properties>\n<appenders>\n    <RollingFile name=\"A1\"\n                 fileName=\"${sys:storm.log.dir}/${sys:logfile.name}\"\n                 filePattern=\"${sys:storm.log.dir}/${sys:logfile.name}.%i\">\n        <PatternLayout>\n            <pattern>${pattern}</pattern>\n        </PatternLayout>\n        <Policies>\n            <SizeBasedTriggeringPolicy size=\"100 MB\"/> <!-- Or every 100 MB -->\n        </Policies>\n        <DefaultRolloverStrategy max=\"9\"/>\n    </RollingFile>\n    <RollingFile name=\"ACCESS\"\n                 fileName=\"${sys:storm.log.dir}/access.log\"\n                 filePattern=\"${sys:storm.log.dir}/access.log.%i\">\n        <PatternLayout>\n            <pattern>${pattern}</pattern>\n        </PatternLayout>\n        <Policies>\n            <SizeBasedTriggeringPolicy size=\"100 MB\"/> <!-- Or every 100 MB -->\n        </Policies>\n        <DefaultRolloverStrategy max=\"9\"/>\n    </RollingFile>\n    <RollingFile name=\"METRICS\"\n                 fileName=\"${sys:storm.log.dir}/metrics.log\"\n                 filePattern=\"${sys:storm.log.dir}/metrics.log.%i\">\n        <PatternLayout>\n            <pattern>${patternMetris}</pattern>\n        </PatternLayout>\n        <Policies>\n            <SizeBasedTriggeringPolicy size=\"2 MB\"/> <!-- Or every 100 MB -->\n        </Policies>\n        <DefaultRolloverStrategy max=\"9\"/>\n    </RollingFile>\n    <Syslog name=\"syslog\" format=\"RFC5424\" host=\"localhost\" port=\"514\"\n            protocol=\"UDP\" appName=\"[${sys:daemon.name}]\" mdcId=\"mdc\" includeMDC=\"true\"\n            facility=\"LOCAL5\" enterpriseNumber=\"18060\" newLine=\"true\" exceptionPattern=\"%rEx{full}\"\n            messageId=\"[${sys:user.name}:S0]\" id=\"storm\"/>\n</appenders>\n<loggers>\n\n    <Logger name=\"backtype.storm.security.auth.authorizer\" level=\"info\">\n        <AppenderRef ref=\"ACCESS\"/>\n    </Logger>\n    <Logger name=\"backtype.storm.metric.LoggingMetricsConsumer\" level=\"info\">\n        <AppenderRef ref=\"METRICS\"/>\n    </Logger>\n    <root level=\"info\"> <!-- We log everything -->\n        <appender-ref ref=\"A1\"/>\n        <appender-ref ref=\"syslog\"/>\n    </root>\n</loggers>\n</configuration>\n    \n    "
+        },
+        "storm-worker-log4j": {
+          "content": "\n    \n<!--\n Licensed to the Apache Software Foundation (ASF) under one or more\n contributor license agreements.  See the NOTICE file distributed with\n this work for additional information regarding copyright ownership.\n The ASF licenses this file to You under the Apache License, Version 2.0\n (the \"License\"); you may not use this file except in compliance with\n the License.  You may obtain a copy of the License at\n\n     http://www.apache.org/licenses/LICENSE-2.0\n\n Unless required by applicable law or agreed to in writing, software\n distributed under the License is distributed on an \"AS IS\" BASIS,\n WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n See the License for the specific language governing permissions and\n limitations under the License.\n-->\n\n<configuration monitorInterval=\"60\">\n<properties>\n    <property name=\"pattern\">%d{yyyy-MM-dd HH:mm:ss.SSS} %c{1.} [%p] %msg%n</property>\n    <property name=\"patternNoTime\">%msg%n</property>\n</properties>\n<appenders>\n    <RollingFile name=\"A1\"\n                 fileName=\"${sys:storm.log.dir}/${sys:logfile.name}\"\n                 filePattern=\"${sys:storm.log.dir}/${sys:logfile.name}.%i.gz\">\n        <PatternLayout>\n            <pattern>${pattern}</pattern>\n        </PatternLayout>\n        <Policies>\n            <SizeBasedTriggeringPolicy size=\"100 MB\"/> <!-- Or every 100 MB -->\n        </Policies>\n        <DefaultRolloverStrategy max=\"9\"/>\n    </RollingFile>\n    <RollingFile name=\"STDOUT\"\n                 fileName=\"${sys:storm.log.dir}/${sys:logfile.name}.out\"\n                 filePattern=\"${sys:storm.log.dir}/${sys:logfile.name}.out.%i.gz\">\n        <PatternLayout>\n            <pattern>${patternNoTime}</pattern>\n        </PatternLayout>\n        <Policies>\n            <SizeBasedTriggeringPolicy size=\"100 MB\"/> <!-- Or every 100 MB -->\n        </Policies>\n        <DefaultRolloverStrategy max=\"4\"/>\n    </RollingFile>\n    <RollingFile name=\"STDERR\"\n                 fileName=\"${sys:storm.log.dir}/${sys:logfile.name}.err\"\n                 filePattern=\"${sys:storm.log.dir}/${sys:logfile.name}.err.%i.gz\">\n        <PatternLayout>\n            <pattern>${patternNoTime}</pattern>\n        </PatternLayout>\n        <Policies>\n            <SizeBasedTriggeringPolicy size=\"100 MB\"/> <!-- Or every 100 MB -->\n        </Policies>\n        <DefaultRolloverStrategy max=\"4\"/>\n    </RollingFile>\n    <Syslog name=\"syslog\" format=\"RFC5424\" host=\"localhost\" port=\"514\"\n        protocol=\"UDP\" appName=\"[${sys:storm.id}:${sys:worker.port}]\" mdcId=\"mdc\" includeMDC=\"true\"\n        facility=\"LOCAL5\" enterpriseNumber=\"18060\" newLine=\"true\" exceptionPattern=\"%rEx{full}\"\n        messageId=\"[${sys:user.name}:${sys:logging.sensitivity}]\" id=\"storm\"/>\n</appenders>\n<loggers>\n    <root level=\"info\"> <!-- We log everything -->\n        <appender-ref ref=\"A1\"/>\n        <appender-ref ref=\"syslog\"/>\n    </root>\n    <Logger name=\"STDERR\" level=\"INFO\">\n        <appender-ref ref=\"STDERR\"/>\n        <appender-ref ref=\"syslog\"/>\n    </Logger>\n    <Logger name=\"STDOUT\" level=\"INFO\">\n        <appender-ref ref=\"STDOUT\"/>\n        <appender-ref ref=\"syslog\"/>\n    </Logger>\n</loggers>\n</configuration>\n    \n    "
         },
         "falcon-startup.properties": {
           "*.shared.libs": "activemq-core,ant,geronimo-j2ee-management,jms,json-simple,oozie-client,spring-jms,commons-lang3,commons-el",
@@ -386,9 +405,27 @@
           }
         },
         "hbase-site": {
-          "hbase.region.server.rpc.scheduler.factory.class": "org.apache.hadoop.hbase.ipc.PhoenixRpcSchedulerFactory",
-          "hbase.rpc.controllerfactory.class": "org.apache.hadoop.hbase.ipc.controller.ServerRpcControllerFactory",
-          "hbase.regionserver.wal.codec": "org.apache.hadoop.hbase.regionserver.wal.IndexedWALEditCodec",
+          "hbase.region.server.rpc.scheduler.factory.class": {
+            "value": "{HBASE_REGION_SERVER_RPC_SCHEDULER_FACTORY_CLASS}",
+            "required-services": [
+              "HBASE"
+            ],
+            "template": "yes"
+          },
+          "hbase.rpc.controllerfactory.class": {
+            "value": "{HBASE_RPC_CONTROLLERFACTORY_CLASS}",
+            "template": "yes",
+            "required-services": [
+              "HBASE"
+            ]
+          },
+          "hbase.regionserver.wal.codec": {
+            "value": "{HBASE_REGIONSERVER_WAL_CODEC}",
+            "template": "yes",
+            "required-services": [
+              "HBASE"
+            ]
+          },
           "phoenix.functions.allowUserDefinedFunctions": "true",
           "fs.hdfs.impl": "org.apache.hadoop.hdfs.DistributedFileSystem",
           "hbase.bucketcache.percentage.in.combinedcache": {
@@ -439,12 +476,10 @@
         "capacity-scheduler": {
           "yarn.scheduler.capacity.root.default-node-label-expression": "",
           "yarn.scheduler.capacity.root.accessible-node-labels.default.capacity": {
-            "value": "10",
-            "value-required": "-1"
+            "remove": "yes"
           },
           "yarn.scheduler.capacity.root.accessible-node-labels.default.maximum-capacity": {
-            "value": "100",
-            "value-required": "-1"
+            "remove": "yes"
           }
         },
         "kafka-broker": {
@@ -566,11 +601,7 @@
           "xasecure.audit.destination.db.batch.filespool.dir": "/var/log/hadoop/hdfs/audit/db/spool",
           "xasecure.audit.is.enabled": "true",
           "xasecure.audit.destination.db.password": {
-            "value": "{AUDIT_DB_PASSWD}",
-            "template": "yes",
-            "required-services": [
-              "RANGER"
-            ]
+            "value": "{{xa_audit_db_password}}"
           },
           "xasecure.audit.destination.db": {
             "value": "{AUDIT_TO_DB_HDFS}",
@@ -693,8 +724,7 @@
           "xasecure.audit.destination.db.batch.filespool.dir": "/var/log/hbase/audit/db/spool",
           "xasecure.audit.is.enabled": "true",
           "xasecure.audit.destination.db.password": {
-            "value": "{AUDIT_DB_PASSWD}",
-            "template": "yes"
+            "value": "{{xa_audit_db_password}}"
           },
           "xasecure.audit.destination.db": {
             "value": "{AUDIT_TO_DB_HBASE}",
@@ -754,7 +784,7 @@
         "ranger-hive-security": {
           "upgrade.transition": "yes",
           "ranger.plugin.hive.policy.source.impl": "org.apache.ranger.admin.client.RangerAdminRESTClient",
-          "ranger.plugin.hive.policy.rest.ssl.config.file": "usr/hdp/current/hive-server2/conf/conf.server/ranger-policymgr-ssl.xml",
+          "ranger.plugin.hive.policy.rest.ssl.config.file": "/usr/hdp/current/hive-server2/conf/conf.server/ranger-policymgr-ssl.xml",
           "ranger.plugin.hive.policy.pollIntervalMs": "30000",
           "ranger.plugin.hive.policy.cache.dir": {
             "value": "{RANGER_PLUGIN_HIVE_POLICY_CACHE_DIR}",
@@ -792,8 +822,7 @@
           "xasecure.audit.destination.db.batch.filespool.dir": "/var/log/hive/audit/db/spool",
           "xasecure.audit.is.enabled": "true",
           "xasecure.audit.destination.db.password": {
-            "value": "{AUDIT_DB_PASSWD}",
-            "template": "yes"
+            "value": "{{xa_audit_db_password}}"
           },
           "xasecure.audit.destination.db": {
             "value": "{AUDIT_TO_DB_HIVE}",
@@ -890,8 +919,7 @@
           "xasecure.audit.destination.db.batch.filespool.dir": "/var/log/knox/audit/db/spool",
           "xasecure.audit.is.enabled": "true",
           "xasecure.audit.destination.db.password": {
-            "value": "{AUDIT_DB_PASSWD}",
-            "template": "yes"
+            "value": "{{xa_audit_db_password}}"
           },
           "xasecure.audit.destination.db": {
             "value": "{AUDIT_TO_DB_KNOX}",
@@ -988,8 +1016,7 @@
           "xasecure.audit.destination.db.batch.filespool.dir": "/var/log/storm/audit/db/spool",
           "xasecure.audit.is.enabled": "true",
           "xasecure.audit.destination.db.password": {
-            "value": "{AUDIT_DB_PASSWD}",
-            "template": "yes"
+            "value": "{{xa_audit_db_password}}"
           },
           "xasecure.audit.destination.db": {
             "value": "{AUDIT_TO_DB_STORM}",
@@ -1143,6 +1170,30 @@
           },
           "xml_configurations_supported": {
             "value": "true"
+          },
+          "ranger_privelege_user_jdbc_url": {
+            "value": "{RANGER_ROOT_JDBC_URL}",
+            "template": "yes"
+          },
+          "ranger-yarn-plugin-enabled": {
+            "value": "No"
+          },
+          "ranger-kafka-plugin-enabled":{
+            "value": "No"
+          },
+          "xasecure.audit.destination.solr":{
+            "value": "false"
+          },
+          "is_solrCloud_enabled":{
+            "value": "false"
+          },
+          "xasecure.audit.destination.hdfs": {
+            "value": "{AUDIT_TO_HDFS}",
+            "template": "yes"
+          },
+          "xasecure.audit.destination.db": {
+            "value": "{AUDIT_TO_DB}",
+            "template": "yes"
           }
         },
         "ranger-admin-site": {
@@ -1237,6 +1288,57 @@
           },
           "ranger.jpa.audit.jdbc.password": {
             "value": "_"
+          },
+          "ranger.sso.providerurl": {
+            "value": ""
+          },
+          "ranger.sso.publicKey": {
+            "value": ""
+          },
+          "ranger.sso.cookiename": {
+            "value": "hadoop-jwt"
+          },
+          "ranger.sso.enabled": {
+            "value": "false"
+          },
+          "ranger.sso.query.param.originalurl": {
+            "value": "originalUrl"
+          },
+          "ranger.sso.browser.useragent": {
+            "value": "Mozilla,chrome"
+          },
+          "ranger.ldap.user.searchfilter":{
+            "value": "{{ranger_ug_ldap_user_searchfilter}}"
+          },
+          "ranger.ldap.group.roleattribute":{
+            "value": "cn"
+          },
+          "ranger.ldap.base.dn":{
+            "value": "dc=example,dc=com"
+          },
+          "ranger.ldap.bind.dn":{
+            "value": "{{ranger_ug_ldap_bind_dn}}"
+          },
+          "ranger.ldap.bind.password":{
+            "value": "{{ranger_usersync_ldap_ldapbindpassword}}"
+          },
+          "ranger.ldap.referral":{
+            "value": "ignore"
+          },
+          "ranger.ldap.ad.base.dn":{
+            "value": "dc=example,dc=com"
+          },
+          "ranger.ldap.ad.bind.dn":{
+            "value": "{{ranger_ug_ldap_bind_dn}}"
+          },
+          "ranger.ldap.ad.bind.password":{
+            "value": "{{ranger_usersync_ldap_ldapbindpassword}}"
+          },
+          "ranger.ldap.ad.user.searchfilter":{
+            "value": "{{ranger_ug_ldap_user_searchfilter}}"
+          },
+          "ranger.ldap.ad.referral":{
+            "value": "ignore"
           }
         },
         "ranger-ugsync-site": {
@@ -1320,17 +1422,39 @@
             "value": "500"
           },
           "ranger.usersync.source.impl.class": {
-            "value": ""
+            "value": "{USERSYNC_SYNC_SOURCE}",
+            "template": "yes"
           },
           "ranger.usersync.policymanager.baseURL": {
             "value": "{{ranger_external_url}}"
+          },
+          "ranger.usersync.sleeptimeinmillisbetweensynccycle": {
+            "value": "60000"
+          },
+          "ranger.usersync.ldap.referral": {
+            "value": "ignore"
+          },
+          "ranger.usersync.unix.group.file": {
+            "value": "/etc/group"
+          },
+          "ranger.usersync.unix.password.file": {
+            "value": "/etc/passwd"
           }
+        },
+        "usersync-properties":{
+          "SYNC_INTERVAL": {"remove": "yes"}
         },
         "webhcat-site":{
           "templeton.hive.extra.files": "/usr/hdp/${hdp.version}/tez/conf/tez-site.xml,/usr/hdp/${hdp.version}/tez,/usr/hdp/${hdp.version}/tez/lib"
         }
       },
       "property-mapping": {
+        "hive.heapsize": {
+          "map-to": "hive.heapsize",
+          "from-catalog": "hive-site",
+          "to-catalog": "hive-env",
+          "required-services": ["HIVE"]
+        },
         "templeton.jar": {
           "from-catalog": "webhcat-site",
           "to-catalog": "webhcat-site",
@@ -1521,14 +1645,6 @@
         },
         "MIN_UNIX_USER_ID_TO_SYNC": {
           "map-to": "ranger.usersync.unix.minUserId",
-          "from-catalog": "usersync-properties",
-          "to-catalog": "ranger-ugsync-site",
-          "required-services": [
-            "RANGER"
-          ]
-        },
-        "SYNC_INTERVAL": {
-          "map-to": "ranger.usersync.sleeptimeinmillisbetweensynccycle",
           "from-catalog": "usersync-properties",
           "to-catalog": "ranger-ugsync-site",
           "required-services": [

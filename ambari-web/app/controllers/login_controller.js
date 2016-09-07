@@ -36,19 +36,20 @@ App.LoginController = Em.Object.extend({
   },
 
   postLogin: function (isConnected, isAuthenticated, responseText) {
+    var errorMessage = "";
     if (!isConnected) {
-      console.log('Failed to connect to Ambari Server');
-      this.set('errorMessage', Em.I18n.t('login.error.bad.connection'));
+      this.set('errorMessage', responseText || Em.I18n.t('login.error.bad.connection'));
     } else if (!isAuthenticated) {
-      console.log('Failed to login as: ' + this.get('loginName'));
-      var errorMessage = "";
-      if( responseText === "User is disabled" ){
+      if (responseText === "User is disabled") {
         errorMessage = Em.I18n.t('login.error.disabled');
-      } else {
+      } else if (responseText === "Authentication required" || Em.isNone(responseText)) {
         errorMessage = Em.I18n.t('login.error.bad.credentials');
+      } else {
+        errorMessage = responseText;
       }
       this.set('errorMessage', errorMessage);
     }
+    App.router.get('userSettingsController').dataLoading();
     this.set('isSubmitDisabled', false);
   }
 

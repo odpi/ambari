@@ -20,18 +20,19 @@
   <parent>
     <groupId>org.apache.ambari</groupId>
     <artifactId>ambari-project</artifactId>
-    <version>2.0.0-SNAPSHOT</version>
+    <version>2.0.0.0-SNAPSHOT</version>
     <relativePath>../ambari-project</relativePath>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>ambari-web</artifactId>
   <packaging>pom</packaging>
   <name>Ambari Web</name>
-  <version>2.0.0-SNAPSHOT</version>
+  <version>2.0.0.0-SNAPSHOT</version>
   <description>Ambari Web</description>
   <properties>
     <ambari.dir>${project.parent.parent.basedir}</ambari.dir>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <nodemodules.dir>node_modules</nodemodules.dir> <!-- specify -Dnodemodules.dir option to reduce ambari-web build time by not re-downloading npm modules -->
   </properties>
   <build>
     <plugins>
@@ -55,8 +56,8 @@
             <configuration>
               <name>ambariVersion</name>
               <value>${project.version}</value>
-              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
-              <replacement>$1.$2.$3</replacement>
+              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
+              <replacement>$1.$2.$3.$4</replacement>
               <failIfNoMatch>false</failIfNoMatch>
             </configuration>
           </execution>
@@ -100,7 +101,7 @@
             <configuration>
               <executable>${executable.rmdir}</executable>
               <workingDirectory>${basedir}</workingDirectory>
-              <commandlineArgs>${args.rm.clean} public node_modules</commandlineArgs>
+              <commandlineArgs>${args.rm.clean} public ${nodemodules.dir}</commandlineArgs>
               <successCodes>
                 <successCode>0</successCode>
                 <successCode>1</successCode>
@@ -196,21 +197,30 @@
               <commandlineArgs>${args.npm} test</commandlineArgs>
             </configuration>
           </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>1.7</version>
+        <executions>
           <execution>
-            <id>gzip ambari-web content</id>
+            <id>gzip ambari-web images</id>
             <phase>prepare-package</phase>
             <goals>
-              <goal>exec</goal>
+              <goal>run</goal>
             </goals>
             <configuration>
-              <executable>${executable.gzip}</executable>
-              <workingDirectory>${basedir}</workingDirectory>
-              <arguments>
-                <argument>-f</argument>
-                <argument>public/javascripts/app.js</argument>
-                <argument>public/javascripts/vendor.js</argument>
-                <argument>public/stylesheets/app.css</argument>
-              </arguments>
+              <tasks>
+                <apply executable="${executable.gzip}">
+                  <arg value="-f"/>
+                  <fileset dir="${basedir}/public/img/">
+                    <patternset>
+                      <include name="**/*.png"/>
+                    </patternset>
+                  </fileset>
+                </apply>
+              </tasks>
             </configuration>
           </execution>
         </executions>
@@ -271,8 +281,8 @@
         <envClassifier>win</envClassifier>
         <dirsep>\</dirsep>
         <executable.brunch>cmd</executable.brunch>
-        <args.brunch>/C brunch</args.brunch>
         <executable.gzip>${basedir}\gzip-content.cmd</executable.gzip>
+        <args.brunch>/C brunch</args.brunch>
         <executable.mkdir>cmd</executable.mkdir>
         <args.mkdir>/C mkdir</args.mkdir>
         <executable.npm>cmd</executable.npm>
@@ -295,8 +305,8 @@
         <envClassifier>linux</envClassifier>
         <dirsep>/</dirsep>
         <executable.brunch>brunch</executable.brunch>
-        <args.brunch></args.brunch>
         <executable.gzip>gzip</executable.gzip>
+        <args.brunch></args.brunch>
         <executable.mkdir>mkdir</executable.mkdir>
         <args.mkdir></args.mkdir>
         <executable.npm>npm</executable.npm>

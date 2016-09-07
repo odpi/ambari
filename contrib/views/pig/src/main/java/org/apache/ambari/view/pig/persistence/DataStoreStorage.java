@@ -18,17 +18,15 @@
 
 package org.apache.ambari.view.pig.persistence;
 
-import com.google.gson.Gson;
 import org.apache.ambari.view.PersistenceException;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.pig.persistence.utils.*;
 import org.apache.ambari.view.pig.utils.ServiceFormattedException;
-import org.apache.commons.configuration.Configuration;
+import org.apache.commons.beanutils.BeanUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.ws.rs.WebApplicationException;
-import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -38,7 +36,6 @@ import java.util.List;
 public class DataStoreStorage implements Storage {
   private final static Logger LOG =
       LoggerFactory.getLogger(DataStoreStorage.class);
-  protected final Gson gson = new Gson();
   protected ViewContext context;
 
   /**
@@ -52,27 +49,12 @@ public class DataStoreStorage implements Storage {
   @Override
   public synchronized void store(Indexed obj) {
     try {
-      if (obj.getId() == null) {
-        int id = nextIdForEntity(context, obj.getClass());
-        obj.setId(String.valueOf(id));
-      }
-      context.getDataStore().store(obj);
-    } catch (PersistenceException e) {
+      Indexed newBean = (Indexed) BeanUtils.cloneBean(obj);
+      context.getDataStore().store(newBean);
+      obj.setId(newBean.getId());
+    } catch (Exception e) {
       throw new ServiceFormattedException("Error while saving object to DataStorage", e);
     }
-  }
-
-  private static synchronized int nextIdForEntity(ViewContext context, Class aClass) {
-    // auto increment id implementation
-    String lastId = context.getInstanceData(aClass.getName());
-    int newId;
-    if (lastId == null) {
-      newId = 1;
-    } else {
-      newId = Integer.parseInt(lastId) + 1;
-    }
-    context.putInstanceData(aClass.getName(), String.valueOf(newId));
-    return newId;
   }
 
   @Override
@@ -151,24 +133,4 @@ public class DataStoreStorage implements Storage {
     }
   }
 
-  public static class SmokeTestEntity implements Indexed {
-    private String id = null;
-    private String data = null;
-
-    public String getId() {
-      return id;
-    }
-
-    public void setId(String id) {
-      this.id = id;
-    }
-
-    public String getData() {
-      return data;
-    }
-
-    public void setData(String data) {
-      this.data = data;
-    }
-  }
 }

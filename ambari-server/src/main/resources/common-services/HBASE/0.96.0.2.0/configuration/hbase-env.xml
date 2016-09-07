@@ -19,17 +19,17 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <property>
     <name>hbase_log_dir</name>
     <value>/var/log/hbase</value>
     <display-name>HBase Log Dir Prefix</display-name>
     <description>Log Directories for HBase.</description>
     <value-attributes>
+      <type>directory</type>
       <overridable>false</overridable>
-      <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hbase_pid_dir</name>
@@ -37,9 +37,11 @@
     <display-name>HBase PID Dir</display-name>
     <description>Pid Directory for HBase.</description>
     <value-attributes>
+      <type>directory</type>
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hbase_regionserver_heapsize</name>
@@ -53,6 +55,7 @@
       <unit>MB</unit>
       <increment-step>256</increment-step>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hbase_regionserver_xmn_max</name>
@@ -64,14 +67,20 @@ and the -Xmn ratio (hbase_regionserver_xmn_ratio) exceeds this value.
     </description>
     <display-name>RegionServers maximum value for -Xmn</display-name>
     <value-attributes>
+      <type>int</type>
       <unit>MB</unit>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hbase_regionserver_xmn_ratio</name>
     <value>0.2</value>
     <display-name>RegionServers -Xmn in -Xmx ratio</display-name>
     <description>Percentage of max heap size (-Xmx) which used for young generation heap (-Xmn).</description>
+    <value-attributes>
+      <type>float</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hbase_master_heapsize</name>
@@ -85,17 +94,70 @@ and the -Xmn ratio (hbase_regionserver_xmn_ratio) exceeds this value.
       <unit>MB</unit>
       <increment-step>256</increment-step>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-   <property>
+  <property>
     <name>hbase_user</name>
+    <display-name>HBase User</display-name>
     <value>hbase</value>
     <property-type>USER</property-type>
     <description>HBase User Name.</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
+  <property>
+    <name>hbase_user_nofile_limit</name>
+    <value>32000</value>
+    <description>Max open files limit setting for HBASE user.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>hbase_user_nproc_limit</name>
+    <value>16000</value>
+    <description>Max number of processes limit setting for HBASE user.</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>hbase_java_io_tmpdir</name>
+    <value>/tmp</value>
+    <description>Used in hbase-env.sh as HBASE_OPTS=-Djava.io.tmpdir=java_io_tmpdir</description>
+    <value-attributes>
+      <type>directory</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>hbase_principal_name</name>
+    <description>HBase principal name</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>hbase_user_keytab</name>
+    <description>HBase keytab path</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>hbase_regionserver_shutdown_timeout</name>
+    <value>30</value>
+    <display-name>HBase RegionServer shutdown timeout</display-name>
+    <description>
+After this number of seconds waiting for graceful stop of HBase Master it will be forced to exit with SIGKILL.
+The timeout is introduced because there is a known bug when from time to time HBase RegionServer hangs forever on stop if NN safemode is on.
+    </description>
+    <value-attributes>
+      <type>int</type>
+      <overridable>false</overridable>
+      <editable-only-at-install>true</editable-only-at-install>
+    </value-attributes>
+    <on-ambari-upgrade add="false"/>
+  </property>
   <!-- hbase-env.sh -->
   <property>
     <name>content</name>
+    <display-name>hbase-env template</display-name>
     <description>This is the jinja template for hbase-env.sh file</description>
     <value>
 # Set environment variables here.
@@ -118,7 +180,7 @@ export HBASE_CLASSPATH=${HBASE_CLASSPATH}
 # see http://wiki.apache.org/hadoop/PerformanceTuning
 export SERVER_GC_OPTS="-verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:{{log_dir}}/gc.log-`date +'%Y%m%d%H%M'`"
 # Uncomment below to enable java garbage collection logging.
-# export HBASE_OPTS="$HBASE_OPTS -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:$HBASE_HOME/logs/gc-hbase.log"
+# export HBASE_OPTS="$HBASE_OPTS -verbose:gc -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:$HBASE_HOME/logs/gc-hbase.log -Djava.io.tmpdir={{java_io_tmpdir}}"
 
 # Uncomment and adjust to enable JMX exporting
 # See jmxremote.password and jmxremote.access in $JRE_HOME/lib/management to configure remote password access.
@@ -156,16 +218,18 @@ export HBASE_PID_DIR={{pid_dir}}
 export HBASE_MANAGES_ZK=false
 
 {% if security_enabled %}
-export HBASE_OPTS="$HBASE_OPTS -XX:+UseConcMarkSweepGC -XX:ErrorFile={{log_dir}}/hs_err_pid%p.log -Djava.security.auth.login.config={{client_jaas_config_file}}"
+export HBASE_OPTS="$HBASE_OPTS -XX:+UseConcMarkSweepGC -XX:ErrorFile={{log_dir}}/hs_err_pid%p.log -Djava.security.auth.login.config={{client_jaas_config_file}} -Djava.io.tmpdir={{java_io_tmpdir}}"
 export HBASE_MASTER_OPTS="$HBASE_MASTER_OPTS -Xmx{{master_heapsize}} -Djava.security.auth.login.config={{master_jaas_config_file}}"
 export HBASE_REGIONSERVER_OPTS="$HBASE_REGIONSERVER_OPTS -Xmn{{regionserver_xmn_size}} -XX:CMSInitiatingOccupancyFraction=70  -Xms{{regionserver_heapsize}} -Xmx{{regionserver_heapsize}} -Djava.security.auth.login.config={{regionserver_jaas_config_file}}"
 {% else %}
-export HBASE_OPTS="$HBASE_OPTS -XX:+UseConcMarkSweepGC -XX:ErrorFile={{log_dir}}/hs_err_pid%p.log"
+export HBASE_OPTS="$HBASE_OPTS -XX:+UseConcMarkSweepGC -XX:ErrorFile={{log_dir}}/hs_err_pid%p.log -Djava.io.tmpdir={{java_io_tmpdir}}"
 export HBASE_MASTER_OPTS="$HBASE_MASTER_OPTS -Xmx{{master_heapsize}}"
 export HBASE_REGIONSERVER_OPTS="$HBASE_REGIONSERVER_OPTS -Xmn{{regionserver_xmn_size}} -XX:CMSInitiatingOccupancyFraction=70  -Xms{{regionserver_heapsize}} -Xmx{{regionserver_heapsize}}"
 {% endif %}
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
-
 </configuration>

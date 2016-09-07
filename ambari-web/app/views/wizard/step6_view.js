@@ -41,9 +41,7 @@ App.WizardStep6View = App.TableView.extend({
    * Synonym to <code>content</code> in this <code>App.TableView</code>
    * @type {object[]}
    */
-  filteredContent: function () {
-    return this.get('content');
-  }.property('content'),
+  filteredContent: Em.computed.alias('content'),
 
   /**
    * Set <code>label</code> and do <code>loadStep</code>
@@ -111,7 +109,7 @@ App.WizardStep6HostView = Em.View.extend({
     App.popover(this.$(), {
       title: Em.I18n.t('installer.step6.wizardStep6Host.title').format(this.get('host.hostName')),
       content: this.get('controller').getMasterComponentsForHost(this.get('host.hostName')).map(function (_component) {
-        return App.format.role(_component);
+        return App.format.role(_component, false);
       }).join("<br />"),
       placement: 'right',
       trigger: 'hover'

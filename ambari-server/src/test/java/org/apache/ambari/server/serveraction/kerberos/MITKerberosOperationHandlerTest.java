@@ -24,8 +24,8 @@ import com.google.inject.Injector;
 
 import junit.framework.Assert;
 
-import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.stack.OsFamily;
 import org.apache.ambari.server.utils.ShellCommandUtil;
@@ -40,11 +40,7 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.easymock.EasyMock.anyObject;
-import static org.easymock.EasyMock.capture;
-import static org.easymock.EasyMock.expect;
-import static org.easymock.EasyMock.replay;
-import static org.easymock.EasyMock.verify;
+import static org.easymock.EasyMock.*;
 
 public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTest {
 
@@ -54,10 +50,12 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
   private static Injector injector;
 
+  private static Method methodExecuteCommand;
+
   private static final Map<String, String> KERBEROS_ENV_MAP = new HashMap<String, String>() {
     {
       put(MITKerberosOperationHandler.KERBEROS_ENV_ENCRYPTION_TYPES, null);
-      put(MITKerberosOperationHandler.KERBEROS_ENV_KDC_HOST, "localhost");
+      put(MITKerberosOperationHandler.KERBEROS_ENV_KDC_HOSTS, "localhost");
       put(MITKerberosOperationHandler.KERBEROS_ENV_ADMIN_SERVER_HOST, "localhost");
       put(MITKerberosOperationHandler.KERBEROS_ENV_AD_CREATE_ATTRIBUTES_TEMPLATE, "AD Create Template");
       put(MITKerberosOperationHandler.KERBEROS_ENV_KDC_CREATE_ATTRIBUTES, "-attr1 -attr2 foo=345");
@@ -65,7 +63,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   };
 
   @BeforeClass
-  public static void beforeClass() throws AmbariException {
+  public static void beforeClass() throws Exception {
     injector = Guice.createInjector(new AbstractModule() {
       @Override
       protected void configure() {
@@ -78,12 +76,18 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
         bind(OsFamily.class).toInstance(EasyMock.createNiceMock(OsFamily.class));
       }
     });
+
+    methodExecuteCommand = KerberosOperationHandler.class.getDeclaredMethod(
+        "executeCommand",
+        String[].class,
+        Map.class,
+        ShellCommandUtil.InteractiveHandler.class);
   }
 
   @Test
   public void testSetPrincipalPasswordExceptions() throws Exception {
     MITKerberosOperationHandler handler = injector.getInstance(MITKerberosOperationHandler.class);
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
 
     try {
       handler.setPrincipalPassword(DEFAULT_ADMIN_PRINCIPAL, null);
@@ -116,11 +120,45 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
     }
   }
 
+  @Test(expected = KerberosPrincipalDoesNotExistException.class)
+  public void testSetPrincipalPasswordPrincipalDoesNotExist() throws Exception {
+    MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
+        .addMockedMethod(methodExecuteCommand)
+        .createNiceMock();
+
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
+        .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
+          @Override
+          public ShellCommandUtil.Result answer() throws Throwable {
+            ShellCommandUtil.Result result = createMock(ShellCommandUtil.Result.class);
+
+            expect(result.getExitCode()).andReturn(0).anyTimes();
+            expect(result.isSuccessful()).andReturn(true).anyTimes();
+            expect(result.getStderr())
+                .andReturn("change_password: Principal does not exist while changing password for \"nonexistant@EXAMPLE.COM\".")
+                .anyTimes();
+            expect(result.getStdout())
+                .andReturn("Authenticating as principal admin/admin with password.")
+                .anyTimes();
+
+            replay(result);
+            return result;
+          }
+        });
+
+    replayAll();
+
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.setPrincipalPassword("nonexistant@EXAMPLE.COM", "password");
+    handler.close();
+  }
+
   @Test
   public void testCreateServicePrincipal_AdditionalAttributes() throws Exception {
-    Method invokeKAdmin = MITKerberosOperationHandler.class.getDeclaredMethod("invokeKAdmin", String.class);
+    Method invokeKAdmin = MITKerberosOperationHandler.class.getDeclaredMethod("invokeKAdmin", String.class, String.class);
 
-    Capture<? extends String> query = new Capture<String>();
+    Capture<? extends String> query = newCapture();
+    Capture<? extends String> password = newCapture();
 
     ShellCommandUtil.Result result1 = createNiceMock(ShellCommandUtil.Result.class);
     expect(result1.getStderr()).andReturn("").anyTimes();
@@ -134,12 +172,12 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
         .addMockedMethod(invokeKAdmin)
         .createStrictMock();
 
-    expect(handler.invokeKAdmin(capture(query))).andReturn(result1).once();
-    expect(handler.invokeKAdmin("get_principal " + DEFAULT_ADMIN_PRINCIPAL)).andReturn(result2).once();
+    expect(handler.invokeKAdmin(capture(query), anyString())).andReturn(result1).once();
+    expect(handler.invokeKAdmin("get_principal " + DEFAULT_ADMIN_PRINCIPAL, null)).andReturn(result2).once();
 
     replay(handler, result1, result2);
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     handler.createPrincipal(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD, false);
 
     verify(handler, result1, result2);
@@ -147,10 +185,43 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
     Assert.assertTrue(query.getValue().contains(" " + KERBEROS_ENV_MAP.get(MITKerberosOperationHandler.KERBEROS_ENV_KDC_CREATE_ATTRIBUTES) + " "));
   }
 
+  @Test(expected = KerberosPrincipalAlreadyExistsException.class)
+  public void testCreatePrincipalPrincipalAlreadyNotExists() throws Exception {
+    MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
+        .addMockedMethod(methodExecuteCommand)
+        .createNiceMock();
+
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
+        .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
+          @Override
+          public ShellCommandUtil.Result answer() throws Throwable {
+            ShellCommandUtil.Result result = createMock(ShellCommandUtil.Result.class);
+
+            expect(result.getExitCode()).andReturn(0).anyTimes();
+            expect(result.isSuccessful()).andReturn(true).anyTimes();
+            expect(result.getStderr())
+                .andReturn("add_principal: Principal or policy already exists while creating \"existing@EXAMPLE.COM\".")
+                .anyTimes();
+            expect(result.getStdout())
+                .andReturn("Authenticating as principal admin/admin with password.")
+                .anyTimes();
+
+            replay(result);
+            return result;
+          }
+        });
+
+    replayAll();
+
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.createPrincipal("existing@EXAMPLE.COM", "password", false);
+    handler.close();
+  }
+
   @Test
   public void testCreateServicePrincipal_Exceptions() throws Exception {
     MITKerberosOperationHandler handler = new MITKerberosOperationHandler();
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
 
     try {
       handler.createPrincipal(DEFAULT_ADMIN_PRINCIPAL, null, false);
@@ -184,10 +255,10 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   @Test(expected = KerberosAdminAuthenticationException.class)
   public void testTestAdministratorCredentialsIncorrectAdminPassword() throws Exception {
     MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
-        .addMockedMethod(KerberosOperationHandler.class.getDeclaredMethod("executeCommand", String[].class))
+        .addMockedMethod(methodExecuteCommand)
         .createNiceMock();
 
-    expect(handler.executeCommand(anyObject(String[].class)))
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
         .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
           @Override
           public ShellCommandUtil.Result answer() throws Throwable {
@@ -209,7 +280,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
     replayAll();
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     handler.testAdministratorCredentials();
     handler.close();
   }
@@ -217,10 +288,10 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   @Test(expected = KerberosAdminAuthenticationException.class)
   public void testTestAdministratorCredentialsIncorrectAdminPrincipal() throws Exception {
     MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
-        .addMockedMethod(KerberosOperationHandler.class.getDeclaredMethod("executeCommand", String[].class))
+        .addMockedMethod(methodExecuteCommand)
         .createNiceMock();
 
-    expect(handler.executeCommand(anyObject(String[].class)))
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
         .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
           @Override
           public ShellCommandUtil.Result answer() throws Throwable {
@@ -242,7 +313,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
     replayAll();
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     handler.testAdministratorCredentials();
     handler.close();
   }
@@ -250,10 +321,10 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   @Test(expected = KerberosRealmException.class)
   public void testTestAdministratorCredentialsInvalidRealm() throws Exception {
     MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
-        .addMockedMethod(KerberosOperationHandler.class.getDeclaredMethod("executeCommand", String[].class))
+        .addMockedMethod(methodExecuteCommand)
         .createNiceMock();
 
-    expect(handler.executeCommand(anyObject(String[].class)))
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
         .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
           @Override
           public ShellCommandUtil.Result answer() throws Throwable {
@@ -275,7 +346,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
     replayAll();
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     handler.testAdministratorCredentials();
     handler.close();
   }
@@ -283,10 +354,10 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   @Test(expected = KerberosRealmException.class)
   public void testTestAdministratorCredentialsInvalidRealm2() throws Exception {
     MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
-        .addMockedMethod(KerberosOperationHandler.class.getDeclaredMethod("executeCommand", String[].class))
+        .addMockedMethod(methodExecuteCommand)
         .createNiceMock();
 
-    expect(handler.executeCommand(anyObject(String[].class)))
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
         .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
           @Override
           public ShellCommandUtil.Result answer() throws Throwable {
@@ -308,7 +379,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
     replayAll();
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     handler.testAdministratorCredentials();
     handler.close();
   }
@@ -316,10 +387,10 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   @Test(expected = KerberosKDCConnectionException.class)
   public void testTestAdministratorCredentialsKDCConnectionException() throws Exception {
     MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
-        .addMockedMethod(KerberosOperationHandler.class.getDeclaredMethod("executeCommand", String[].class))
+        .addMockedMethod(methodExecuteCommand)
         .createNiceMock();
 
-    expect(handler.executeCommand(anyObject(String[].class)))
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
         .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
           @Override
           public ShellCommandUtil.Result answer() throws Throwable {
@@ -341,7 +412,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
     replayAll();
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     handler.testAdministratorCredentials();
     handler.close();
   }
@@ -349,10 +420,10 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   @Test(expected = KerberosKDCConnectionException.class)
   public void testTestAdministratorCredentialsKDCConnectionException2() throws Exception {
     MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
-        .addMockedMethod(KerberosOperationHandler.class.getDeclaredMethod("executeCommand", String[].class))
+        .addMockedMethod(methodExecuteCommand)
         .createNiceMock();
 
-    expect(handler.executeCommand(anyObject(String[].class)))
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
         .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
           @Override
           public ShellCommandUtil.Result answer() throws Throwable {
@@ -374,7 +445,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
     replayAll();
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     handler.testAdministratorCredentials();
     handler.close();
   }
@@ -382,10 +453,10 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   @Test
   public void testTestAdministratorCredentialsNotFound() throws Exception {
     MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
-        .addMockedMethod(KerberosOperationHandler.class.getDeclaredMethod("executeCommand", String[].class))
+        .addMockedMethod(methodExecuteCommand)
         .createNiceMock();
 
-    expect(handler.executeCommand(anyObject(String[].class)))
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
         .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
           @Override
           public ShellCommandUtil.Result answer() throws Throwable {
@@ -407,7 +478,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
     replayAll();
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     Assert.assertFalse(handler.testAdministratorCredentials());
     handler.close();
   }
@@ -415,10 +486,10 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
   @Test
   public void testTestAdministratorCredentialsSuccess() throws Exception {
     MITKerberosOperationHandler handler = createMockBuilder(MITKerberosOperationHandler.class)
-        .addMockedMethod(KerberosOperationHandler.class.getDeclaredMethod("executeCommand", String[].class))
+        .addMockedMethod(methodExecuteCommand)
         .createNiceMock();
 
-    expect(handler.executeCommand(anyObject(String[].class)))
+    expect(handler.executeCommand(anyObject(String[].class), anyObject(Map.class), anyObject(MITKerberosOperationHandler.InteractivePasswordHandler.class)))
         .andAnswer(new IAnswer<ShellCommandUtil.Result>() {
           @Override
           public ShellCommandUtil.Result answer() throws Throwable {
@@ -460,7 +531,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
 
     replayAll();
 
-    handler.open(new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null), DEFAULT_REALM, KERBEROS_ENV_MAP);
+    handler.open(new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD), DEFAULT_REALM, KERBEROS_ENV_MAP);
     handler.testAdministratorCredentials();
     handler.close();
   }
@@ -485,7 +556,7 @@ public class MITKerberosOperationHandlerTest extends KerberosOperationHandlerTes
       realm = DEFAULT_REALM;
     }
 
-    KerberosCredential credentials = new KerberosCredential(principal, password.toCharArray(), null);
+    PrincipalKeyCredential credentials = new PrincipalKeyCredential(principal, password);
 
     handler.open(credentials, realm, KERBEROS_ENV_MAP);
     handler.testAdministratorCredentials();

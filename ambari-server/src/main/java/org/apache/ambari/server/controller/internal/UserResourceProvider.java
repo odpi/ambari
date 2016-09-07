@@ -23,8 +23,11 @@ import org.apache.ambari.server.controller.UserRequest;
 import org.apache.ambari.server.controller.UserResponse;
 import org.apache.ambari.server.controller.spi.*;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
+import org.apache.ambari.server.security.authorization.RoleAuthorization;
 
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -32,18 +35,19 @@ import java.util.Set;
 /**
  * Resource provider for user resources.
  */
-class UserResourceProvider extends AbstractControllerResourceProvider {
+public class UserResourceProvider extends AbstractControllerResourceProvider {
 
   // ----- Property ID constants ---------------------------------------------
 
   // Users
-  protected static final String USER_USERNAME_PROPERTY_ID     = PropertyHelper.getPropertyId("Users", "user_name");
-  protected static final String USER_PASSWORD_PROPERTY_ID     = PropertyHelper.getPropertyId("Users", "password");
-  protected static final String USER_OLD_PASSWORD_PROPERTY_ID = PropertyHelper.getPropertyId("Users", "old_password");
-  protected static final String USER_LDAP_USER_PROPERTY_ID    = PropertyHelper.getPropertyId("Users", "ldap_user");
-  protected static final String USER_ACTIVE_PROPERTY_ID       = PropertyHelper.getPropertyId("Users", "active");
-  protected static final String USER_GROUPS_PROPERTY_ID       = PropertyHelper.getPropertyId("Users", "groups");
-  protected static final String USER_ADMIN_PROPERTY_ID        = PropertyHelper.getPropertyId("Users", "admin");
+  public static final String USER_USERNAME_PROPERTY_ID     = PropertyHelper.getPropertyId("Users", "user_name");
+  public static final String USER_PASSWORD_PROPERTY_ID     = PropertyHelper.getPropertyId("Users", "password");
+  public static final String USER_OLD_PASSWORD_PROPERTY_ID = PropertyHelper.getPropertyId("Users", "old_password");
+  public static final String USER_LDAP_USER_PROPERTY_ID    = PropertyHelper.getPropertyId("Users", "ldap_user");
+  public static final String USER_TYPE_PROPERTY_ID         = PropertyHelper.getPropertyId("Users", "user_type");
+  public static final String USER_ACTIVE_PROPERTY_ID       = PropertyHelper.getPropertyId("Users", "active");
+  public static final String USER_GROUPS_PROPERTY_ID       = PropertyHelper.getPropertyId("Users", "groups");
+  public static final String USER_ADMIN_PROPERTY_ID        = PropertyHelper.getPropertyId("Users", "admin");
 
   private static Set<String> pkPropertyIds =
       new HashSet<String>(Arrays.asList(new String[]{
@@ -56,10 +60,13 @@ class UserResourceProvider extends AbstractControllerResourceProvider {
                        Map<Resource.Type, String> keyPropertyIds,
                        AmbariManagementController managementController) {
     super(propertyIds, keyPropertyIds, managementController);
+
+    setRequiredCreateAuthorizations(EnumSet.of(RoleAuthorization.AMBARI_MANAGE_USERS));
+    setRequiredDeleteAuthorizations(EnumSet.of(RoleAuthorization.AMBARI_MANAGE_USERS));
   }
 
   @Override
-  public RequestStatus createResources(Request request)
+  public RequestStatus createResourcesAuthorized(Request request)
       throws SystemException,
       UnsupportedPropertyException,
       ResourceAlreadyExistsException,
@@ -96,7 +103,7 @@ class UserResourceProvider extends AbstractControllerResourceProvider {
 
     Set<UserResponse> responses = getResources(new Command<Set<UserResponse>>() {
       @Override
-      public Set<UserResponse> invoke() throws AmbariException {
+      public Set<UserResponse> invoke() throws AmbariException, AuthorizationException {
         return getManagementController().getUsers(requests);
       }
     });
@@ -118,6 +125,9 @@ class UserResourceProvider extends AbstractControllerResourceProvider {
 
       setResourceProperty(resource, USER_LDAP_USER_PROPERTY_ID,
           userResponse.isLdapUser(), requestedIds);
+
+      setResourceProperty(resource, USER_TYPE_PROPERTY_ID,
+          userResponse.getUserType(), requestedIds);
 
       setResourceProperty(resource, USER_ACTIVE_PROPERTY_ID,
           userResponse.isActive(), requestedIds);
@@ -147,7 +157,7 @@ class UserResourceProvider extends AbstractControllerResourceProvider {
 
     modifyResources(new Command<Void>() {
       @Override
-      public Void invoke() throws AmbariException {
+      public Void invoke() throws AmbariException, AuthorizationException {
         getManagementController().updateUsers(requests);
         return null;
       }
@@ -157,7 +167,7 @@ class UserResourceProvider extends AbstractControllerResourceProvider {
   }
 
   @Override
-  public RequestStatus deleteResources(Predicate predicate)
+  public RequestStatus deleteResourcesAuthorized(Request request, Predicate predicate)
       throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
     final Set<UserRequest> requests = new HashSet<UserRequest>();
 

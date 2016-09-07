@@ -34,15 +34,17 @@ import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
 import org.apache.ambari.server.state.stack.PrerequisiteCheck;
+import org.apache.ambari.server.state.stack.UpgradePack.PrerequisiteCheckConfig;
 import org.easymock.EasyMock;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import com.google.inject.Provider;
+import org.mockito.Mockito;
 
 /**
- * Unit tests for ServicesUpCheck
+ * Unit tests for ServicesNamenodeTruncateCheck
  *
  */
 public class ServicesNamenodeTruncateCheckTest {
@@ -56,17 +58,20 @@ public class ServicesNamenodeTruncateCheckTest {
     Cluster cluster = EasyMock.createMock(Cluster.class);
 
     Config config = EasyMock.createMock(Config.class);
+    final Map<String, Service> services = new HashMap<>();
+    final Service service = Mockito.mock(Service.class);
 
+    services.put("HDFS", service);
+
+    expect(cluster.getServices()).andReturn(services).anyTimes();
     expect(config.getProperties()).andReturn(m_configMap).anyTimes();
-    expect(cluster.getService("HDFS")).andReturn(EasyMock.createMock(Service.class));
+    expect(cluster.getService("HDFS")).andReturn(service);
     expect(cluster.getDesiredConfigByType("hdfs-site")).andReturn(config).anyTimes();
     expect(m_clusters.getCluster((String) anyObject())).andReturn(cluster).anyTimes();
 
     replay(m_clusters, cluster, config);
 
     Configuration configuration = EasyMock.createMock(Configuration.class);
-    expect(configuration.getRollingUpgradeMinStack()).andReturn("HDP-2.2").anyTimes();
-    expect(configuration.getRollingUpgradeMaxStack()).andReturn("").anyTimes();
     replay(configuration);
     m_check.config = configuration;
 
@@ -105,12 +110,18 @@ public class ServicesNamenodeTruncateCheckTest {
     m_check.perform(check, request);
     assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
 
-    // Check HDP-2.3.x => HDP-2.3.y is PASS
-    request.setSourceStackId(new StackId("HDP-2.3.4.2"));
-    request.setTargetStackId(new StackId("HDP-2.3.8.4"));
+    m_configMap.put("dfs.allow.truncate", "false");
     check = new PrerequisiteCheck(null, null);
     m_check.perform(check, request);
     assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+
+    // Check HDP-2.2.x => HDP-2.3.y is FAIL
+    m_configMap.put("dfs.allow.truncate", "true");
+    request.setSourceStackId(new StackId("HDP-2.2.4.2"));
+    request.setTargetStackId(new StackId("HDP-2.3.8.4"));
+    check = new PrerequisiteCheck(null, null);
+    m_check.perform(check, request);
+    assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
 
     m_configMap.put("dfs.allow.truncate", "false");
     check = new PrerequisiteCheck(null, null);

@@ -27,15 +27,51 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
+import com.google.common.io.Files;
 import org.apache.ambari.server.controller.StackVersionResponse;
 import org.apache.ambari.server.stack.Validable;
+import org.apache.ambari.server.state.repository.VersionDefinitionXml;
+import org.apache.ambari.server.state.stack.ConfigUpgradePack;
+import org.apache.ambari.server.state.stack.RepositoryXml;
 import org.apache.ambari.server.state.stack.StackRoleCommandOrder;
 import org.apache.ambari.server.state.stack.UpgradePack;
 
 public class StackInfo implements Comparable<StackInfo>, Validable{
   private String minJdk;
   private String maxJdk;
+  private String name;
+  private String version;
+  private String minUpgradeVersion;
+  private boolean active;
+  private String rcoFileLocation;
+  private String kerberosDescriptorFileLocation;
+  private String widgetsDescriptorFileLocation;
+  private List<RepositoryInfo> repositories;
+  private Collection<ServiceInfo> services;
+  private Collection<ExtensionInfo> extensions;
+  private String parentStackVersion;
+  // stack-level properties
+  private List<PropertyInfo> properties;
+  private Map<String, Map<String, Map<String, String>>> configTypes;
+  private Map<String, UpgradePack> upgradePacks;
+  private ConfigUpgradePack configUpgradePack;
+  private StackRoleCommandOrder roleCommandOrder;
+  private boolean valid = true;
+  private Map<String, Map<PropertyInfo.PropertyType, Set<String>>> propertiesTypesCache =
+      Collections.synchronizedMap(new HashMap<String, Map<PropertyInfo.PropertyType, Set<String>>>());
+  private Map<String, Map<String, Map<String, String>>> configPropertyAttributes =  null;
+  /**
+   * Meaning: stores subpath from stack root to exact hooks folder for stack. These hooks are
+   * applied to all commands for services in current stack.
+   */
+  private String stackHooksFolder;
+  private String upgradesFolder = null;
+  private volatile Map<String, PropertyInfo> requiredProperties;
+  private Map<String, VersionDefinitionXml> versionDefinitions = new ConcurrentHashMap<>();
+  private Set<String> errorSet = new HashSet<String>();
+  private RepositoryXml repoXml = null;
 
   public String getMinJdk() {
     return minJdk;
@@ -53,25 +89,8 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
     this.maxJdk = maxJdk;
   }
 
-  private String name;
-  private String version;
-  private String minUpgradeVersion;
-  private boolean active;
-  private String rcoFileLocation;
-  private String kerberosDescriptorFileLocation;
-  private String widgetsDescriptorFileLocation;
-  private List<RepositoryInfo> repositories;
-  private Collection<ServiceInfo> services;
-  private String parentStackVersion;
-  // stack-level properties
-  private List<PropertyInfo> properties;
-  private Map<String, Map<String, Map<String, String>>> configTypes;
-  private Map<String, UpgradePack> upgradePacks;
-  private StackRoleCommandOrder roleCommandOrder;
-  private boolean valid = true;
-
   /**
-   * 
+   *
    * @return valid xml flag
    */
   @Override
@@ -80,40 +99,28 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   }
 
   /**
-   * 
+   *
    * @param valid set validity flag
    */
   @Override
   public void setValid(boolean valid) {
     this.valid = valid;
-  }    
+  }
 
-  private Set<String> errorSet = new HashSet<String>();
-  
   @Override
-  public void setErrors(String error) {
+  public void addError(String error) {
     errorSet.add(error);
   }
 
   @Override
-  public Collection getErrors() {
+  public Collection<String> getErrors() {
     return errorSet;
-  }   
-  
-  @Override
-  public void setErrors(Collection error) {
-    this.errorSet.addAll(error);
   }
-  
-  /**
-   * Meaning: stores subpath from stack root to exact hooks folder for stack. These hooks are
-   * applied to all commands for services in current stack.
-   */
-  private String stackHooksFolder;
 
-  private String upgradesFolder = null;
-
-  private volatile Map<String, PropertyInfo> requiredProperties;
+  @Override
+  public void addErrors(Collection<String> errors) {
+    this.errorSet.addAll(errors);
+  }
 
   public String getName() {
     return name;
@@ -136,9 +143,6 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
     return repositories;
   }
 
-  public void setRepositories(List<RepositoryInfo> repositories) {
-    this.repositories = repositories;
-  }
 
   public synchronized Collection<ServiceInfo> getServices() {
     if (services == null) services = new ArrayList<ServiceInfo>();
@@ -158,6 +162,34 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
 
   public synchronized void setServices(Collection<ServiceInfo> services) {
     this.services = services;
+  }
+
+  public synchronized Collection<ExtensionInfo> getExtensions() {
+    if (extensions == null) extensions = new ArrayList<ExtensionInfo>();
+    return extensions;
+  }
+
+  public ExtensionInfo getExtension(String name) {
+    Collection<ExtensionInfo> extensions = getExtensions();
+    for (ExtensionInfo extension : extensions) {
+      if (extension.getName().equals(name)) {
+        return extension;
+      }
+    }
+    //todo: exception?
+    return null;
+  }
+
+  public ExtensionInfo getExtensionByService(String serviceName) {
+    Collection<ExtensionInfo> extensions = getExtensions();
+    for (ExtensionInfo extension : extensions) {
+      for (ServiceInfo service : services) {
+        if (service.getName().equals(serviceName))
+          return extension;
+      }
+    }
+    //todo: exception?
+    return null;
   }
 
   public List<PropertyInfo> getProperties() {
@@ -253,8 +285,6 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
 
     // Get the stack-level Kerberos descriptor file path
     String stackDescriptorFileFilePath = getKerberosDescriptorFileLocation();
-
-    String widgetDescriptorFilePath = getWidgetsDescriptorFileLocation();
 
     // Collect the services' Kerberos descriptor files
     Collection<ServiceInfo> serviceInfos = getServices();
@@ -373,23 +403,40 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   }
 
   /**
+   * Obtain all stack upgrade packs.
+   *
+   * @return map of upgrade pack name to upgrade pack or {@code null} if no packs
+   */
+  public Map<String, UpgradePack> getUpgradePacks() {
+    return upgradePacks;
+  }
+
+  /**
    * Set upgrade packs.
    *
-   * @param upgradePacks  map of upgrade packs
+   * @param upgradePacks map of upgrade packs
    */
   public void setUpgradePacks(Map<String, UpgradePack> upgradePacks) {
     this.upgradePacks = upgradePacks;
   }
 
   /**
-   * Obtain all stack upgrade packs.
-   *
-   * @return map of upgrade pack name to upgrade pack or {@code null} of no packs
+   * Get config upgrade pack for stack
+   * @return config upgrade pack for stack or null if it is
+   * not defined
    */
-  public Map<String, UpgradePack> getUpgradePacks() {
-    return upgradePacks;
+  public ConfigUpgradePack getConfigUpgradePack() {
+    return configUpgradePack;
   }
 
+  /**
+   * Set config upgrade pack for stack
+   * @param configUpgradePack config upgrade pack for stack or null if it is
+   * not defined
+   */
+  public void setConfigUpgradePack(ConfigUpgradePack configUpgradePack) {
+    this.configUpgradePack = configUpgradePack;
+  }
 
   @Override
   public int compareTo(StackInfo o) {
@@ -417,4 +464,92 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
     }
     return result;
   }
+
+  public Map<PropertyInfo.PropertyType, Set<String>> getConfigPropertiesTypes(String configType) {
+    if(!propertiesTypesCache.containsKey(configType)) {
+      Map<PropertyInfo.PropertyType, Set<String>> propertiesTypes = new HashMap<>();
+      Collection<ServiceInfo> services = getServices();
+      for (ServiceInfo serviceInfo : services) {
+        for (PropertyInfo propertyInfo : serviceInfo.getProperties()) {
+          if (propertyInfo.getFilename().contains(configType) && !propertyInfo.getPropertyTypes().isEmpty()) {
+            Set<PropertyInfo.PropertyType> types = propertyInfo.getPropertyTypes();
+            for (PropertyInfo.PropertyType propertyType : types) {
+              if (!propertiesTypes.containsKey(propertyType))
+                propertiesTypes.put(propertyType, new HashSet<String>());
+              propertiesTypes.get(propertyType).add(propertyInfo.getName());
+            }
+          }
+        }
+      }
+      propertiesTypesCache.put(configType, propertiesTypes);
+    }
+    return propertiesTypesCache.get(configType);
+  }
+
+  /**
+   * Return default config attributes for specified config type.
+   * @param configType config type
+   * @return config attributes
+   */
+  public synchronized Map<String, Map<String, String>> getDefaultConfigAttributesForConfigType(String configType){
+    if(configPropertyAttributes == null){
+      configPropertyAttributes = getDefaultConfigAttributes();
+    }
+    if(configPropertyAttributes.containsKey(configType)){
+      return configPropertyAttributes.get(configType);
+    }
+    return null;
+  }
+
+  private Map<String,  Map<String, Map<String, String>>> getDefaultConfigAttributes(){
+    Map<String,  Map<String, Map<String, String>>> result = new HashMap<>();
+    for(ServiceInfo si : services){
+      for(PropertyInfo pi : si.getProperties())
+      {
+        String propertyConfigType = Files.getNameWithoutExtension(pi.getFilename());
+        String propertyName = pi.getName();
+        String hidden = pi.getPropertyValueAttributes().getHidden();
+        if(hidden != null){
+          if(!result.containsKey(propertyConfigType)){
+            result.put(propertyConfigType, new HashMap<String, Map<String, String>>());
+          }
+          if(!result.get(propertyConfigType).containsKey("hidden")){
+            result.get(propertyConfigType).put("hidden", new HashMap<String, String>());
+          }
+          result.get(propertyConfigType).get("hidden").put(propertyName, hidden);
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * @param key the version that the xml represents
+   * @param xml the version definition object
+   */
+  public void addVersionDefinition(String key, VersionDefinitionXml xml) {
+    versionDefinitions.put(key, xml);
+  }
+
+  /**
+   * @return the list of available definitions on this stack
+   */
+  public Collection<VersionDefinitionXml> getVersionDefinitions() {
+    return versionDefinitions.values();
+  }
+
+  /**
+   * @param rxml  the repository xml object
+   */
+  public void setRepositoryXml(RepositoryXml rxml) {
+    repoXml = rxml;
+  }
+
+  /**
+   * @return the repository xml object, or {@code null} if it couldn't be loaded
+   */
+  public RepositoryXml getRepositoryXml() {
+    return repoXml;
+  }
+
 }

@@ -18,7 +18,7 @@
 'use strict';
 
 angular.module('ambariAdminConsole')
-.factory('User', ['Restangular', '$http', 'Settings', function(Restangular, $http, Settings) {
+  .factory('User', ['Restangular', '$http', 'Settings', 'UserConstants', '$translate', function(Restangular, $http, Settings, UserConstants, $translate) {
   Restangular.addResponseInterceptor(function(data, operation, what, url, response, deferred) {
     var extractedData;
     if(operation === 'getList'){
@@ -30,18 +30,18 @@ angular.module('ambariAdminConsole')
 
     return extractedData;
   });
-
+  var $t = $translate.instant;
   var Users = Restangular.all('users');
 
   return {
     list: function(params) {
       return $http.get(
-        Settings.baseUrl + '/users/?' 
+        Settings.baseUrl + '/users/?'
         + 'Users/user_name.matches(.*'+params.searchString+'.*)'
         + '&fields=*'
         + '&from=' + (params.currentPage-1)*params.usersPerPage
         + '&page_size=' + params.usersPerPage
-        + (params.ldap_user === '*' ? '' : '&Users/ldap_user=' + params.ldap_user)
+        + (params.user_type === '*' ? '' : '&Users/user_type=' + params.user_type)
         + (params.active === '*' ? '' : '&Users/active=' + params.active)
         + (params.admin ? '&Users/admin=true' : '')
       );
@@ -79,13 +79,26 @@ angular.module('ambariAdminConsole')
       return Restangular.one('users', userId).remove();
     },
     getPrivileges : function(userId) {
-      return $http.get(Settings.baseUrl + '/privileges', {
+      return $http.get(Settings.baseUrl + '/users/' + userId + '/privileges', {
         params:{
-          'PrivilegeInfo/principal_type': 'USER',
-          'PrivilegeInfo/principal_name': encodeURIComponent(userId),
           'fields': '*'
         }
       });
+    },
+    /**
+     * Generate user info to display by response data from API.
+     * Generally this is a single point to manage all required and useful data
+     * needed to use as context for views/controllers.
+     *
+     * @param {Object} user - object from API response
+     * @returns {Object}
+     */
+    makeUser: function(user) {
+      user.Users.encoded_name = encodeURIComponent(user.Users.user_name);
+      user.Users.userTypeName = $t(UserConstants.TYPES[user.Users.user_type].LABEL_KEY);
+      user.Users.ldap_user = user.Users.user_type === UserConstants.TYPES.LDAP.VALUE;
+
+      return user;
     }
   };
 }]);

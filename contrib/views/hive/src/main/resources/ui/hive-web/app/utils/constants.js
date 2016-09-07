@@ -39,6 +39,7 @@ export default Ember.Object.create({
       logs: 'logs',
       results: 'results',
       explain: 'explain',
+      uploadTable :'upload-table',
       visualization: 'visualization'
     },
 
@@ -60,13 +61,13 @@ export default Ember.Object.create({
     insertUdfs: 'insert-udfs',
     job: 'job',
     jobs: 'jobs',
-    history: 'history',
     savedQuery: 'saved-query',
     database: 'database',
     databases: 'databases',
     openQueries: 'open-queries',
     visualExplain: 'visual-explain',
     notify: 'notify',
+    history: 'history',
     tezUI: 'tez-ui',
     file: 'file',
     fileResource: 'file-resource',
@@ -80,6 +81,7 @@ export default Ember.Object.create({
     databaseSearch: 'databases-search-results',
     settings: 'settings',
     jobProgress: 'job-progress',
+    ldapAuthentication: 'ldap-authentication',
     queryTabs: 'query-tabs',
     session: 'session'
   },
@@ -89,6 +91,7 @@ export default Ember.Object.create({
       name: 'hive.tez.container.size',
       validate: helpers.regexes.digits
     },
+
     {
       name: 'hive.prewarm.enabled',
       values: helpers.validationValues.bool
@@ -107,6 +110,10 @@ export default Ember.Object.create({
     },
     {
       name: 'hive.vectorized.execution.enabled',
+      values: helpers.validationValues.bool
+    },
+    {
+      name: 'hive.auto.convert.join',
       values: helpers.validationValues.bool
     },
     {
@@ -218,10 +225,6 @@ export default Ember.Object.create({
     }
   },
 
-  globalSettings: {
-    comment: "--Global Settings--\n\n"
-  },
-
-  defaultVisualizationRowCount: 30000
+  defaultVisualizationRowCount: 10000
 
 });

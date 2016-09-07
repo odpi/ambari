@@ -31,6 +31,11 @@ App.MainAdminStackVersionsView = Em.View.extend({
   updateTimer: null,
 
   /**
+   * @type {Array}
+   */
+  services: App.Service.find(),
+
+  /**
    * Not Installed = the version is not installed or out of sync
    * Upgrade Ready = the version is installed and ready for upgrade
    * Current = the version currently being used
@@ -115,14 +120,18 @@ App.MainAdminStackVersionsView = Em.View.extend({
   /**
    * @type {object}
    */
-  selectedCategory: function () {
-    return this.get('categories').findProperty('isSelected');
-  }.property('categories.@each.isSelected'),
+  selectedCategory: Em.computed.findBy('categories', 'isSelected', true),
 
   /**
    * @type {Em.Array}
    */
   repoVersions: App.RepositoryVersion.find(),
+
+  repoVersionsDisplay: function () {
+    return this.get('repoVersions').toArray().sort(function (a, b) {
+      return (a.get('repositoryVersion') > b.get('repositoryVersion')) ? 1 : ((b.get('repositoryVersion') > a.get('repositoryVersion')) ? -1 : 0);
+    });
+  }.property('repoVersions'),
 
   /**
    * @type {Em.Array}
@@ -140,9 +149,13 @@ App.MainAdminStackVersionsView = Em.View.extend({
     if (filter && filter.get('value')) {
       versions = versions.filter(function (version) {
         var status = version.get('status');
-        if (status === 'INSTALLED' && ['UPGRADE_READY', 'INSTALLED'].contains(filter.get('value'))) {
-          if (filter.get('value') === 'UPGRADE_READY') {
-            return stringUtils.compareVersions(version.get('repositoryVersion'), Em.get(currentVersion, 'repository_version')) === 1;
+        var isUpgrading = App.router.get('mainAdminStackAndUpgradeController.upgradeVersion') === version.get('displayName');
+        if (status === 'INSTALLED' && ['UPGRADE_READY', 'INSTALLED', 'UPGRADING'].contains(filter.get('value'))) {
+          if (filter.get('value') === 'UPGRADING') {
+            return isUpgrading;
+          } else if (filter.get('value') === 'UPGRADE_READY') {
+            return !isUpgrading &&
+              stringUtils.compareVersions(version.get('repositoryVersion'), Em.get(currentVersion, 'repository_version')) === 1;
           } else if (filter.get('value') === 'INSTALLED') {
             return stringUtils.compareVersions(version.get('repositoryVersion'), Em.get(currentVersion, 'repository_version')) < 1;
           }
@@ -180,9 +193,8 @@ App.MainAdminStackVersionsView = Em.View.extend({
               }
             }),
             sortedMappedVersions = mappedVersions.sort(),
-            latestVersion = sortedMappedVersions[sortedMappedVersions.length-1];
-            console.log('/views/ADMIN_VIEW/' + latestVersion + '/INSTANCE/#/stackVersions');
-            window.location.replace('/views/ADMIN_VIEW/' + latestVersion + '/INSTANCE/#/stackVersions');
+            latestVersion = sortedMappedVersions[sortedMappedVersions.length-1].replace(/[^\d.-]/g, '');
+            window.location.replace(App.appURLRoot + 'views/ADMIN_VIEW/' + latestVersion + '/INSTANCE/#/stackVersions');
         }
       });
     },
@@ -203,6 +215,7 @@ App.MainAdminStackVersionsView = Em.View.extend({
    */
   willDestroyElement: function () {
     window.clearTimeout(this.get('updateTimer'));
+    App.ajax.abortRequests(this.get('controller.runningCheckRequests'));
   },
 
   /**

@@ -19,8 +19,7 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <property>
     <name>yarn_log_dir_prefix</name>
     <value>c:\hadoop\logs\hadoop-yarn</value>
@@ -30,6 +29,7 @@
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>yarn_pid_dir_prefix</name>
@@ -40,10 +40,12 @@
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>yarn_user</name>
     <deleted>true</deleted>
+    <on-ambari-upgrade add="false"/>
   </property>
   <!-- yarn-env.cmd -->
   <property>
@@ -51,5 +53,9 @@
     <description>This is the jinja template for yarn-env.cmd file</description>
     <value>
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

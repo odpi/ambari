@@ -18,14 +18,16 @@ limitations under the License.
 
 """
 
-from resource_management import *
+from resource_management.libraries.script.script import Script
 from ams import ams
 from ams_service import ams_service
 from status import check_service_status
 
 class AmsMonitor(Script):
   def install(self, env):
-    self.install_packages(env, exclude_packages = ['ambari-metrics-collector'])
+    import params
+    env.set_params(params)
+    self.install_packages(env)
     self.configure(env) # for security
 
   def configure(self, env):
@@ -52,6 +54,18 @@ class AmsMonitor(Script):
     import status_params
     env.set_params(status_params)
     check_service_status(name='monitor')
+    
+  def get_log_folder(self):
+    import params
+    return params.ams_monitor_log_dir
+
+  def get_pid_files(self):
+    import status_params
+    return [status_params.monitor_pid_file]
+
+  def get_user(self):
+    import params
+    return params.ams_user
 
 
 if __name__ == "__main__":

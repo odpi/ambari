@@ -18,159 +18,83 @@
 
 var App = require('app');
 require('config');
+require('utils/configs_collection');
 require('utils/config');
 require('models/service/hdfs');
+var testHelpers = require('test/helpers');
 var setups = require('test/init_model_test');
-var modelSetup = setups.configs;
 
-describe('App.config', function () {
+describe('App.config', function() {
 
-  describe('#fileConfigsIntoTextarea', function () {
-    var filename = 'capacity-scheduler.xml';
-    var configs = [
-      {
-        name: 'config1',
-        value: 'value1',
-        recommendedValue: 'value1',
-        filename: 'capacity-scheduler.xml'
-      },
-      {
-        name: 'config2',
-        value: 'value2',
-        recommendedValue: 'value2',
-        filename: 'capacity-scheduler.xml'
-      }
+  describe('#getOriginalFileName', function() {
+    var tests = [
+      { input: 'someFileName.xml', output: 'someFileName.xml', m: 'do not add extra ".xml" '},
+      { input: 'someFileNamexml', output: 'someFileNamexml.xml' , m: 'add ".xml" '},
+      { input: 'alert_notification', output: 'alert_notification', m: 'do not add ".xml" to special file names' }
     ];
-    it('two configs into textarea', function () {
-      var result = App.config.fileConfigsIntoTextarea.call(App.config, configs, filename);
-      expect(result.length).to.equal(1);
-      expect(result[0].value).to.equal('config1=value1\nconfig2=value2\n');
-      expect(result[0].recommendedValue).to.equal('config1=value1\nconfig2=value2\n');
-    });
-    it('three config into textarea', function () {
-      configs.push({
-        name: 'config3',
-        value: 'value3',
-        recommendedValue: 'value3',
-        filename: 'capacity-scheduler.xml'
-      });
-      var result = App.config.fileConfigsIntoTextarea.call(App.config, configs, filename);
-      expect(result.length).to.equal(1);
-      expect(result[0].value).to.equal('config1=value1\nconfig2=value2\nconfig3=value3\n');
-      expect(result[0].recommendedValue).to.equal('config1=value1\nconfig2=value2\nconfig3=value3\n');
-    });
-    it('one of three configs has different filename', function () {
-      configs[1].filename = 'another filename';
-      var result = App.config.fileConfigsIntoTextarea.call(App.config, configs, filename);
-      //result contains two configs: one with different filename and one textarea config
-      expect(result.length).to.equal(2);
-      expect(result[1].value).to.equal('config1=value1\nconfig3=value3\n');
-      expect(result[1].recommendedValue).to.equal('config1=value1\nconfig3=value3\n');
-    });
-    it('none configs into empty textarea', function () {
-      filename = 'capacity-scheduler.xml';
-      configs.clear();
-      var result = App.config.fileConfigsIntoTextarea.call(App.config, configs, filename);
-      expect(result.length).to.equal(1);
-      expect(result[0].value).to.equal('');
-      expect(Em.isNone(result[0].recommendedValue)).to.be.true;
-      expect(Em.isNone(result[0].savedValue)).to.be.true;
-    });
-    it("filename has configs that shouldn't be included in textarea", function () {
-      var configs = [
-        {
-          name: 'config1',
-          value: 'value1',
-          recommendedValue: 'value1',
-          filename: filename
-        },
-        {
-          name: 'config2',
-          value: 'value2',
-          recommendedValue: 'value2',
-          filename: filename
-        }
-      ];
-      var cfg = {
-        name: 'config3',
-        value: 'value3',
-        recommendedValue: 'value3',
-        filename: filename
-      };
-      configs.push(cfg);
-      var result = App.config.fileConfigsIntoTextarea.call(App.config, configs, filename, [cfg]);
-      expect(result.length).to.equal(2);
-      expect(result[1].value).to.equal('config1=value1\nconfig2=value2\n');
-      expect(result[1].recommendedValue).to.equal('config1=value1\nconfig2=value2\n');
-      expect(configs.findProperty('name', 'config3')).to.eql(cfg);
+
+    tests.forEach(function(t) {
+        it(t.m, function() {
+          expect(App.config.getOriginalFileName(t.input)).to.equal(t.output);
+        });
     });
   });
 
-  describe('#textareaIntoFileConfigs', function () {
-    var filename = 'capacity-scheduler.xml';
-    var testData = [
-      {
-        configs: [Em.Object.create({
-          "name": "capacity-scheduler",
-          "value": "config1=value1",
-          "filename": "capacity-scheduler.xml",
-          "isRequiredByAgent": true
-        })]
-      },
-      {
-        configs: [Em.Object.create({
-          "name": "capacity-scheduler",
-          "value": "config1=value1\nconfig2=value2\n",
-          "filename": "capacity-scheduler.xml",
-          "isRequiredByAgent": false
-        })]
-      },
-      {
-        configs: [Em.Object.create({
-          "name": "capacity-scheduler",
-          "value": "config1=value1,value2\n",
-          "filename": "capacity-scheduler.xml",
-          "isRequiredByAgent": true
-        })]
-      },
-      {
-        configs: [Em.Object.create({
-          "name": "capacity-scheduler",
-          "value": "config1=value1 config2=value2\n",
-          "filename": "capacity-scheduler.xml",
-          "isRequiredByAgent": false
-        })]
-      }
+  describe('#getConfigTagFromFileName', function() {
+    var tests = [
+      { input: 'someFileName.xml', output: 'someFileName', m: 'remove ".xml"'},
+      { input: 'someFileNamexml', output: 'someFileNamexml' , m: 'leave as is'}
     ];
 
-    it('config1=value1 to one config', function () {
-      var result = App.config.textareaIntoFileConfigs.call(App.config, testData[0].configs, filename);
-      expect(result.length).to.equal(1);
-      expect(result[0].value).to.equal('value1');
-      expect(result[0].name).to.equal('config1');
-      expect(result[0].isRequiredByAgent).to.be.true;
+    tests.forEach(function(t) {
+      it(t.m, function() {
+        expect(App.config.getConfigTagFromFileName(t.input)).to.equal(t.output);
+      });
     });
-    it('config1=value1\\nconfig2=value2\\n to two configs', function () {
-      var result = App.config.textareaIntoFileConfigs.call(App.config, testData[1].configs, filename);
-      expect(result.length).to.equal(2);
-      expect(result[0].value).to.equal('value1');
-      expect(result[0].name).to.equal('config1');
-      expect(result[1].value).to.equal('value2');
-      expect(result[1].name).to.equal('config2');
-      expect(result[0].isRequiredByAgent).to.be.false;
-      expect(result[1].isRequiredByAgent).to.be.false;
+  });
+
+  describe('#configId', function() {
+    beforeEach(function() {
+      sinon.stub(App.config, 'getConfigTagFromFileName', function (fName) {
+        return fName;
+      });
     });
-    it('config1=value1,value2\n to one config', function () {
-      var result = App.config.textareaIntoFileConfigs.call(App.config, testData[2].configs, filename);
-      expect(result.length).to.equal(1);
-      expect(result[0].value).to.equal('value1,value2');
-      expect(result[0].name).to.equal('config1');
-      expect(result[0].isRequiredByAgent).to.be.true;
+    afterEach(function() {
+      App.config.getConfigTagFromFileName.restore();
     });
-    it('config1=value1 config2=value2 to two configs', function () {
-      var result = App.config.textareaIntoFileConfigs.call(App.config, testData[3].configs, filename);
-      expect(result.length).to.equal(1);
-      expect(result[0].isRequiredByAgent).to.be.false;
+    it('generates config id', function() {
+      expect(App.config.configId('name', 'fName')).to.equal('name__fName');
+    });
+  });
+
+  describe('#getDefaultConfig', function() {
+    beforeEach(function () {
+      sinon.stub(App.configsCollection, 'getConfigByName', function (name, fileName) {
+        if (name === 'inCollection') {
+          return { name: name, filename: fileName, fromCollection: true };
+        }
+        return null;
+      });
+
+      sinon.stub(App.config, 'createDefaultConfig', function (name, fileName) {
+        return { name: name, filename: fileName, fromStack: false, generatedDefault: true }
+      });
+    });
+    afterEach(function () {
+      App.configsCollection.getConfigByName.restore();
+      App.config.createDefaultConfig.restore();
+    });
+
+    it('get return config from collection' , function () {
+      expect(App.config.getDefaultConfig('inCollection', 'f1')).to.eql({ name: 'inCollection', filename: 'f1', fromCollection: true })
+    });
+
+    it('get return config not from collection' , function () {
+      expect(App.config.getDefaultConfig('custom', 'f1')).to.eql({ name: 'custom', filename: 'f1', fromStack: false, generatedDefault: true })
+    });
+
+    it('get return extended with custom object' , function () {
+      expect(App.config.getDefaultConfig('inCollection', 'f1', { additionalProperty: true})).to.eql({ name: 'inCollection', filename: 'f1', fromCollection: true, additionalProperty: true })
     });
   });
 
@@ -223,21 +147,21 @@ describe('App.config', function () {
       },
       {
         config: {
-          displayType: 'advanced',
+          displayType: 'string',
           value: ' value'
         },
         e: ' value'
       },
       {
         config: {
-          displayType: 'advanced',
+          displayType: 'string',
           value: ' value'
         },
         e: ' value'
       },
       {
         config: {
-          displayType: 'advanced',
+          displayType: 'string',
           value: 'http://localhost ',
           name: 'javax.jdo.option.ConnectionURL'
         },
@@ -245,7 +169,7 @@ describe('App.config', function () {
       },
       {
         config: {
-          displayType: 'advanced',
+          displayType: 'string',
           value: 'http://localhost    ',
           name: 'oozie.service.JPAService.jdbc.url'
         },
@@ -379,13 +303,6 @@ describe('App.config', function () {
       var miscCategory = App.config.get('preDefinedServiceConfigs').findProperty('serviceName', 'MISC');
       expect(Em.keys(miscCategory.get('configTypes'))).to.eql(['cluster-env', 'hadoop-env', 'oozie-env']);
     });
-
-    it('should not load configs for missed config types', function() {
-      var hdfsService = App.config.get('preDefinedServiceConfigs').findProperty('serviceName', 'HDFS');
-      var rangerRelatedConfigs = hdfsService.get('configs').filterProperty('filename', 'ranger-hdfs-plugin-properties.xml');
-      expect(rangerRelatedConfigs.length).to.be.eql(0);
-      expect(hdfsService.get('configs.length') > 0).to.be.true;
-    });
   });
   
   describe('#isManagedMySQLForHiveAllowed', function () {
@@ -414,120 +331,59 @@ describe('App.config', function () {
 
   });
 
-
-  describe('#advancedConfigIdentityData', function () {
-
-    var configs = [
-      {
-        input: {
-          property_type: ['USER'],
-          property_name: 'hdfs_user'
-        },
-        output: {
-          category: 'Users and Groups',
-          isVisible: true,
-          serviceName: 'MISC',
-          displayType: 'user',
-          index: 30
-        },
-        title: 'user, no service name specified, default display name behaviour'
-      },
-      {
-        input: {
-          property_type: ['GROUP'],
-          property_name: 'knox_group',
-          service_name: 'KNOX'
-        },
-        output: {
-          category: 'Users and Groups',
-          isVisible: true,
-          serviceName: 'MISC',
-          displayType: 'user',
-          index: 0
-        },
-        title: 'group, service_name = KNOX, default display name behaviour'
-      },
-      {
-        input: {
-          property_type: ['USER']
-        },
-        output: {
-          isVisible: false
-        },
-        isHDPWIN: true,
-        title: 'HDPWIN stack'
-      },
-      {
-        input: {
-          property_type: ['USER'],
-          property_name: 'smokeuser',
-          service_name: 'MISC'
-        },
-        output: {
-          serviceName: 'MISC',
-          belongsToService: ['MISC'],
-          index: 30
-        },
-        title: 'smokeuser, service_name = MISC'
-      },
-      {
-        input: {
-          property_type: ['USER'],
-          property_name: 'ignore_groupsusers_create'
-        },
-        output: {
-          displayType: 'checkbox'
-        },
-        title: 'ignore_groupsusers_create'
-      },
-      {
-        input: {
-          property_type: ['GROUP'],
-          property_name: 'proxyuser_group'
-        },
-        output: {
-          belongsToService: ['HIVE', 'OOZIE', 'FALCON']
-        },
-        title: 'proxyuser_group'
-      },
-      {
-        input: {
-          property_type: ['PASSWORD'],
-          property_name: 'javax.jdo.option.ConnectionPassword'
-        },
-        output: {
-          displayType: 'password'
-        },
-        title: 'password'
-      }
+  describe('#preDefinedSiteProperties', function () {
+    var allPreDefinedSiteProperties = [
+      { name: 'p1', serviceName: 's1' },
+      { name: 'p1', serviceName: 's2' },
+      { name: 'p1', serviceName: 'MISC' }
     ];
-
-    before(function () {
-      sinon.stub(App.StackService, 'find').returns([
-        {
-          serviceName: 'KNOX'
+    beforeEach(function () {
+      sinon.stub(App.config, 'get', function (param) {
+        if (param === 'allPreDefinedSiteProperties') {
+          return allPreDefinedSiteProperties;
         }
-      ]);
+        return Em.get(App.config, param);
+      });
+      sinon.stub(App.StackService, 'find').returns([{serviceName: 's1'}]);
     });
-
     afterEach(function () {
-      App.get.restore();
-    });
-
-    after(function () {
+      App.config.get.restore();
       App.StackService.find.restore();
     });
 
-    configs.forEach(function (item) {
-      it(item.title, function () {
-        sinon.stub(App, 'get').withArgs('isHadoopWindowsStack').returns(Boolean(item.isHDPWIN));
-        var propertyData = App.config.advancedConfigIdentityData(item.input);
-        Em.keys(item.output).forEach(function (key) {
-          expect(propertyData[key]).to.eql(item.output[key]);
-        });
+    it('returns map with secure configs', function () {
+      expect(App.config.get('preDefinedSiteProperties')).to.eql([
+        { name: 'p1', serviceName: 's1' },
+        { name: 'p1', serviceName: 'MISC' }
+      ]);
+    })
+  });
+
+  describe('#preDefinedSitePropertiesMap', function () {
+    beforeEach(function () {
+      sinon.stub(App.config, 'get', function (param) {
+        if (param === 'preDefinedSiteProperties') {
+          return [
+            {name: 'sc1', filename: 'fn1', otherProperties: true},
+            {name: 'sc2', filename: 'fn2', otherProperties: true}
+          ];
+        }
+        return Em.get(App.config, param);
+      });
+      sinon.stub(App.config, 'configId', function (name, filename) {
+        return name+filename;
       });
     });
-
+    afterEach(function () {
+      App.config.get.restore();
+      App.config.configId.restore();
+    });
+    it('returns map with secure configs', function () {
+      expect(App.config.get('preDefinedSitePropertiesMap')).to.eql({
+        'sc1fn1': {name: 'sc1', filename: 'fn1', otherProperties: true},
+        'sc2fn2': {name: 'sc2', filename: 'fn2', otherProperties: true}
+      });
+    });
   });
 
   describe('#shouldSupportFinal', function () {
@@ -591,6 +447,195 @@ describe('App.config', function () {
 
   });
 
+  describe('#shouldSupportAddingForbidden', function () {
+
+    var cases = [
+      {
+        shouldSupportAddingForbidden: false,
+        title: 'no service name specified'
+      },
+      {
+        serviceName: 's0',
+        shouldSupportAddingForbidden: false,
+        title: 'no filename specified'
+      },
+      {
+        serviceName: 'MISC',
+        shouldSupportAddingForbidden: false,
+        title: 'MISC'
+      },
+      {
+        serviceName: 's0',
+        filename: 's0-site',
+        shouldSupportAddingForbidden: true,
+        title: 'adding forbidden supported'
+      },
+      {
+        serviceName: 's0',
+        filename: 's0-properties',
+        shouldSupportAddingForbidden: false,
+        title: 'adding forbidden not supported'
+      }
+    ];
+
+    beforeEach(function () {
+      sinon.stub(App.StackService, 'find').returns([
+        Em.Object.create({
+          serviceName: 's0',
+          configTypes: {
+            's0-size': {},
+            's0-properties': {}
+          }
+        })
+      ]);
+      sinon.stub(App.config, 'getConfigTypesInfoFromService').returns({
+        supportsAddingForbidden: ['s0-site']
+      });
+    });
+
+    afterEach(function () {
+      App.StackService.find.restore();
+      App.config.getConfigTypesInfoFromService.restore();
+    });
+
+    cases.forEach(function (item) {
+      it(item.title, function () {
+        expect(App.config.shouldSupportAddingForbidden(item.serviceName, item.filename)).to.equal(item.shouldSupportAddingForbidden);
+      });
+    });
+
+  });
+
+  describe('#getConfigTypesInfoFromService', function () {
+    it('get service config types info', function () {
+      var input = Em.Object.create({
+        configTypes: {
+          't1': {
+            'supports': {
+              'final': 'true'
+            }
+          },
+          't2': {
+            'supports': {
+              'adding_forbidden': 'true'
+            }
+          }
+        }
+      });
+      var configTypesInfo = {
+        items: ['t1', 't2'],
+        supportsFinal: ['t1'],
+        supportsAddingForbidden: ['t2']
+      };
+      expect(App.config.getConfigTypesInfoFromService(input)).to.eql(configTypesInfo);
+    });
+  });
+
+  describe('#addYarnCapacityScheduler', function () {
+    var input, res, configs, csConfig;
+    res = {
+      'value': 'n1=v1\nn2=v2\n',
+      'serviceName': 'YARN',
+      'savedValue': 'n1=sv1\nn2=sv2\n',
+      'recommendedValue': 'n1=rv1\nn2=rv2\n',
+      'isFinal': true,
+      'savedIsFinal': true,
+      'recommendedIsFinal': true,
+      'category': 'CapacityScheduler',
+      'displayName': 'Capacity Scheduler',
+      'description': 'Capacity Scheduler properties',
+      'displayType': 'capacityScheduler'
+    };
+    beforeEach(function () {
+      sinon.stub(App.config, 'getPropertiesFromTheme').returns([]);
+      input = [
+        Em.Object.create({
+          name: 'n1',
+          value: 'v1',
+          savedValue: 'sv1',
+          recommendedValue: 'rv1',
+          isFinal: true,
+          savedIsFinal: true,
+          recommendedIsFinal: true,
+          filename: 'capacity-scheduler.xml'
+        }),
+        Em.Object.create({
+          name: 'n2',
+          value: 'v2',
+          savedValue: 'sv2',
+          recommendedValue: 'rv2',
+          filename: 'capacity-scheduler.xml'
+        }),
+        Em.Object.create({
+          name: 'n3',
+          value: 'v3',
+          savedValue: 'sv3',
+          recommendedValue: 'sv2',
+          filename: 'not-capacity-scheduler.xml'
+        })
+      ];
+
+      configs = App.config.addYarnCapacityScheduler(input);
+      csConfig = configs.findProperty('category', 'CapacityScheduler');
+    });
+    afterEach(function () {
+      App.config.getPropertiesFromTheme.restore();
+    });
+
+    describe('check result config', function () {
+      Object.keys(res).forEach(function (k) {
+        it(k, function () {
+          expect(csConfig.get(k)).to.eql(res[k]);
+        });
+      });
+    });
+  });
+
+  describe('#textareaIntoFileConfigs', function () {
+    var res, cs;
+    beforeEach(function () {
+      res = [
+        Em.Object.create({
+          name: 'n1',
+          value: 'v1',
+          savedValue: 'v1',
+          serviceName: 'YARN',
+          filename: 'capacity-scheduler.xml',
+          isFinal: true,
+          group: null
+        }),
+        Em.Object.create({
+          name: 'n2',
+          value: 'v2',
+          savedValue: 'v2',
+          serviceName: 'YARN',
+          filename: 'capacity-scheduler.xml',
+          isFinal: true,
+          group: null
+        })
+      ];
+
+      cs = Em.Object.create({
+        'value': 'n1=v1\nn2=v2',
+        'serviceName': 'YARN',
+        'savedValue': 'n1=sv1\nn2=sv2',
+        'recommendedValue': 'n1=rv1\nn2=rv2',
+        'isFinal': true,
+        'savedIsFinal': true,
+        'recommendedIsFinal': true,
+        'name': 'capacity-scheduler',
+        'category': 'CapacityScheduler',
+        'displayName': 'Capacity Scheduler',
+        'description': 'Capacity Scheduler properties',
+        'displayType': 'capacityScheduler'
+      });
+    });
+
+    it('generate capacity scheduler', function () {
+      expect(App.config.textareaIntoFileConfigs([cs], 'capacity-scheduler.xml')).to.eql(res);
+    });
+  });
+
   describe('#removeRangerConfigs', function () {
 
     it('should remove ranger configs and categories', function () {
@@ -638,105 +683,137 @@ describe('App.config', function () {
 
     var configProperty = App.ServiceConfigProperty.create(template);
 
-    var group = Em.Object.create({name: "group1"});
+    var group = Em.Object.create({name: "group1", properties: []});
 
-    it('creates override with save properties as original config', function() {
-      var override = App.config.createOverride(configProperty, {}, group);
-      for (var key in template) {
-        expect(override.get(key)).to.eql(template[key]);
-      }
+    Object.keys(template).forEach(function (key) {
+      it(key, function () {
+        var override = App.config.createOverride(configProperty, {}, group);
+        if (['savedValue', 'savedIsFinal'].contains(key)) {
+          expect(override.get(key)).to.equal(null);
+        } else {
+          expect(override.get(key)).to.equal(template[key]);
+        }
+      });
     });
 
-    it('overrides some values that should be different for override', function() {
-      var override = App.config.createOverride(configProperty, {}, group);
-      expect(override.get('isOriginalSCP')).to.be.false;
-      expect(override.get('overrides')).to.be.null;
-      expect(override.get('group')).to.eql(group);
-      expect(override.get('parentSCP')).to.eql(configProperty);
+    describe('overrides some values that should be different for override', function() {
+      var override;
+      beforeEach(function () {
+        override = App.config.createOverride(configProperty, {}, group);
+      });
+      it('isOriginalSCP is false', function () {
+        expect(override.get('isOriginalSCP')).to.be.false;
+      });
+      it('overrides is null', function () {
+        expect(override.get('overrides')).to.be.null;
+      });
+      it('group is valid', function () {
+        expect(override.get('group')).to.eql(group);
+      });
+      it('parentSCP is valid', function () {
+        expect(override.get('parentSCP')).to.eql(configProperty);
+      });
     });
 
-    it('overrides some specific values', function() {
-      var overridenTemplate = {
-        value: "v2",
-        recommendedValue: "rv2",
-        savedValue: "sv2",
-        isFinal: true,
-        recommendedIsFinal: false,
-        savedIsFinal: true
-      };
+    var overriddenTemplate = {
+      value: "v2",
+      recommendedValue: "rv2",
+      savedValue: "sv2",
+      isFinal: true,
+      recommendedIsFinal: false,
+      savedIsFinal: true
+    };
 
-      var override = App.config.createOverride(configProperty, overridenTemplate, group);
-      for (var key in overridenTemplate) {
-        expect(override.get(key)).to.eql(overridenTemplate[key]);
-      }
+    Object.keys(overriddenTemplate).forEach(function (key) {
+      it('overrides some specific values `' + key + '`', function () {
+        var override = App.config.createOverride(configProperty, overriddenTemplate, group);
+        expect(override.get(key)).to.equal(overriddenTemplate[key]);
+      });
     });
 
     it('throws error due to undefined configGroup', function() {
-      expect(App.config.createOverride.bind(App.config, configProperty, {}, null)).to.throw(Error, 'configGroup can\' be null');
+      expect(App.config.createOverride.bind(App.config, configProperty, {}, null)).to.throw(App.EmberObjectTypeError);
     });
 
     it('throws error due to undefined originalSCP', function() {
-      expect(App.config.createOverride.bind(App.config, null, {}, group)).to.throw(Error, 'serviceConfigProperty can\' be null');
+      expect(App.config.createOverride.bind(App.config, null, {}, group)).to.throw(App.ObjectTypeError);
     });
 
-    it('updates originalSCP object ', function() {
-      configProperty.set('overrides', null);
-      configProperty.set('overrideValues', []);
-      configProperty.set('overrideIsFinalValues', []);
+    describe('updates originalSCP object ', function() {
 
-      var overridenTemplate2 = {
-        value: "v12",
-        recommendedValue: "rv12",
-        savedValue: "sv12",
-        isFinal: true,
-        recommendedIsFinal: false,
-        savedIsFinal: false
-      };
+      var overridenTemplate2;
+      var override;
 
-      var override = App.config.createOverride(configProperty, overridenTemplate2, group);
+      beforeEach(function () {
+        configProperty.set('overrides', null);
+        configProperty.set('overrideValues', []);
+        configProperty.set('overrideIsFinalValues', []);
+        overridenTemplate2 = {
+          value: "v12",
+          recommendedValue: "rv12",
+          savedValue: "sv12",
+          isFinal: true,
+          recommendedIsFinal: false,
+          savedIsFinal: false
+        };
+        override = App.config.createOverride(configProperty, overridenTemplate2, group);
+      });
 
-      expect(configProperty.get('overrides')[0]).to.be.eql(override);
-      expect(configProperty.get('overrideValues')).to.be.eql([overridenTemplate2.value]);
-      expect(configProperty.get('overrideIsFinalValues')).to.be.eql([overridenTemplate2.isFinal]);
+      it('overrides.0 is valid', function () {
+        expect(configProperty.get('overrides')[0]).to.be.eql(override);
+      });
+      it('overrideValues is valid', function () {
+        expect(configProperty.get('overrideValues')).to.be.eql([overridenTemplate2.savedValue]);
+      });
+      it('overrideIsFinalValues is valid', function () {
+        expect(configProperty.get('overrideIsFinalValues')).to.be.eql([overridenTemplate2.savedIsFinal]);
+      });
+
     });
   });
 
-  describe('#getIsEditable', function() {
-    [{
-        isDefaultGroup: true,
-        isReconfigurable: true,
-        canEdit: true,
-        res: true,
-        m: "isEditable is true"
-      },
-      {
-        isDefaultGroup: false,
-        isReconfigurable: true,
-        canEdit: true,
-        res: false,
-        m: "isEditable is false; config group is not default"
-      },
-      {
-        isDefaultGroup: true,
-        isReconfigurable: false,
-        canEdit: true,
-        res: false,
-        m: "isEditable is true; config is not reconfigurable"
-      },
-      {
-        isDefaultGroup: true,
-        isReconfigurable: true,
-        canEdit: false,
-        res: false,
-        m: "isEditable is true; edition restricted by controller state"
-    }].forEach(function(t) {
-        it(t.m, function() {
-          var configProperty = Ember.Object.create({isReconfigurable: t.isReconfigurable});
-          var configGroup = Ember.Object.create({isDefault: t.isDefaultGroup});
-          var isEditable = App.config.getIsEditable(configProperty, configGroup, t.canEdit);
-          expect(isEditable).to.equal(t.res);
-        })
+  describe('#createCustomGroupConfig', function() {
+    var override, configGroup, result;
+    beforeEach(function () {
+      sinon.stub(App.config, 'createDefaultConfig', function (name, filename) {
+        return { propertyName: name, filename: filename };
       });
+      configGroup = Em.Object.create({ name: 'cfgGroup1'});
+      override = {
+        propertyName: 'p1',
+        filename: 'f1'
+      };
+      result = App.config.createCustomGroupConfig(override, configGroup);
+    });
+    afterEach(function () {
+      App.config.createDefaultConfig.restore();
+    });
+    describe('createsCustomOverride', function () {
+      var expected = {
+        propertyName: 'p1',
+        filename: 'f1',
+        isOriginalSCP: false,
+        overrides: null,
+        parentSCP: null
+      };
+      Object.keys(expected).forEach(function (k) {
+        it(k, function () {
+          expect(result.get(k)).to.be.eql(expected[k]);
+        });
+      });
+      it('config group is valid', function () {
+        expect(result.get('group')).to.be.eql(configGroup);
+      });
+    });
+
+    it('updates configGroup properties', function () {
+      expect(configGroup.get('properties').findProperty('propertyName', 'p1')).to.eql(result);
+    });
+
+    it('throws error when input is not objects', function () {
+      expect(App.config.createCustomGroupConfig.bind(App.config)).to.throw(App.ObjectTypeError);
+      expect(App.config.createCustomGroupConfig.bind(App.config, {}, {})).to.throw(App.EmberObjectTypeError);
+    });
   });
 
   describe('#getIsSecure', function() {
@@ -766,87 +843,15 @@ describe('App.config', function () {
   });
 
   describe('#getDefaultDisplayType', function() {
-    it('returns content displayType', function() {
-      sinon.stub(App.config, 'isContentProperty', function () {return true});
-      expect(App.config.getDefaultDisplayType('content','f1','anything')).to.equal('content');
-      App.config.isContentProperty.restore();
-    });
     it('returns singleLine displayType', function() {
-      sinon.stub(App.config, 'isContentProperty', function () {return false});
-      expect(App.config.getDefaultDisplayType('n1','f1','v1')).to.equal('advanced');
-      App.config.isContentProperty.restore();
+      expect(App.config.getDefaultDisplayType('v1')).to.equal('string');
     });
     it('returns multiLine displayType', function() {
-      sinon.stub(App.config, 'isContentProperty', function () {return false});
-      expect(App.config.getDefaultDisplayType('n2', 'f2', 'v1\nv2')).to.equal('multiLine');
-      App.config.isContentProperty.restore();
+      expect(App.config.getDefaultDisplayType('v1\nv2')).to.equal('multiLine');
     });
   });
 
-  describe('#getDefaultDisplayName', function() {
-    beforeEach(function() {
-      sinon.stub(App.config, 'getConfigTagFromFileName', function(fName) {return fName} );
-    });
-    afterEach(function() {
-      App.config.getConfigTagFromFileName.restore();
-    });
-
-    it('returns name', function() {
-      sinon.stub(App.config, 'isContentProperty', function() {return false} );
-      expect(App.config.getDefaultDisplayName('name')).to.equal('name');
-      App.config.isContentProperty.restore();
-    });
-    it('returns name for env content', function() {
-      sinon.stub(App.config, 'isContentProperty', function() {return true} );
-      expect(App.config.getDefaultDisplayName('name', 'fileName')).to.equal('fileName template');
-      App.config.isContentProperty.restore();
-    });
-  });
-
-  describe('#isContentProperty', function() {
-    beforeEach(function() {
-      sinon.stub(App.config, 'getConfigTagFromFileName', function(fName) {return fName} );
-    });
-    afterEach(function() {
-      App.config.getConfigTagFromFileName.restore();
-    });
-    var tests = [
-      {
-        name: 'content',
-        fileName: 'something-env',
-        tagEnds: null,
-        res: true,
-        m: 'returns true as it\'s content property'
-      },
-      {
-        name: 'content',
-        fileName: 'something-any-end',
-        tagEnds: ['-any-end'],
-        res: true,
-        m: 'returns true as it\'s content property with specific fileName ending'
-      },
-      {
-        name: 'notContent',
-        fileName: 'something-env',
-        tagEnds: ['-env'],
-        res: false,
-        m: 'returns false as name is not content'
-      },
-      {
-        name: 'content',
-        fileName: 'something-env1',
-        tagEnds: ['-env'],
-        res: false,
-        m: 'returns false as fileName is not correct'
-      }
-    ].forEach(function(t) {
-        it(t.m, function() {
-          expect(App.config.isContentProperty(t.name, t.fileName, t.tagEnds)).to.equal(t.res);
-        });
-      });
-  });
-
-  describe('#formatValue', function() {
+  describe('#formatPropertyValue', function() {
     it('formatValue for componentHosts', function () {
       var serviceConfigProperty = Em.Object.create({'displayType': 'componentHosts', value: "['h1','h2']"});
       expect(App.config.formatPropertyValue(serviceConfigProperty)).to.eql(['h1','h2']);
@@ -935,17 +940,14 @@ describe('App.config', function () {
         m: 'use value from first object, check empty string'
       }
     ].forEach(function (t) {
-        it(t.m, function () {
-          expect(App.config.getPropertyIfExists(t.propertyName, t.defaultValue, t.firstObject, t.secondObject)).to.equal(t.res);
-        })
-      });
+      it(t.m, function () {
+        expect(App.config.getPropertyIfExists(t.propertyName, t.defaultValue, t.firstObject, t.secondObject)).to.equal(t.res);
+      })
+    });
   });
 
   describe('#createDefaultConfig', function() {
     before(function() {
-      sinon.stub(App.config, 'getDefaultDisplayName', function() {
-        return 'pDisplayName';
-      });
       sinon.stub(App.config, 'getDefaultDisplayType', function() {
         return 'pDisplayType';
       });
@@ -958,20 +960,27 @@ describe('App.config', function () {
       sinon.stub(App.config, 'shouldSupportFinal', function() {
         return true;
       });
+      sinon.stub(App.config, 'get', function(param) {
+        if (param === 'serviceByConfigTypeMap') {
+          return { 'pFileName': Em.Object.create({serviceName: 'pServiceName' }) };
+        }
+        return Em.get(App.config, param);
+      });
     });
 
     after(function() {
-      App.config.getDefaultDisplayName.restore();
       App.config.getDefaultDisplayType.restore();
       App.config.getDefaultCategory.restore();
       App.config.getIsSecure.restore();
       App.config.shouldSupportFinal.restore();
+      App.config.get.restore();
     });
 
     var res = {
       /** core properties **/
+      id: 'pName__pFileName',
       name: 'pName',
-      filename: 'pFileName',
+      filename: 'pFileName.xml',
       value: '',
       savedValue: null,
       isFinal: false,
@@ -980,10 +989,11 @@ describe('App.config', function () {
       recommendedValue: null,
       recommendedIsFinal: null,
       supportsFinal: true,
+      supportsAddingForbidden: false,
       serviceName: 'pServiceName',
-      displayName: 'pDisplayName',
+      displayName: 'pName',
       displayType: 'pDisplayType',
-      description: null,
+      description: '',
       category: 'pCategory',
       isSecureConfig: false,
       showLabel: true,
@@ -1000,21 +1010,28 @@ describe('App.config', function () {
       dependentConfigPattern: null,
       options: null,
       radioName: null,
-      belongsToService: []
+      widgetType: null,
+      errorMessage: '',
+      warnMessage: ''
     };
     it('create default config object', function () {
-      expect(App.config.createDefaultConfig('pName', 'pServiceName', 'pFileName', true)).to.eql(res);
+      expect(App.config.createDefaultConfig('pName', 'pFileName', true)).to.eql(res);
     });
-    it('runs proper methods', function() {
-      expect(App.config.getDefaultDisplayName.calledWith('pName','pFileName')).to.be.true;
-      expect(App.config.getDefaultDisplayType.calledWith('pName', 'pFileName', '')).to.be.true;
+    it('getDefaultDisplayType is called', function() {
+      expect(App.config.getDefaultDisplayType.called).to.be.true;
+    });
+    it('getDefaultCategory is called with correct arguments', function() {
       expect(App.config.getDefaultCategory.calledWith(true, 'pFileName')).to.be.true;
+    });
+    it('getIsSecure is called with correct arguments', function() {
       expect(App.config.getIsSecure.calledWith('pName')).to.be.true;
+    });
+    it('shouldSupportFinal is called with correct arguments', function() {
       expect(App.config.shouldSupportFinal.calledWith('pServiceName', 'pFileName')).to.be.true;
     });
   });
 
-  describe('#mergeStackConfigsWithUI', function() {
+  describe('#mergeStaticProperties', function() {
     beforeEach(function() {
       sinon.stub(App.config, 'getPropertyIfExists', function(key, value) {return 'res_' + value});
     });
@@ -1108,45 +1125,426 @@ describe('App.config', function () {
     });
   });
 
-  describe('#createHostNameProperty', function() {
-    it('create host property', function() {
+  describe('#createHostNameProperty', function () {
+    it('create host property', function () {
       expect(App.config.createHostNameProperty('service1', 'component1', ['host1'], Em.Object.create({
         isMultipleAllowed: false,
         displayName: 'display name'
       }))).to.eql({
-          "name": 'component1_host',
-          "displayName": 'display name host',
-          "value": ['host1'],
-          "recommendedValue": ['host1'],
-          "description": "The host that has been assigned to run display name",
-          "displayType": "componentHost",
-          "isOverridable": false,
-          "isRequiredByAgent": false,
-          "serviceName": 'service1',
-          "filename": "service1-site.xml",
-          "category": 'component1',
-          "index": 0
-        })
+            "id": 'component1_host__service1-site',
+            "name": 'component1_host',
+            "displayName": 'display name host',
+            "value": ['host1'],
+            "recommendedValue": ['host1'],
+            "description": "The host that has been assigned to run display name",
+            "displayType": "componentHost",
+            "isOverridable": false,
+            "isRequiredByAgent": false,
+            "serviceName": 'service1',
+            "filename": "service1-site.xml",
+            "category": 'component1',
+            "index": 0
+          })
     });
 
-    it('create hosts property', function() {
+    it('create hosts property', function () {
       expect(App.config.createHostNameProperty('service1', 'component1', ['host1'], Em.Object.create({
         isMultipleAllowed: true,
         displayName: 'display name'
       }))).to.eql({
-          "name": 'component1_hosts',
-          "displayName": 'display name host',
-          "value": ['host1'],
-          "recommendedValue": ['host1'],
-          "description": "The hosts that has been assigned to run display name",
-          "displayType": "componentHosts",
-          "isOverridable": false,
-          "isRequiredByAgent": false,
-          "serviceName": 'service1',
-          "filename": "service1-site.xml",
-          "category": 'component1',
-          "index": 0
-        })
+            "id": 'component1_hosts__service1-site',
+            "name": 'component1_hosts',
+            "displayName": 'display name host',
+            "value": ['host1'],
+            "recommendedValue": ['host1'],
+            "description": "The hosts that has been assigned to run display name",
+            "displayType": "componentHosts",
+            "isOverridable": false,
+            "isRequiredByAgent": false,
+            "serviceName": 'service1',
+            "filename": "service1-site.xml",
+            "category": 'component1',
+            "index": 0
+          })
     });
+  });
+
+  describe("#truncateGroupName()", function() {
+
+    it("name is empty", function() {
+      expect(App.config.truncateGroupName('')).to.be.empty;
+    });
+
+    it("name has less than max chars", function() {
+      expect(App.config.truncateGroupName('group1')).to.equal('group1');
+    });
+
+    it("name has more than max chars", function() {
+      expect(App.config.truncateGroupName('group_has_more_than_max_characters')).to.equal('group_has...haracters');
+    });
+  });
+
+  describe('#getComponentName', function () {
+    [
+      { configName: 'somename_host', componentName: 'SOMENAME' },
+      { configName: 'somename_hosts', componentName: 'SOMENAME' },
+      { configName: 'somenamehost', componentName: '' },
+      { configName: 'somenamehosts', componentName: '' }
+    ].forEach(function (t) {
+      it('format config name ' + t.configName + ' to component ', function() {
+        expect(App.config.getComponentName(t.configName)).to.equal(t.componentName);
+      });
+    });
+  });
+
+  describe('#getDescription', function () {
+
+    it('should add extra-message to the description for `password`-configs', function () {
+      var extraMessage = Em.I18n.t('services.service.config.password.additionalDescription');
+      expect(App.config.getDescription('', 'password')).to.contain(extraMessage);
+    });
+
+    it('should not add extra-message to the description if it already contains it', function () {
+
+      var extraMessage = Em.I18n.t('services.service.config.password.additionalDescription');
+      var res = App.config.getDescription(extraMessage, 'password');
+      expect(res).to.contain(extraMessage);
+      expect(res).to.contain(extraMessage);
+      var subd = res.replace(extraMessage, '');
+      expect(subd).to.not.contain(extraMessage);
+    });
+
+    it('should add extra-message to the description if description is not defined', function () {
+
+      var extraMessage = Em.I18n.t('services.service.config.password.additionalDescription');
+      expect(App.config.getDescription(undefined, 'password')).to.contain(extraMessage);
+    });
+
+  });
+
+  describe('#parseDescriptor', function() {
+    var input = {
+      KerberosDescriptor: {
+        kerberos_descriptor: {
+          services: [
+            {
+              serviceName: 'serviceName',
+              components: [
+                { componentName: 'componentName2' },
+                { componentName: 'componentName2' }
+              ]
+            }
+          ]
+        }
+      }
+    };
+
+
+    beforeEach(function() {
+      sinon.stub(App.config, 'parseIdentities');
+      App.config.parseDescriptor(input);
+    });
+
+    afterEach(function() {
+      App.config.parseIdentities.restore();
+    });
+
+    it('`parseIdentities` called 3 times', function () {
+      expect(App.config.parseIdentities.calledThrice).to.be.true;
+    });
+
+    it('1st call', function () {
+      expect(App.config.parseIdentities.calledWith({
+        "serviceName": "serviceName",
+        "components": [{"componentName": "componentName2"}, {"componentName": "componentName2"}]
+      }, {})).to.be.true;
+    });
+
+    it('2nd call', function () {
+      expect(App.config.parseIdentities.calledWith({ componentName: 'componentName2' })).to.be.true;
+    });
+
+    it('3rd call', function () {
+      expect(App.config.parseIdentities.calledWith({ componentName: 'componentName2' })).to.be.true;
+    });
+  });
+
+  describe('#parseIdentities', function() {
+    var testObject = {
+      identities: [
+        {
+          name: "/spnego"
+        },
+        {
+          principal: {
+            configuration: "hbase-env/hbase_principal_name",
+            type: "user",
+            local_username: "${hbase-env/hbase_user}",
+            value: "${hbase-env/hbase_user}-${cluster_name|toLower()}@${realm}"
+          },
+          name: "hbase",
+          keytab: {
+            owner: {
+              access: "r",
+              name: "${hbase-env/hbase_user}"
+            },
+            file: "${keytab_dir}/hbase.headless.keytab",
+            configuration: "hbase-env/hbase_user_keytab",
+            group: {
+              access: "r",
+              name: "${cluster-env/user_group}"
+            }
+          }
+        },
+        {
+          name: "/smokeuser"
+        }
+      ]
+    };
+    var result = {
+      "hbase_principal_name__hbase-env": true,
+      "hbase_user_keytab__hbase-env": true
+    };
+
+    it('generates map with identities', function() {
+      expect(App.config.parseIdentities(testObject, {})).to.eql(result);
+    });
+  });
+
+  describe('#kerberosIdentitiesDescription', function () {
+    it('update empty description', function() {
+      expect(App.config.kerberosIdentitiesDescription()).to.eql(Em.I18n.t('services.service.config.secure.additionalDescription'));
+    });
+
+    it('update description for identities (without dot)', function() {
+      expect(App.config.kerberosIdentitiesDescription('some text')).to.eql('some text. '
+        + Em.I18n.t('services.service.config.secure.additionalDescription'));
+    });
+
+    it('update description for identities (with dot)', function() {
+      expect(App.config.kerberosIdentitiesDescription('some text.')).to.eql('some text. '
+        + Em.I18n.t('services.service.config.secure.additionalDescription'));
+    });
+
+    it('update description for identities (with dot and spaces at the end)', function() {
+      expect(App.config.kerberosIdentitiesDescription('some text. ')).to.eql('some text. '
+        + Em.I18n.t('services.service.config.secure.additionalDescription'));
+    });
+  });
+
+  describe('#isDirHeterogeneous', function () {
+    it ('retruns true for dfs.datanode.data.dir', function () {
+      expect(App.config.isDirHeterogeneous('dfs.datanode.data.dir')).to.be.true;
+    });
+    it ('retruns false not for dfs.datanode.data.dir', function () {
+      expect(App.config.isDirHeterogeneous('any')).to.be.false;
+    });
+  });
+
+  describe('#formatValue', function () {
+    it('parses float', function () {
+      expect(App.config.formatValue('0.400')).to.equal('0.4');
+    });
+    it('not parses float', function () {
+      expect(App.config.formatValue('0.40x')).to.equal('0.40x');
+    });
+  });
+
+  describe('#getStepConfigForProperty', function () {
+    var input = [Em.Object.create({ configTypes: ['f1'] }), Em.Object.create({ configTypes: ['f2'] })];
+    var output = input[0];
+    it('returns stepConfig for fileName', function () {
+      expect(App.config.getStepConfigForProperty(input, 'f1')).to.eql(output);
+    });
+  });
+
+  describe('#sortConfigs', function () {
+    var input = [{name: 'a', 'index': 2}, {name: 'b', 'index': 2}, {name: 'd', 'index': 1}];
+    var output = [{name: 'd', 'index': 1}, {name: 'a', 'index': 2}, {name: 'b', 'index': 2}];
+    it ('sort configs by index and name', function () {
+      expect(App.config.sortConfigs(input)).to.eql(output);
+    });
+  });
+
+  describe('#getViewClass', function () {});
+  describe('#getErrorValidator', function () {});
+  describe('#getWarningValidator', function () {});
+
+  describe('#createServiceConfig', function () {
+    var predefined = Em.Object.create({
+      serviceName: 'serviceName1',
+      displayName: 'displayName1',
+      configCategories: 'configCategories1'
+    });
+
+    var configs = [Em.Object.create({name: 'c1'})];
+    var configGroups = [Em.Object.create({name: 'cat1'})];
+
+    beforeEach(function () {
+      sinon.stub(App.config, 'get', function (param) {
+        if (param === 'preDefinedServiceConfigs') {
+          return [predefined];
+        }
+        return Em.get(App.config, param);
+      });
+    });
+
+    afterEach(function () {
+      App.config.get.restore();
+    });
+
+    describe('create service config object based on input', function () {
+      var res = {
+        serviceName: 'serviceName1',
+        displayName: 'displayName1',
+        configCategories: 'configCategories1',
+        configs: configs,
+        configGroups: configGroups,
+        initConfigsLength: 1,
+        dependentServiceNames: []
+      };
+      Object.keys(res).forEach(function (k) {
+        it(k, function () {
+          expect(App.config.createServiceConfig('serviceName1', configGroups, configs, 1).get(k)).to.eql(res[k]);
+        });
+      });
+    });
+
+    describe('create default service config object', function () {
+      var res = {
+        serviceName: 'serviceName1',
+        displayName: 'displayName1',
+        configCategories: 'configCategories1',
+        configGroups: [],
+        initConfigsLength: 0,
+        dependentServiceNames: []
+      };
+      Object.keys(res).forEach(function (k) {
+        it(k, function() {
+          expect(App.config.createServiceConfig('serviceName1').get(k)).to.eql(res[k]);
+        });
+      });
+    });
+  });
+
+  describe('#loadConfigsByTags', function () {
+    it("App.ajax.send should be called", function() {
+      App.config.loadConfigsByTags([
+        { siteName: 't1', tagName: 'tag1' },
+        { siteName: 't2', tagName: 'tag2' }
+      ]);
+      var args = testHelpers.findAjaxRequest('name', 'config.on_site');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(App.config);
+      expect(args[0].data).to.be.eql({
+        params : '(type=t1&tag=tag1)|(type=t2&tag=tag2)'
+      });
+    });
+  });
+
+  describe('#loadClusterConfigsFromStack', function () {
+    it("App.ajax.send should be called", function() {
+      App.config.loadClusterConfigsFromStack();
+      var args = testHelpers.findAjaxRequest('name', 'configs.stack_configs.load.cluster_configs');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(App.config);
+      expect(args[0].data).to.be.eql({
+        stackVersionUrl: App.get('stackVersionURL')
+      });
+    });
+  });
+
+  describe('#loadConfigsFromStack', function () {
+    it("App.ajax.send should be called with services", function() {
+      App.config.loadConfigsFromStack(['s1']);
+      var args = testHelpers.findAjaxRequest('name', 'configs.stack_configs.load.services');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(App.config);
+      expect(args[0].data).to.be.eql({
+        stackVersionUrl: App.get('stackVersionURL'),
+        serviceList: 's1'
+      });
+    });
+
+    it("App.ajax.send should be called all services", function() {
+      App.config.loadConfigsFromStack();
+      var args = testHelpers.findAjaxRequest('name', 'configs.stack_configs.load.all');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(App.config);
+      expect(args[0].data).to.be.eql({
+        stackVersionUrl: App.get('stackVersionURL'),
+        serviceList: ''
+      });
+    });
+  });
+
+  describe('#saveConfigsToModel', function () {
+    beforeEach(function () {
+      sinon.stub(App.stackConfigPropertiesMapper, 'map');
+    });
+    afterEach(function () {
+      App.stackConfigPropertiesMapper.map.restore();
+    });
+    it('runs mapper', function () {
+      App.config.saveConfigsToModel({configs: 'configs'});
+      expect(App.stackConfigPropertiesMapper.map.calledWith({configs: 'configs'})).to.be.true;
+    });
+  });
+
+  describe('#findConfigProperty', function () {
+    var stepConfigs = [
+      Em.Object.create({
+        configs: [
+          { name: 'p1', filename: 'f1'},
+          { name: 'p2', filename: 'f2'}
+        ]
+      }),
+      Em.Object.create({
+        configs: [
+          { name: 'p3', filename: 'f3'}
+        ]
+      })
+    ];
+
+    it('find property', function () {
+      expect(App.config.findConfigProperty(stepConfigs, 'p1', 'f1')).to.eql({ name: 'p1', filename: 'f1'});
+    });
+
+    it('do nothing because of whong params', function () {
+      expect(App.config.findConfigProperty(stepConfigs)).to.be.false;
+    });
+  });
+
+  describe('#getPropertiesFromTheme', function () {
+    beforeEach(function () {
+      sinon.stub(App.Tab , 'find').returns([
+        Em.Object.create({
+          serviceName: 'sName',
+          isAdvanced: true,
+          sections: [Em.Object.create({
+            subSections: [
+              Em.Object.create({ configProperties: [{name: 'p1'}] })
+            ]
+          })]
+        }),
+        Em.Object.create({
+          serviceName: 'sName',
+          isAdvanced: false,
+          sections: [Em.Object.create({
+            subSections: [
+              Em.Object.create({ configProperties: [{name: 'p2'}] }),
+              Em.Object.create({ configProperties: [{name: 'p3'}] })
+            ]
+          })]
+        })
+      ])
+    });
+
+    afterEach(function () {
+      App.Tab.find.restore();
+    });
+    it('gets theme properties', function () {
+      expect(App.config.getPropertiesFromTheme('sName')).to.eql([{name: 'p2'}, {name: 'p3'}])
+    })
   })
 });

@@ -25,6 +25,7 @@ App.Repository = DS.Model.extend({
   repoId: DS.attr('string'),
   osType: DS.attr('string'),
   baseUrl: DS.attr('string'),
+  baseUrlInit: DS.attr('string'),
   defaultBaseUrl: DS.attr('string'),
   latestBaseUrl: DS.attr('string'),
   repoName: DS.attr('string'),
@@ -36,25 +37,38 @@ App.Repository = DS.Model.extend({
   errorContent: DS.attr('string', {defaultValue: ''}),
   errorTitle: DS.attr('string', {defaultValue: ''}),
 
-  isSelected: function() {
-    return this.get('operatingSystem.isSelected');
-  }.property('id','operatingSystem.isSelected'),
+  isSelected: Em.computed.alias('operatingSystem.isSelected'),
 
   invalidFormatError: function() {
     return !validator.isValidBaseUrl(this.get('baseUrl'));
   }.property('baseUrl'),
 
+  isEmpty: function() {
+    return this.get('baseUrl') == '';
+  }.property('baseUrl'),
+
   invalidError: function() {
-    return this.get('validation') == App.Repository.validation['INVALID'];
+    return this.get('validation') === App.Repository.validation.INVALID;
   }.property('validation'),
 
-  undo: function() {
-    return this.get('baseUrl') != this.get('latestBaseUrl');
-  }.property('baseUrl','latestBaseUrl'),
+  /**
+   * @type {boolean}
+   */
+  isUtils: function () {
+    return this.get('repoName').contains('UTILS');
+  }.property('repoName'),
 
-  clearAll: function() {
-    return this.get('baseUrl')
-  }.property('baseUrl')
+  undo: Em.computed.notEqualProperties('baseUrl', 'baseUrlInit'),
+
+  notEmpty: Em.computed.notEqual('baseUrl', ''),
+
+  clearAll: Em.computed.alias('baseUrl'),
+
+  /**
+   * @type {string}
+   */
+  placeholder: Em.computed.ifThenElse('isUtils', '', Em.I18n.t('installer.step1.advancedRepo.localRepo.placeholder')),
+
 });
 
 App.Repository.validation = {

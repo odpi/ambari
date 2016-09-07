@@ -106,7 +106,9 @@ App.SerializerMixin = Em.Mixin.create({
           ordering_policy:               props[base_path + ".ordering-policy"] || null,
           enable_size_based_weight:      props[base_path + ".ordering-policy.fair.enable-size-based-weight"] || null,
           default_node_label_expression: props[base_path + ".default-node-label-expression"] || null,
-          labelsEnabled:                 props.hasOwnProperty(labelsPath)
+          labelsEnabled:                 props.hasOwnProperty(labelsPath),
+          disable_preemption:            props[base_path + '.disable_preemption'] || '',
+          isPreemptionInherited:         (props[base_path + '.disable_preemption'] !== undefined)?false:true
         };
 
     switch ((props.hasOwnProperty(labelsPath))?props[labelsPath]:'') {
@@ -160,12 +162,13 @@ App.SerializerMixin = Em.Mixin.create({
       nodeLabels.forEach(function(label) {
         var labelId = [queue.id,label.name].join('.'),
             cp =  [prefix, queue.path, 'accessible-node-labels',label.name,'capacity'].join('.'),
-            mcp = [prefix, queue.path, 'accessible-node-labels',label.name,'maximum-capacity'].join('.');
+            mcp = [prefix, queue.path, 'accessible-node-labels',label.name,'maximum-capacity'].join('.'),
+            labelCapacity = properties.hasOwnProperty(cp)?+properties[cp]:0;
         labels.push({
           id:labelId,
-          capacity:properties.hasOwnProperty(cp)?+properties[cp]:0,
+          capacity:labelCapacity,
           maximum_capacity:properties.hasOwnProperty(mcp)?+properties[mcp]:100,
-          queue:(queue.labels.contains([queue.id,label.name].join('.')))?queue.id:null
+          queue:(queue.labels.contains(labelId))?queue.id:null
         });
       });
 
@@ -249,6 +252,11 @@ App.QueueSerializer = DS.RESTSerializer.extend(App.SerializerMixin,{
       }
     }, this);
 
+    var isPreemptionSupported = record.get('store.isPreemptionSupported');
+    if (isPreemptionSupported && !record.get('isPreemptionInherited')) {
+      json[this.PREFIX + "." + record.get('path') + ".disable_preemption"] = (record.get('disable_preemption')==='true')? true:false;
+    }
+
     return json;
   },
   serializeHasMany:function (record, json, relationship) {
@@ -296,5 +304,13 @@ App.TagSerializer = DS.RESTSerializer.extend({
       delete hash.type;
       return hash;
     }
+  }
+});
+
+
+App.ConfigSerializer = DS.RESTSerializer.extend({
+  normalize : function(modelclass, resourceHash, prop){
+    resourceHash.id = 'siteName_'+ resourceHash.siteName + "_configName_" + resourceHash.configName;
+    return resourceHash;
   }
 });

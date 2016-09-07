@@ -1,3 +1,4 @@
+<?xml version="1.0"?>
 <!--
    Licensed to the Apache Software Foundation (ASF) under one or more
    contributor license agreements.  See the NOTICE file distributed with
@@ -14,32 +15,28 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 -->
-
-<configuration supports_final="false">
+<configuration supports_final="false" supports_adding_forbidden="true">
   <property>
     <name>yarn.scheduler.capacity.resource-calculator</name>
+    <description>
+      The ResourceCalculator implementation to be used to compare Resources in the scheduler.
+      The default i.e. org.apache.hadoop.yarn.util.resource.DefaultResourseCalculator only uses
+      Memory while DominantResourceCalculator uses Dominant-resource to compare multi-dimensional
+      resources such as Memory, CPU etc. A Java ResourceCalculator class name is expected.
+    </description>
     <value>org.apache.hadoop.yarn.util.resource.DefaultResourceCalculator</value>
-    <description></description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>yarn.scheduler.capacity.root.accessible-node-labels</name>
     <value>*</value>
-    <description></description>
-  </property>
-  <property>
-    <name>yarn.scheduler.capacity.root.accessible-node-labels.default.capacity</name>
-    <value>-1</value>
-    <description></description>
-  </property>
-  <property>
-    <name>yarn.scheduler.capacity.root.accessible-node-labels.default.maximum-capacity</name>
-    <value>-1</value>
-    <description></description>
+    <description/>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>yarn.scheduler.capacity.root.default-node-label-expression</name>
-    <value></value>
-    <description></description>
+    <value/>
+    <description/>
+    <on-ambari-upgrade add="true"/>
   </property>
-
 </configuration>

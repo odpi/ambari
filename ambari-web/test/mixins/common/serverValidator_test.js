@@ -18,161 +18,168 @@
 
 var App = require('app');
 
-describe('App.ServerValidatorMixin', function() {
+describe('App.ServerValidatorMixin', function () {
   var mixinObject = Em.Object.extend(App.ServerValidatorMixin, {});
-  describe('#validationSuccess', function() {
-    var instanceObject;
-    var genRespItem = function(name, filename, level, message) {
-      return {
-        type: 'configuration',
-        'config-name': name,
-        'config-type': filename,
-        level: level,
-        message: message
-      };
-    };
-    var genResponse = function(items) {
-      return {
-        items: (items.map(function(item) { return genRespItem.apply(undefined, item); }))
-      };
-    };
-    var genConfigs = function(configs) {
-      return Em.Object.create({
-        configs: (configs.map(function(item) {
-            return Em.Object.create({ name: item[0], filename: item[1] });
-          }))
-      });
-    };
-    var tests = [
-      {
-        stepConfigs: Em.A([
-          genConfigs([
-            ['prop1', 'some-site.xml']
-          ])
-        ]),
-        resources: [
-          genResponse([
-            ['prop1', 'some-site', 'WARN', 'Some warn'],
-            ['prop2', 'some-site', 'ERROR', 'Value should be set']
-          ])
-        ],
-        expected: [
-          { prop: 'configValidationError', value: true },
-          { prop: 'configValidationWarning', value: true },
-          { prop: 'configValidationGlobalMessage.length', value: 1 },
-          { prop: 'configValidationGlobalMessage[0].serviceName', value: 'Some Service' },
-          { prop: 'configValidationGlobalMessage[0].propertyName', value: 'prop2' }
-        ],
-        message: 'validation failed on absent property from step configs. global message should be showed.'
-      },
-      {
-        stepConfigs: Em.A([
-          genConfigs([
-            ['prop1', 'some-site.xml'],
-            ['prop2', 'some-site.xml']
-          ])
-        ]),
-        resources: [
-          genResponse([
-            ['prop1', 'some-site', 'WARN', 'Some warn']
-          ])
-        ],
-        expected: [
-          { prop: 'configValidationError', value: false },
-          { prop: 'configValidationWarning', value: true },
-          { prop: 'configValidationGlobalMessage.length', value: 0}
-        ],
-        message: 'all properties present in step configs. validation failed. Present WARN and ERROR level messages.'
-      },
-            {
-        stepConfigs: Em.A([
-          genConfigs([
-            ['prop1', 'some-site.xml'],
-            ['prop2', 'some-site.xml']
-          ])
-        ]),
-        resources: [
-          {
-            items: []
-          }
-        ],
-        expected: [
-          { prop: 'configValidationFailed', value: false },
-          { prop: 'configValidationError', value: false },
-          { prop: 'configValidationWarning', value: false },
-          { prop: 'configValidationGlobalMessage.length', value: 0}
-        ],
-        message: 'validation success. no errors flags should be set.'
-      }
+  var instanceObject;
+  beforeEach(function () {
+    instanceObject = mixinObject.create();
+  });
+  describe('#collectAllIssues', function () {
+    var result = [];
+    var stepConfigs = [
+      Em.Object.create({
+        serviceName: 'service1',
+        configs: [
+          Em.Object.create({
+            id: 'c1_f1',
+            name: 'c1',
+            filename: 'f1',
+            isVisible: true,
+            hiddenBySection: false
+          }),
+          Em.Object.create({
+            id: 'c2_f2',
+            name: 'c2',
+            filename: 'f2',
+            isVisible: true,
+            hiddenBySection: false
+          }),
+          Em.Object.create({
+            id: 'c3_f3',
+            name: 'c3',
+            filename: 'f3',
+            isVisible: true,
+            hiddenBySection: false,
+            warnMessage: 'warn3'
+          }),
+          Em.Object.create({
+            id: 'c4_f4',
+            name: 'c4',
+            filename: 'f4',
+            isVisible: false,
+            hiddenBySection: false
+          })
+        ]
+      })
     ];
-    
+
+    var response = {
+      configErrorsMap: {
+        'c1_f1': {
+          type: 'WARN',
+          messages: ['warn1']
+        },
+        'c2_f2': {
+          type: 'ERROR',
+          messages: ['error2']
+        },
+        'c4_f4': {
+          type: 'ERROR',
+          messages: ['error4']
+        }
+      },
+      generalErrors: [{
+        type: 'GENERAL',
+        messages: ['general issue']
+      }]
+    };
+
+    beforeEach(function () {
+      instanceObject.set('stepConfigs', stepConfigs);
+      result = instanceObject.collectAllIssues(response.configErrorsMap, response.generalErrors);
+    });
+
+    it('should add server warnings', function () {
+      var error = result.find(function(r) { return r.propertyName === 'c1' && r.filename === 'f1'; });
+      expect(error.type).to.equal('WARN');
+      expect(error.messages).to.eql(['warn1']);
+    });
+
+    it('should add server errors', function () {
+      var error = result.find(function(r) { return r.propertyName === 'c2' && r.filename === 'f2'; });
+      expect(error.type).to.equal('ERROR');
+      expect(error.messages).to.eql(['error2']);
+    });
+
+    it('should add ui warning', function () {
+      var error = result.find(function(r) { return r.propertyName === 'c3' && r.filename === 'f3'; });
+      expect(error.type).to.equal('WARN');
+      expect(error.messages).to.eql(['warn3']);
+    });
+
+    it('should add general issues', function () {
+      var error = result.findProperty('type', 'GENERAL');
+      expect(error.messages).to.eql(['general issue']);
+    });
+
+    it('should ignore issues for hidden configs', function () {
+      var error = result.find(function(r) { return r.propertyName === 'c4' && r.filename === 'f4'; });
+      expect(error).to.be.undefined;
+    });
+  });
+
+  describe('#createErrorMessage', function() {
+    var property = {
+      name: 'p1',
+      filename: 'f1',
+      value: 'v1',
+      description: 'd1'
+    };
     beforeEach(function() {
-      instanceObject = mixinObject.create({});
-      sinon.stub(App.StackService, 'find').returns([
-        Em.Object.create({
-          displayName: 'Some Service',
-          configTypes: { 'some-site': {} }
-        })
-      ]);
+      sinon.stub(App.StackService, 'find', function() {
+        return Em.Object.create({
+          displayName: 'sName'
+        });
+      });
     });
 
     afterEach(function() {
       App.StackService.find.restore();
     });
-    
-    tests.forEach(function(test) {
-      it(test.message, function() {
-        instanceObject.set('stepConfigs', test.stepConfigs);
-        instanceObject.validationSuccess({resources: test.resources});
-        test.expected.forEach(function(e) {
-          expect(instanceObject).to.have.deep.property(e.prop, e.value);
-        });
+
+    it('creates warn object', function() {
+      expect(instanceObject.createErrorMessage('WARN', property, ['msg1'])).to.eql({
+        type: 'WARN',
+        isError: false,
+        isWarn: true,
+        isGeneral: false,
+        messages: ['msg1'],
+        propertyName: 'p1',
+        filename: 'f1',
+        value: 'v1',
+        description: 'd1',
+        serviceName: 'sName'
       });
     });
-  });
 
-  describe('#loadServerSideConfigsRecommendations', function() {
-    describe('Request on recommendations for only specified controllers', function() {
-      beforeEach(function() {
-        sinon.stub(App.ajax, 'send', function(args) { return args; });
+    it('creates error object', function() {
+      expect(instanceObject.createErrorMessage('ERROR', property, ['msg2'])).to.eql({
+        type: 'ERROR',
+        isError: true,
+        isWarn: false,
+        isGeneral: false,
+        messages: ['msg2'],
+        propertyName: 'p1',
+        filename: 'f1',
+        value: 'v1',
+        description: 'd1',
+        serviceName: 'sName'
       });
+    });
 
-      afterEach(function() {
-        App.ajax.send.restore();
+    it('creates general issue object', function() {
+      expect(instanceObject.createErrorMessage('GENERAL', null, ['msg3'])).to.eql({
+        type: 'GENERAL',
+        isError: false,
+        isWarn: false,
+        isGeneral: true,
+        messages: ['msg3']
       });
+    });
 
-      [
-        {
-          controllerName: '',
-          injectEnhancedConfigsMixin: false,
-          e: false
-        },
-        {
-          controllerName: 'wizardStep7Controller',
-          injectEnhancedConfigsMixin: true,
-          e: true
-        },
-        {
-          controllerName: 'kerberosWizardStep2Controller',
-          injectEnhancedConfigsMixin: true,
-          e: false
-        }
-      ].forEach(function(test) {
-        it('controller "name": {0} using "EnhancedConfigsMixin": {1} recommendations called: {2}'.format(test.controllerName, test.injectEnhancedConfigsMixin, test.e), function() {
-          var mixed;
-          if (test.injectEnhancedConfigsMixin) {
-            mixed = Em.Object.extend(App.EnhancedConfigsMixin, App.ServerValidatorMixin);
-          } else {
-            mixed = Em.Object.extend(App.ServerValidatorMixin);
-          }
-          // mock controller name in mixed object directly
-          mixed.create({name: test.controllerName}).loadServerSideConfigsRecommendations();
-          expect(App.ajax.send.calledOnce).to.be.eql(test.e);
-          if (test.e) {
-            expect(App.ajax.send.args[0][0].name).to.be.eql('config.recommendations');
-          }
-        });
-      });
+    it('creates WRONG TYPE issue object', function() {
+      expect(instanceObject.createErrorMessage.bind(instanceObject, 'WRONG TYPE', null, ['msg3']))
+        .to.throw(Error, 'Unknown config error type WRONG TYPE');
     });
   });
 });

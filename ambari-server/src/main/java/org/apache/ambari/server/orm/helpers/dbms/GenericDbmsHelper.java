@@ -205,6 +205,11 @@ public class GenericDbmsHelper implements DbmsHelper {
     int length = columnInfo.getLength() != null ? columnInfo.getLength() : 0;
     FieldDefinition fieldDefinition = new FieldDefinition(columnInfo.getName(), columnInfo.getType(), length);
     fieldDefinition.setShouldAllowNull(columnInfo.isNullable());
+
+    if (null != columnInfo.getDefaultValue() && isConstraintSupportedAfterNullability()) {
+      fieldDefinition.setConstraint("DEFAULT " + escapeParameter(columnInfo.getDefaultValue()));
+    }
+
     return fieldDefinition;
   }
 
@@ -241,6 +246,16 @@ public class GenericDbmsHelper implements DbmsHelper {
     //TODO validateColumnNames()
     String createIndex = databasePlatform.buildCreateIndex(tableName, indexName, columnNames);
     return createIndex;
+  }
+
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public String getDropIndexStatement(String indexName, String tableName) {
+    String dropIndex = databasePlatform.buildDropIndex(tableName, indexName);
+    return dropIndex;
   }
 
   @Override
@@ -373,5 +388,34 @@ public class GenericDbmsHelper implements DbmsHelper {
         return databasePlatform;
       }
     };
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public boolean isConstraintSupportedAfterNullability() {
+    return true;
+  }
+
+  /**
+   * Gets an escaped version of the specified value suitable for including as a
+   * parameter when building statements.
+   *
+   * @param value
+   *          the value to escape
+   * @return the escaped value
+   */
+  protected String escapeParameter(Object value) {
+    // Only String and number supported.
+    // Taken from:
+    // org.eclipse.persistence.internal.databaseaccess.appendParameterInternal
+    Object dbValue = databasePlatform.convertToDatabaseType(value);
+    String valueString = value.toString();
+    if (dbValue instanceof String) {
+      valueString = "'" + value.toString() + "'";
+    }
+
+    return valueString;
   }
 }

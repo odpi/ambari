@@ -21,21 +21,26 @@ limitations under the License.
 import urllib2
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import logging
+import traceback
 
-from resource_management.libraries.functions.curl_krb_request import curl_krb_request, CONNECTION_TIMEOUT_DEFAULT
+from resource_management.libraries.functions.curl_krb_request import curl_krb_request
+from resource_management.libraries.functions.curl_krb_request import DEFAULT_KERBEROS_KINIT_TIMER_MS
+from resource_management.libraries.functions.curl_krb_request import KERBEROS_KINIT_TIMER_PARAMETER
+from resource_management.libraries.functions.curl_krb_request import CONNECTION_TIMEOUT_DEFAULT
 from resource_management.core.environment import Environment
+from resource_management.libraries.functions.namenode_ha_utils import get_all_namenode_addresses
 
 NN_HTTP_ADDRESS_KEY = '{{hdfs-site/dfs.namenode.http-address}}'
 NN_HTTPS_ADDRESS_KEY = '{{hdfs-site/dfs.namenode.https-address}}'
 NN_HTTP_POLICY_KEY = '{{hdfs-site/dfs.http.policy}}'
 
+HDFS_SITE_KEY = '{{hdfs-site}}'
 KERBEROS_KEYTAB = '{{hdfs-site/dfs.web.authentication.kerberos.keytab}}'
 KERBEROS_PRINCIPAL = '{{hdfs-site/dfs.web.authentication.kerberos.principal}}'
 SECURITY_ENABLED_KEY = '{{cluster-env/security_enabled}}'
 SMOKEUSER_KEY = "{{cluster-env/smokeuser}}"
 EXECUTABLE_SEARCH_PATHS = '{{kerberos-env/executable_search_paths}}'
-
-logger = logging.getLogger()
+logger = logging.getLogger('ambari_alerts')
 
 def get_tokens():
   """
@@ -44,7 +49,7 @@ def get_tokens():
 
   :rtype tuple
   """
-  return (NN_HTTP_ADDRESS_KEY, NN_HTTPS_ADDRESS_KEY, NN_HTTP_POLICY_KEY, EXECUTABLE_SEARCH_PATHS,
+  return (HDFS_SITE_KEY, NN_HTTP_ADDRESS_KEY, NN_HTTPS_ADDRESS_KEY, NN_HTTP_POLICY_KEY, EXECUTABLE_SEARCH_PATHS,
           KERBEROS_KEYTAB, KERBEROS_PRINCIPAL, SECURITY_ENABLED_KEY, SMOKEUSER_KEY)
 
 
@@ -66,16 +71,11 @@ def execute(configurations={}, parameters={}, host_name=None):
     return (('UNKNOWN', ['There were no configurations supplied to the script.']))
 
   uri = None
-  scheme = 'http'
-  http_uri = None
-  https_uri = None
   http_policy = 'HTTP_ONLY'
 
-  if NN_HTTP_ADDRESS_KEY in configurations:
-    http_uri = configurations[NN_HTTP_ADDRESS_KEY]
-
-  if NN_HTTPS_ADDRESS_KEY in configurations:
-    https_uri = configurations[NN_HTTPS_ADDRESS_KEY]
+  # hdfs-site is required
+  if not HDFS_SITE_KEY in configurations:
+    return 'SKIPPED', ['{0} is a required parameter for the script'.format(HDFS_SITE_KEY)]
 
   if NN_HTTP_POLICY_KEY in configurations:
     http_policy = configurations[NN_HTTP_POLICY_KEY]
@@ -100,13 +100,21 @@ def execute(configurations={}, parameters={}, host_name=None):
     kerberos_principal = configurations[KERBEROS_PRINCIPAL]
     kerberos_principal = kerberos_principal.replace('_HOST', host_name)
 
-  # determine the right URI and whether to use SSL
-  uri = http_uri
-  if http_policy == 'HTTPS_ONLY':
-    scheme = 'https'
+  kinit_timer_ms = parameters.get(KERBEROS_KINIT_TIMER_PARAMETER, DEFAULT_KERBEROS_KINIT_TIMER_MS)
 
-    if https_uri is not None:
-      uri = https_uri
+  # determine the right URI and whether to use SSL
+  hdfs_site = configurations[HDFS_SITE_KEY]
+
+  scheme = "https" if http_policy == "HTTPS_ONLY" else "http"
+
+  nn_addresses = get_all_namenode_addresses(hdfs_site)
+  for nn_address in nn_addresses:
+    if nn_address.startswith(host_name + ":") or nn_address == host_name:
+      uri = nn_address
+      break
+  if not uri:
+    return 'SKIPPED', [
+      'NameNode on host {0} not found (namenode adresses = {1})'.format(host_name, ', '.join(nn_addresses))]
 
   upgrade_finalized_qry = "{0}://{1}/jmx?qry=Hadoop:service=NameNode,name=NameNodeInfo".format(scheme, uri)
 
@@ -121,7 +129,7 @@ def execute(configurations={}, parameters={}, host_name=None):
       last_checkpoint_time_response, error_msg, time_millis = curl_krb_request(
         env.tmp_dir, kerberos_keytab,
         kerberos_principal, upgrade_finalized_qry, "upgrade_finalized_state", executable_paths, False,
-        "HDFS Upgrade Finalized State", smokeuser
+        "HDFS Upgrade Finalized State", smokeuser, kinit_timer_ms = kinit_timer_ms
        )
 
       upgrade_finalized_response_json = json.loads(last_checkpoint_time_response)
@@ -138,8 +146,8 @@ def execute(configurations={}, parameters={}, host_name=None):
       label = "HDFS cluster is not finalized"
       result_code = 'CRITICAL'
 
-  except Exception, e:
-    label = str(e)
+  except:
+    label = traceback.format_exc()
     result_code = 'UNKNOWN'
 
   return ((result_code, [label]))

@@ -36,14 +36,14 @@ module.exports = [
   {
     'title':'Relational Operators',
     'helpers':[
-      'COGROUP %VAR% BY %VAR%',
+      'COGROUP %VAR1% BY %VAR2%',
       'CROSS %VAR1%, %VAR2%;',
       'DISTINCT %VAR%;',
       'FILTER %VAR% BY %COND%',
       'FLATTEN(%VAR%)',
       'FOREACH %DATA% GENERATE %NEW_DATA%',
       'FOREACH %DATA% {%NESTED_BLOCK%}',
-      'GROUP %VAR% BY %VAR%',
+      'GROUP %VAR1% BY %VAR2%',
       'GROUP %VAR% ALL',
       'JOIN %VAR% BY ',
       'LIMIT %VAR% %N%',
@@ -72,7 +72,7 @@ module.exports = [
   {
     'title':'HCatalog',
     'helpers':[
-      "LOAD '%TABLE%' USING org.apache.hcatalog.pig.HCatLoader();"
+      "LOAD '%TABLE%' USING org.apache.hive.hcatalog.pig.HCatLoader();"
     ]
   },
   {

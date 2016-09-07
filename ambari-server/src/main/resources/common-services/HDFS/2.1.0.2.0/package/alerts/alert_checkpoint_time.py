@@ -22,11 +22,19 @@ import time
 import urllib2
 import ambari_simplejson as json # simplejson is much faster comparing to Python 2.6 json module and has the same functions set.
 import logging
+import traceback
 
+from resource_management.libraries.functions.namenode_ha_utils import get_all_namenode_addresses
 from resource_management.libraries.functions.curl_krb_request import curl_krb_request
+from resource_management.libraries.functions.curl_krb_request import DEFAULT_KERBEROS_KINIT_TIMER_MS
+from resource_management.libraries.functions.curl_krb_request import KERBEROS_KINIT_TIMER_PARAMETER
 from resource_management.core.environment import Environment
 
 LABEL = 'Last Checkpoint: [{h} hours, {m} minutes, {tx} transactions]'
+HDFS_SITE_KEY = '{{hdfs-site}}'
+
+RESULT_STATE_UNKNOWN = 'UNKNOWN'
+RESULT_STATE_SKIPPED = 'SKIPPED'
 
 NN_HTTP_ADDRESS_KEY = '{{hdfs-site/dfs.namenode.http-address}}'
 NN_HTTPS_ADDRESS_KEY = '{{hdfs-site/dfs.namenode.https-address}}'
@@ -40,6 +48,12 @@ PERCENT_WARNING_DEFAULT = 200
 PERCENT_CRITICAL_KEY = 'checkpoint.time.critical.threshold'
 PERCENT_CRITICAL_DEFAULT = 200
 
+CHECKPOINT_TX_MULTIPLIER_WARNING_KEY = 'checkpoint.txns.multiplier.warning.threshold'
+CHECKPOINT_TX_MULTIPLIER_WARNING_DEFAULT = 2
+
+CHECKPOINT_TX_MULTIPLIER_CRITICAL_KEY = 'checkpoint.txns.multiplier.critical.threshold'
+CHECKPOINT_TX_MULTIPLIER_CRITICAL_DEFAULT = 4
+
 CHECKPOINT_TX_DEFAULT = 1000000
 CHECKPOINT_PERIOD_DEFAULT = 21600
 
@@ -52,14 +66,14 @@ SECURITY_ENABLED_KEY = '{{cluster-env/security_enabled}}'
 SMOKEUSER_KEY = "{{cluster-env/smokeuser}}"
 EXECUTABLE_SEARCH_PATHS = '{{kerberos-env/executable_search_paths}}'
 
-logger = logging.getLogger()
+logger = logging.getLogger('ambari_alerts')
 
 def get_tokens():
   """
   Returns a tuple of tokens in the format {{site/property}} that will be used
   to build the dictionary passed into execute
   """
-  return (NN_HTTP_ADDRESS_KEY, NN_HTTPS_ADDRESS_KEY, NN_HTTP_POLICY_KEY, EXECUTABLE_SEARCH_PATHS,
+  return (HDFS_SITE_KEY, NN_HTTP_ADDRESS_KEY, NN_HTTPS_ADDRESS_KEY, NN_HTTP_POLICY_KEY, EXECUTABLE_SEARCH_PATHS,
       NN_CHECKPOINT_TX_KEY, NN_CHECKPOINT_PERIOD_KEY, KERBEROS_KEYTAB, KERBEROS_PRINCIPAL, SECURITY_ENABLED_KEY, SMOKEUSER_KEY)
   
 
@@ -83,12 +97,10 @@ def execute(configurations={}, parameters={}, host_name=None):
   http_policy = 'HTTP_ONLY'
   checkpoint_tx = CHECKPOINT_TX_DEFAULT
   checkpoint_period = CHECKPOINT_PERIOD_DEFAULT
-  
-  if NN_HTTP_ADDRESS_KEY in configurations:
-    http_uri = configurations[NN_HTTP_ADDRESS_KEY]
 
-  if NN_HTTPS_ADDRESS_KEY in configurations:
-    https_uri = configurations[NN_HTTPS_ADDRESS_KEY]
+  # hdfs-site is required
+  if not HDFS_SITE_KEY in configurations:
+    return (RESULT_STATE_UNKNOWN, ['{0} is a required parameter for the script'.format(HDFS_SITE_KEY)])
 
   if NN_HTTP_POLICY_KEY in configurations:
     http_policy = configurations[NN_HTTP_POLICY_KEY]
@@ -126,20 +138,35 @@ def execute(configurations={}, parameters={}, host_name=None):
 
   percent_warning = PERCENT_WARNING_DEFAULT
   if PERCENT_WARNING_KEY in parameters:
-    percent_warning = float(parameters[PERCENT_WARNING_KEY]) * 100
+    percent_warning = float(parameters[PERCENT_WARNING_KEY])
 
   percent_critical = PERCENT_CRITICAL_DEFAULT
   if PERCENT_CRITICAL_KEY in parameters:
-    percent_critical = float(parameters[PERCENT_CRITICAL_KEY]) * 100
+    percent_critical = float(parameters[PERCENT_CRITICAL_KEY])
+
+  checkpoint_txn_multiplier_warning = CHECKPOINT_TX_MULTIPLIER_WARNING_DEFAULT
+  if CHECKPOINT_TX_MULTIPLIER_WARNING_KEY in parameters:
+    checkpoint_txn_multiplier_warning = float(parameters[CHECKPOINT_TX_MULTIPLIER_WARNING_KEY])
+
+  checkpoint_txn_multiplier_critical = CHECKPOINT_TX_MULTIPLIER_CRITICAL_DEFAULT
+  if CHECKPOINT_TX_MULTIPLIER_CRITICAL_KEY in parameters:
+    checkpoint_txn_multiplier_critical = float(parameters[CHECKPOINT_TX_MULTIPLIER_CRITICAL_KEY])
+
+  kinit_timer_ms = parameters.get(KERBEROS_KINIT_TIMER_PARAMETER, DEFAULT_KERBEROS_KINIT_TIMER_MS)
 
   # determine the right URI and whether to use SSL
-  uri = http_uri
-  if http_policy == 'HTTPS_ONLY':
-    scheme = 'https'
-    
-    if https_uri is not None:
-      uri = https_uri 
-  
+  hdfs_site = configurations[HDFS_SITE_KEY]
+
+  scheme = "https" if http_policy == "HTTPS_ONLY" else "http"
+
+  nn_addresses = get_all_namenode_addresses(hdfs_site)
+  for nn_address in nn_addresses:
+    if nn_address.startswith(host_name + ":"):
+      uri = nn_address
+      break
+  if not uri:
+    return (RESULT_STATE_SKIPPED, ['NameNode on host {0} not found (namenode adresses = {1})'.format(host_name, ', '.join(nn_addresses))])
+
   current_time = int(round(time.time() * 1000))
 
   last_checkpoint_time_qry = "{0}://{1}/jmx?qry=Hadoop:service=NameNode,name=FSNamesystem".format(scheme,uri)
@@ -158,14 +185,16 @@ def execute(configurations={}, parameters={}, host_name=None):
 
       last_checkpoint_time_response, error_msg, time_millis = curl_krb_request(env.tmp_dir, kerberos_keytab,
         kerberos_principal, last_checkpoint_time_qry,"checkpoint_time_alert", executable_paths, False,
-        "NameNode Last Checkpoint", smokeuser, connection_timeout=curl_connection_timeout)
+        "NameNode Last Checkpoint", smokeuser, connection_timeout=curl_connection_timeout,
+        kinit_timer_ms = kinit_timer_ms)
 
       last_checkpoint_time_response_json = json.loads(last_checkpoint_time_response)
       last_checkpoint_time = int(last_checkpoint_time_response_json["beans"][0]["LastCheckpointTime"])
 
       journal_transaction_info_response, error_msg, time_millis = curl_krb_request(env.tmp_dir, kerberos_keytab,
         kerberos_principal, journal_transaction_info_qry,"checkpoint_time_alert", executable_paths,
-        False, "NameNode Last Checkpoint", smokeuser, connection_timeout=curl_connection_timeout)
+        False, "NameNode Last Checkpoint", smokeuser, connection_timeout=curl_connection_timeout,
+        kinit_timer_ms = kinit_timer_ms)
 
       journal_transaction_info_response_json = json.loads(journal_transaction_info_response)
       journal_transaction_info = journal_transaction_info_response_json["beans"][0]["JournalTransactionInfo"]
@@ -185,14 +214,21 @@ def execute(configurations={}, parameters={}, host_name=None):
     delta = (current_time - last_checkpoint_time)/1000
 
     label = LABEL.format(h=get_time(delta)['h'], m=get_time(delta)['m'], tx=transaction_difference)
-    
-    if (transaction_difference > int(checkpoint_tx)) and (float(delta) / int(checkpoint_period)*100 >= int(percent_critical)):
+
+    is_checkpoint_txn_warning = transaction_difference > checkpoint_txn_multiplier_warning * int(checkpoint_tx)
+    is_checkpoint_txn_critical = transaction_difference > checkpoint_txn_multiplier_critical * int(checkpoint_tx)
+
+    # Either too many uncommitted transactions or missed check-pointing for
+    # long time decided by the thresholds
+    if is_checkpoint_txn_critical or (float(delta) / int(checkpoint_period)*100 >= int(percent_critical)):
+      logger.debug('Raising critical alert: transaction_difference = {0}, checkpoint_tx = {1}'.format(transaction_difference, checkpoint_tx))
       result_code = 'CRITICAL'
-    elif (transaction_difference > int(checkpoint_tx)) and (float(delta) / int(checkpoint_period)*100 >= int(percent_warning)):
+    elif is_checkpoint_txn_warning or (float(delta) / int(checkpoint_period)*100 >= int(percent_warning)):
+      logger.debug('Raising warning alert: transaction_difference = {0}, checkpoint_tx = {1}'.format(transaction_difference, checkpoint_tx))
       result_code = 'WARNING'
 
-  except Exception, e:
-    label = str(e)
+  except:
+    label = traceback.format_exc()
     result_code = 'UNKNOWN'
         
   return ((result_code, [label]))
@@ -209,7 +245,6 @@ def get_value_from_jmx(query, jmx_property, connection_timeout):
   try:
     response = urllib2.urlopen(query, timeout=connection_timeout)
     data = response.read()
-
     data_dict = json.loads(data)
     return data_dict["beans"][0][jmx_property]
   finally:

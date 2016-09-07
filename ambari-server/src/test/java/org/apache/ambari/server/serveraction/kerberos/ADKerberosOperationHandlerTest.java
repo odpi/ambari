@@ -19,6 +19,7 @@
 package org.apache.ambari.server.serveraction.kerberos;
 
 import junit.framework.Assert;
+import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
 import org.easymock.Capture;
 import org.easymock.CaptureType;
 import org.easymock.IAnswer;
@@ -54,7 +55,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
   @Test(expected = KerberosKDCConnectionException.class)
   public void testOpenExceptionLdapUrlNotProvided() throws Exception {
     KerberosOperationHandler handler = new ADKerberosOperationHandler();
-    KerberosCredential kc = new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null);
+    PrincipalKeyCredential kc = new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD);
     Map<String, String> kerberosEnvMap = new HashMap<String, String>() {
       {
         put(ADKerberosOperationHandler.KERBEROS_ENV_PRINCIPAL_CONTAINER_DN, DEFAULT_PRINCIPAL_CONTAINER_DN);
@@ -67,7 +68,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
   @Test(expected = KerberosLDAPContainerException.class)
   public void testOpenExceptionPrincipalContainerDnNotProvided() throws Exception {
     KerberosOperationHandler handler = new ADKerberosOperationHandler();
-    KerberosCredential kc = new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null);
+    PrincipalKeyCredential kc = new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD);
     Map<String, String> kerberosEnvMap = new HashMap<String, String>() {
       {
         put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, DEFAULT_LDAP_URL);
@@ -92,7 +93,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
 
   @Test(expected = KerberosAdminAuthenticationException.class)
   public void testTestAdministratorCredentialsIncorrectAdminPassword() throws Exception {
-    KerberosCredential kc = new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, "wrong".toCharArray(), null);
+    PrincipalKeyCredential kc = new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, "wrong");
     Map<String, String> kerberosEnvMap = new HashMap<String, String>() {
       {
         put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, DEFAULT_LDAP_URL);
@@ -120,7 +121,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
 
   @Test(expected = KerberosAdminAuthenticationException.class)
   public void testTestAdministratorCredentialsIncorrectAdminPrincipal() throws Exception {
-    KerberosCredential kc = new KerberosCredential("wrong", DEFAULT_ADMIN_PASSWORD.toCharArray(), null);
+    PrincipalKeyCredential kc = new PrincipalKeyCredential("wrong", DEFAULT_ADMIN_PASSWORD);
     Map<String, String> kerberosEnvMap = new HashMap<String, String>() {
       {
         put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, DEFAULT_LDAP_URL);
@@ -148,7 +149,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
 
   @Test(expected = KerberosKDCConnectionException.class)
   public void testTestAdministratorCredentialsKDCConnectionException() throws Exception {
-    KerberosCredential kc = new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null);
+    PrincipalKeyCredential kc = new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD);
     Map<String, String> kerberosEnvMap = new HashMap<String, String>() {
       {
         put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, "invalid");
@@ -177,7 +178,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
 
   @Test
   public void testTestAdministratorCredentialsSuccess() throws Exception {
-    KerberosCredential kc = new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null);
+    PrincipalKeyCredential kc = new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD);
     Map<String, String> kerberosEnvMap = new HashMap<String, String>() {
       {
         put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, DEFAULT_LDAP_URL);
@@ -199,6 +200,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
                 .andAnswer(new IAnswer<NamingEnumeration<SearchResult>>() {
                   @Override
                   public NamingEnumeration<SearchResult> answer() throws Throwable {
+                    @SuppressWarnings("unchecked")
                     NamingEnumeration<SearchResult> result = createNiceMock(NamingEnumeration.class);
                     expect(result.hasMore()).andReturn(false).once();
                     replay(result);
@@ -229,7 +231,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
 
   @Test
   public void testProcessCreateTemplateDefault() throws Exception {
-    KerberosCredential kc = new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null);
+    PrincipalKeyCredential kc = new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD);
     Map<String, String> kerberosEnvMap = new HashMap<String, String>() {
       {
         put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, DEFAULT_LDAP_URL);
@@ -237,14 +239,15 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
       }
     };
 
-    Capture<Name> capturedName = new Capture<Name>(CaptureType.ALL);
-    Capture<Attributes> capturedAttributes = new Capture<Attributes>(CaptureType.ALL);
+    Capture<Name> capturedName = newCapture(CaptureType.ALL);
+    Capture<Attributes> capturedAttributes = newCapture(CaptureType.ALL);
 
     ADKerberosOperationHandler handler = createMockBuilder(ADKerberosOperationHandler.class)
         .addMockedMethod(ADKerberosOperationHandler.class.getDeclaredMethod("createInitialLdapContext", Properties.class, Control[].class))
         .addMockedMethod(ADKerberosOperationHandler.class.getDeclaredMethod("createSearchControls"))
         .createNiceMock();
 
+    @SuppressWarnings("unchecked")
     NamingEnumeration<SearchResult> searchResult = createNiceMock(NamingEnumeration.class);
     expect(searchResult.hasMore()).andReturn(false).once();
 
@@ -338,7 +341,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
 
   @Test
   public void testProcessCreateTemplateCustom() throws Exception {
-    KerberosCredential kc = new KerberosCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD.toCharArray(), null);
+    PrincipalKeyCredential kc = new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD);
     Map<String, String> kerberosEnvMap = new HashMap<String, String>() {
       {
         put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, DEFAULT_LDAP_URL);
@@ -365,14 +368,15 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
       }
     };
 
-    Capture<Name> capturedName = new Capture<Name>();
-    Capture<Attributes> capturedAttributes = new Capture<Attributes>();
+    Capture<Name> capturedName = newCapture();
+    Capture<Attributes> capturedAttributes = newCapture();
 
     ADKerberosOperationHandler handler = createMockBuilder(ADKerberosOperationHandler.class)
         .addMockedMethod(ADKerberosOperationHandler.class.getDeclaredMethod("createInitialLdapContext", Properties.class, Control[].class))
         .addMockedMethod(ADKerberosOperationHandler.class.getDeclaredMethod("createSearchControls"))
         .createNiceMock();
 
+    @SuppressWarnings("unchecked")
     NamingEnumeration<SearchResult> searchResult = createNiceMock(NamingEnumeration.class);
     expect(searchResult.hasMore()).andReturn(false).once();
 
@@ -437,7 +441,68 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
 
     Assert.assertNotNull(attributes.get("userAccountControl"));
     Assert.assertEquals("66048", attributes.get("userAccountControl").get());
+  }
 
+  @Test
+  public void testDigests() throws Exception {
+    PrincipalKeyCredential kc = new PrincipalKeyCredential(DEFAULT_ADMIN_PRINCIPAL, DEFAULT_ADMIN_PASSWORD);
+    Map<String, String> kerberosEnvMap = new HashMap<String, String>();
+    kerberosEnvMap.put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, DEFAULT_LDAP_URL);
+    kerberosEnvMap.put(ADKerberosOperationHandler.KERBEROS_ENV_PRINCIPAL_CONTAINER_DN, DEFAULT_PRINCIPAL_CONTAINER_DN);
+    kerberosEnvMap.put(ADKerberosOperationHandler.KERBEROS_ENV_AD_CREATE_ATTRIBUTES_TEMPLATE, "" +
+            "{" +
+            "\"principal_digest\": \"$principal_digest\"," +
+            "\"principal_digest_256\": \"$principal_digest_256\"," +
+            "\"principal_digest_512\": \"$principal_digest_512\"" +
+            "}"
+    );
+
+    Capture<Attributes> capturedAttributes = newCapture();
+
+    ADKerberosOperationHandler handler = createMockBuilder(ADKerberosOperationHandler.class)
+        .addMockedMethod(ADKerberosOperationHandler.class.getDeclaredMethod("createInitialLdapContext", Properties.class, Control[].class))
+        .addMockedMethod(ADKerberosOperationHandler.class.getDeclaredMethod("createSearchControls"))
+        .createNiceMock();
+
+    @SuppressWarnings("unchecked")
+    NamingEnumeration<SearchResult> searchResult = createNiceMock(NamingEnumeration.class);
+    expect(searchResult.hasMore()).andReturn(false).once();
+
+    LdapContext ldapContext = createNiceMock(LdapContext.class);
+    expect(ldapContext.search(anyObject(String.class), anyObject(String.class), anyObject(SearchControls.class)))
+        .andReturn(searchResult)
+        .once();
+
+    expect(ldapContext.createSubcontext(anyObject(Name.class), capture(capturedAttributes)))
+        .andReturn(createNiceMock(DirContext.class))
+        .once();
+
+    expect(handler.createInitialLdapContext(anyObject(Properties.class), anyObject(Control[].class)))
+        .andReturn(ldapContext)
+        .once();
+
+    expect(handler.createSearchControls()).andAnswer(new IAnswer<SearchControls>() {
+      @Override
+      public SearchControls answer() throws Throwable {
+        SearchControls searchControls = createNiceMock(SearchControls.class);
+        replay(searchControls);
+        return searchControls;
+      }
+    }).once();
+
+    replayAll();
+
+    handler.open(kc, DEFAULT_REALM, kerberosEnvMap);
+    handler.createPrincipal("nn/c6501.ambari.apache.org", "secret", true);
+    handler.close();
+
+    Attributes attributes = capturedAttributes.getValue();
+
+    Assert.assertNotNull(attributes);
+
+    Assert.assertEquals("995e1580db28198e7fda1417ab5d894c877937d2", attributes.get("principal_digest").get());
+    Assert.assertEquals("b65bc066d11ac8b1beb31dc84035d9c204736f823decf8dfedda05a30e4ae410", attributes.get("principal_digest_256").get());
+    Assert.assertEquals("f48de28bc0467d764f5b04dbf04d35ff329a80277614be35eda0d0deed7f1c074cc5b0e0dc361130fdb078e09eb0ca545b9c653388192508ef382af89bd3a80c", attributes.get("principal_digest_512").get());
   }
 
   /**
@@ -475,7 +540,7 @@ public class ADKerberosOperationHandlerTest extends KerberosOperationHandlerTest
       containerDN = DEFAULT_PRINCIPAL_CONTAINER_DN;
     }
 
-    KerberosCredential credentials = new KerberosCredential(principal, password.toCharArray(), null);
+    PrincipalKeyCredential credentials = new PrincipalKeyCredential(principal, password);
     Map<String, String> kerberosEnvMap = new HashMap<String, String>();
 
     kerberosEnvMap.put(ADKerberosOperationHandler.KERBEROS_ENV_LDAP_URL, ldapUrl);

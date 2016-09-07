@@ -23,13 +23,9 @@ App.UpdateController = Em.Controller.extend({
   isUpdated: false,
   cluster: null,
   isWorking: false,
-  updateAlertInstances: function() {
-    return this.get('isWorking') && !App.get('router.mainAlertInstancesController.isUpdating');
-  }.property('isWorking', 'App.router.mainAlertInstancesController.isUpdating'),
+  updateAlertInstances: Em.computed.and('isWorking', '!App.router.mainAlertInstancesController.isUpdating'),
   timeIntervalId: null,
-  clusterName: function () {
-    return App.router.get('clusterController.clusterName');
-  }.property('App.router.clusterController.clusterName'),
+  clusterName: Em.computed.alias('App.router.clusterController.clusterName'),
 
   /**
    * keys which should be preloaded in order to filter hosts by host-components
@@ -37,6 +33,47 @@ App.UpdateController = Em.Controller.extend({
   hostsPreLoadKeys: ['host_components/HostRoles/component_name', 'host_components/HostRoles/stale_configs', 'host_components/HostRoles/maintenance_state'],
 
   paginationKeys: ['page_size', 'from'],
+
+  /**
+   * @type {Array}
+   */
+  serviceComponentMetrics: [
+    'host_components/metrics/jvm/memHeapUsedM',
+    'host_components/metrics/jvm/HeapMemoryMax',
+    'host_components/metrics/jvm/HeapMemoryUsed',
+    'host_components/metrics/jvm/memHeapCommittedM',
+    'host_components/metrics/mapred/jobtracker/trackers_decommissioned',
+    'host_components/metrics/cpu/cpu_wio',
+    'host_components/metrics/rpc/client/RpcQueueTime_avg_time',
+    'host_components/metrics/dfs/FSNamesystem/*',
+    'host_components/metrics/dfs/namenode/Version',
+    'host_components/metrics/dfs/namenode/LiveNodes',
+    'host_components/metrics/dfs/namenode/DeadNodes',
+    'host_components/metrics/dfs/namenode/DecomNodes',
+    'host_components/metrics/dfs/namenode/TotalFiles',
+    'host_components/metrics/dfs/namenode/UpgradeFinalized',
+    'host_components/metrics/dfs/namenode/Safemode',
+    'host_components/metrics/runtime/StartTime'
+  ],
+
+  /**
+   * @type {object}
+   */
+  serviceSpecificParams: {
+    'FLUME': "host_components/processes/HostComponentProcess",
+    'YARN':  "host_components/metrics/yarn/Queue," +
+             "host_components/metrics/yarn/ClusterMetrics/NumActiveNMs," +
+             "host_components/metrics/yarn/ClusterMetrics/NumLostNMs," +
+             "host_components/metrics/yarn/ClusterMetrics/NumUnhealthyNMs," +
+             "host_components/metrics/yarn/ClusterMetrics/NumRebootedNMs," +
+             "host_components/metrics/yarn/ClusterMetrics/NumDecommissionedNMs",
+    'HBASE': "host_components/metrics/hbase/master/IsActiveMaster," +
+             "host_components/metrics/hbase/master/MasterStartTime," +
+             "host_components/metrics/hbase/master/MasterActiveTime," +
+             "host_components/metrics/hbase/master/AverageLoad," +
+             "host_components/metrics/master/AssignmentManger/ritCount",
+    'STORM': 'metrics/api/v1/cluster/summary,metrics/api/v1/topology/summary,metrics/api/v1/nimbus/summary'
+  },
 
   /**
    * @type {string}
@@ -52,7 +89,7 @@ App.UpdateController = Em.Controller.extend({
   },
 
   getUrl: function (testUrl, url) {
-    return (App.get('testMode')) ? testUrl : App.apiPrefix + '/clusters/' + this.get('clusterName') + url;
+    return App.get('testMode') ? testUrl : App.apiPrefix + '/clusters/' + this.get('clusterName') + url;
   },
 
   /**
@@ -68,7 +105,7 @@ App.UpdateController = Em.Controller.extend({
     if (queryParams) {
       params = this.computeParameters(queryParams);
     }
-    params = (params.length > 0) ? params + "&" : params;
+    params = params.length > 0 ? params + "&" : params;
     return prefix + realUrl.replace('<parameters>', params);
   },
 
@@ -81,9 +118,15 @@ App.UpdateController = Em.Controller.extend({
     var params = '';
 
     queryParams.forEach(function (param) {
+      var customKey = param.key;
+
       switch (param.type) {
         case 'EQUAL':
-          params += param.key + '=' + param.value;
+          if (Em.isArray(param.value)) {
+            params += param.key + '.in(' + param.value.join(',') + ')';
+          } else {
+            params += param.key + '=' + param.value;
+          }
           break;
         case 'LESS':
           params += param.key + '<' + param.value;
@@ -92,7 +135,13 @@ App.UpdateController = Em.Controller.extend({
           params += param.key + '>' + param.value;
           break;
         case 'MATCH':
-          params += param.key + '.matches(' + param.value + ')';
+          if (Em.isArray(param.value)) {
+            params += '(' + param.value.map(function(v) {
+              return param.key + '.matches(' + v + ')';
+            }).join('|') + ')';
+          } else {
+            params += param.key + '.matches(' + param.value + ')';
+          }
           break;
         case 'MULTIPLE':
           params += param.key + '.in(' + param.value.join(',') + ')';
@@ -101,10 +150,13 @@ App.UpdateController = Em.Controller.extend({
           params += 'sortBy=' + param.key + '.' + param.value;
           break;
         case 'CUSTOM':
-          param.value.forEach(function(item, index){
-            param.key = param.key.replace('{' + index + '}', item);
+          param.value.forEach(function (item, index) {
+            customKey = customKey.replace('{' + index + '}', item);
           }, this);
-          params += param.key;
+          params += customKey;
+          break;
+        case 'COMBO':
+          params += App.router.get('mainHostComboSearchBoxController').generateQueryParam(param);
           break;
       }
       params += '&';
@@ -139,7 +191,7 @@ App.UpdateController = Em.Controller.extend({
    * Start polling, when <code>isWorking</code> become true
    */
   updateAll: function () {
-    if (this.get('isWorking')) {
+    if (this.get('isWorking') && !App.get('isOnlyViewUser')) {
       App.updater.run(this, 'updateServices', 'isWorking');
       App.updater.run(this, 'updateHost', 'isWorking');
       App.updater.run(this, 'updateServiceMetric', 'isWorking', App.componentsUpdateInterval, '\/main\/(dashboard|services).*');
@@ -153,6 +205,7 @@ App.UpdateController = Em.Controller.extend({
       if (!App.get('router.mainAlertInstancesController.isUpdating')) {
         App.updater.run(this, 'updateUnhealthyAlertInstances', 'updateAlertInstances', App.alertInstancesUpdateInterval, '\/main\/alerts.*');
       }
+      App.updater.run(this, 'updateClusterEnv', 'isWorking', App.clusterEnvUpdateInterval);
       App.updater.run(this, 'updateUpgradeState', 'isWorking', App.bgOperationsUpdateInterval);
       App.updater.run(this, 'updateWizardWatcher', 'isWorking', App.bgOperationsUpdateInterval);
     }
@@ -170,7 +223,7 @@ App.UpdateController = Em.Controller.extend({
         hostDetailsFilter = '',
         realUrl = '/hosts?fields=Hosts/rack_info,Hosts/host_name,Hosts/maintenance_state,Hosts/public_host_name,Hosts/cpu_count,Hosts/ph_cpu_count,' +
             'alerts_summary,Hosts/host_status,Hosts/last_heartbeat_time,Hosts/ip,host_components/HostRoles/state,host_components/HostRoles/maintenance_state,' +
-            'host_components/HostRoles/stale_configs,host_components/HostRoles/service_name,host_components/HostRoles/desired_admin_state,' +
+            'host_components/HostRoles/stale_configs,host_components/HostRoles/service_name,host_components/HostRoles/display_name,host_components/HostRoles/desired_admin_state,' +
             '<metrics>Hosts/total_mem<hostDetailsParams><stackVersions>&minimal_response=true',
         hostDetailsParams = ',Hosts/os_arch,Hosts/os_type,metrics/cpu/cpu_system,metrics/cpu/cpu_user,metrics/memory/mem_total,metrics/memory/mem_free',
         stackVersionInfo = ',stack_versions/HostStackVersions,' +
@@ -178,15 +231,18 @@ App.UpdateController = Em.Controller.extend({
             'stack_versions/repository_versions/RepositoryVersions/display_name',
         mainHostController = App.router.get('mainHostController'),
         sortProperties = mainHostController.getSortProps(),
-        isHostsLoaded = false;
+        loggingResource = ',host_components/logging',
+        isHostsLoaded = false,
+        // load hosts metrics separately of lazyLoadMetrics=true, but metrics in current request if we are sorting
+        loadMetricsSeparately = lazyLoadMetrics && !(sortProperties.length && ['loadAvg', 'diskUsage'].contains(sortProperties[0].name));
     this.get('queryParams').set('Hosts', mainHostController.getQueryParameters(true));
-    if (App.router.get('currentState.parentState.name') == 'hosts') {
+    if (App.router.get('currentState.parentState.name') === 'hosts') {
       App.updater.updateInterval('updateHost', App.get('contentUpdateInterval'));
       hostDetailsParams = '';
     }
     else {
-      if (App.router.get('currentState.parentState.name') == 'hostDetails') {
-        hostDetailsFilter = App.router.get('location.lastSetURL').match(/\/hosts\/(.*)\/(summary|configs|alerts|stackVersions)/)[1];
+      if (App.router.get('currentState.parentState.name') === 'hostDetails') {
+        hostDetailsFilter = App.router.get('location.lastSetURL').match(/\/hosts\/(.*)\/(summary|configs|alerts|stackVersions|logs)/)[1];
         App.updater.updateInterval('updateHost', App.get('componentsUpdateInterval'));
         //if host details page opened then request info only of one displayed host
         this.get('queryParams').set('Hosts', [
@@ -208,14 +264,17 @@ App.UpdateController = Em.Controller.extend({
       }
     }
 
-    realUrl = realUrl.replace("<stackVersions>", (App.get('supports.stackUpgrade') ? stackVersionInfo : ""));
-    realUrl = realUrl.replace("<metrics>", (lazyLoadMetrics ? "" : "metrics/disk,metrics/load/load_one,"));
+    realUrl = realUrl.replace("<stackVersions>", stackVersionInfo);
+    realUrl = realUrl.replace("<metrics>", loadMetricsSeparately ? "" : "metrics/disk,metrics/load/load_one,");
     realUrl = realUrl.replace('<hostDetailsParams>', hostDetailsParams);
+    if (App.get('supports.logSearch')) {
+      realUrl += loggingResource;
+    }
 
     var clientCallback = function (skipCall, queryParams) {
       var completeCallback = function () {
         callback();
-        if (lazyLoadMetrics) {
+        if (loadMetricsSeparately) {
           self.loadHostsMetric(queryParams);
         }
       };
@@ -231,7 +290,7 @@ App.UpdateController = Em.Controller.extend({
         if (App.get('testMode')) {
           realUrl = testUrl;
         } else {
-          realUrl = self.addParamsToHostsUrl.call(self, queryParams, sortProperties, realUrl);
+          realUrl = self.addParamsToHostsUrl(queryParams, sortProperties, realUrl);
         }
 
         App.HttpClient.get(realUrl, App.hostsMapper, {
@@ -257,7 +316,7 @@ App.UpdateController = Em.Controller.extend({
    */
   addParamsToHostsUrl: function (queryParams, sortProperties, realUrl) {
     var paginationProps = this.computeParameters(queryParams.filter(function (param) {
-      return (this.get('paginationKeys').contains(param.key));
+      return this.get('paginationKeys').contains(param.key);
     }, this));
     var sortProps = this.computeParameters(sortProperties);
 
@@ -307,7 +366,7 @@ App.UpdateController = Em.Controller.extend({
     var preLoadKeys = this.get('hostsPreLoadKeys');
 
     if (this.get('queryParams.Hosts').length > 0 && this.get('queryParams.Hosts').filter(function (param) {
-      return (preLoadKeys.contains(param.key));
+      return param.isComponentRelatedFilter;
     }, this).length > 0) {
       this.getHostByHostComponents(callback);
       return true;
@@ -339,13 +398,7 @@ App.UpdateController = Em.Controller.extend({
     var hostNames = data.items.mapProperty('Hosts.host_name');
     var skipCall = hostNames.length === 0;
 
-    /**
-     * exclude pagination parameters as they were applied in previous call
-     * to obtain hostnames of filtered hosts
-     */
-    preLoadKeys = preLoadKeys.concat(this.get('paginationKeys'));
-
-    var itemTotal = parseInt(data.itemTotal);
+    var itemTotal = parseInt(data.itemTotal, 10);
     if (!isNaN(itemTotal)) {
       App.router.set('mainHostController.filteredCount', itemTotal);
     }
@@ -354,7 +407,7 @@ App.UpdateController = Em.Controller.extend({
       params.callback(skipCall);
     } else {
       queryParams = queryParams.filter(function (param) {
-        return !(preLoadKeys.contains(param.key));
+        return !param.isComponentRelatedFilter;
       });
 
       queryParams.push({
@@ -366,7 +419,7 @@ App.UpdateController = Em.Controller.extend({
     }
   },
   getHostByHostComponentsErrorCallback: function () {
-    console.warn('ERROR: filtering hosts by host-component failed');
+
   },
   graphs: [],
   graphsUpdate: function (callback) {
@@ -375,11 +428,13 @@ App.UpdateController = Em.Controller.extend({
       var view = Em.View.views[_graph.id];
       if (view) {
         existedGraphs.push(_graph);
-        //console.log('updated graph', _graph.name);
-        view.loadData();
-        //if graph opened as modal popup update it to
-        if ($(".modal-graph-line .modal-body #" + _graph.popupId + "-container-popup").length) {
+        if (!view.get('isRequestRunning')) {
+          //console.log('updated graph', _graph.name);
           view.loadData();
+          //if graph opened as modal popup update it to
+          if ($(".modal-graph-line .modal-body #" + _graph.popupId + "-container-popup").length) {
+            view.loadData();
+          }
         }
       }
     });
@@ -401,36 +456,21 @@ App.UpdateController = Em.Controller.extend({
       requestsRunningStatus = this.get('requestsRunningStatus'),
       conditionalFieldsString = conditionalFields.length > 0 ? ',' + conditionalFields.join(',') : '',
       testUrl = '/data/dashboard/HDP2/master_components.json',
-      isFlumeInstalled = App.cache['services'].mapProperty('ServiceInfo.service_name').contains('FLUME'),
-      isATSInstalled = App.cache['services'].mapProperty('ServiceInfo.service_name').contains('YARN') && isATSPresent,
+      isFlumeInstalled = App.cache.services.mapProperty('ServiceInfo.service_name').contains('FLUME'),
+      isATSInstalled = App.cache.services.mapProperty('ServiceInfo.service_name').contains('YARN') && isATSPresent,
       flumeHandlerParam = isFlumeInstalled ? 'ServiceComponentInfo/component_name=FLUME_HANDLER|' : '',
       atsHandlerParam = isATSInstalled ? 'ServiceComponentInfo/component_name=APP_TIMELINE_SERVER|' : '',
       haComponents = App.get('isHaEnabled') ? 'ServiceComponentInfo/component_name=JOURNALNODE|ServiceComponentInfo/component_name=ZKFC|' : '',
       realUrl = '/components/?' + flumeHandlerParam + atsHandlerParam + haComponents +
         'ServiceComponentInfo/category=MASTER&fields=' +
         'ServiceComponentInfo/service_name,' +
+        'host_components/HostRoles/display_name,' +
         'host_components/HostRoles/host_name,' +
         'host_components/HostRoles/state,' +
         'host_components/HostRoles/maintenance_state,' +
         'host_components/HostRoles/stale_configs,' +
         'host_components/HostRoles/ha_state,' +
         'host_components/HostRoles/desired_admin_state,' +
-        'host_components/metrics/jvm/memHeapUsedM,' +
-        'host_components/metrics/jvm/HeapMemoryMax,' +
-        'host_components/metrics/jvm/HeapMemoryUsed,' +
-        'host_components/metrics/jvm/memHeapCommittedM,' +
-        'host_components/metrics/mapred/jobtracker/trackers_decommissioned,' +
-        'host_components/metrics/cpu/cpu_wio,' +
-        'host_components/metrics/rpc/RpcQueueTime_avg_time,' +
-        'host_components/metrics/dfs/FSNamesystem/*,' +
-        'host_components/metrics/dfs/namenode/Version,' +
-        'host_components/metrics/dfs/namenode/LiveNodes,' +
-        'host_components/metrics/dfs/namenode/DeadNodes,' +
-        'host_components/metrics/dfs/namenode/DecomNodes,' +
-        'host_components/metrics/dfs/namenode/TotalFiles,' +
-        'host_components/metrics/dfs/namenode/UpgradeFinalized,' +
-        'host_components/metrics/dfs/namenode/Safemode,' +
-        'host_components/metrics/runtime/StartTime' +
         conditionalFieldsString +
         '&minimal_response=true';
 
@@ -439,13 +479,13 @@ App.UpdateController = Em.Controller.extend({
       self.set('isUpdated', true);
     };
 
-    if (!requestsRunningStatus["updateServiceMetric"]) {
-      requestsRunningStatus["updateServiceMetric"] = true;
+    if (!requestsRunningStatus.updateServiceMetric) {
+      requestsRunningStatus.updateServiceMetric = true;
       App.HttpClient.get(servicesUrl, App.serviceMetricsMapper, {
         complete: function () {
           App.set('router.mainServiceItemController.isServicesInfoLoaded', App.get('router.clusterController.isLoaded'));
+          requestsRunningStatus.updateServiceMetric = false;
           callback();
-          requestsRunningStatus["updateServiceMetric"] = false;
         }
       });
     } else {
@@ -457,37 +497,33 @@ App.UpdateController = Em.Controller.extend({
    * @return {Array}
    */
   getConditionalFields: function () {
-    var conditionalFields = [];
-    var stormMetric = 'metrics/api/v1/cluster/summary,metrics/api/v1/topology/summary,metrics/api/v1/nimbus/summary';
+    var conditionalFields = this.get('serviceComponentMetrics').slice(0);
+    var serviceSpecificParams = $.extend({}, this.get('serviceSpecificParams'));
+    var metricsKey = 'metrics/';
+
     if (/^2.1/.test(App.get('currentStackVersionNumber'))) {
-      stormMetric = 'metrics/api/cluster/summary';
+      serviceSpecificParams.STORM = 'metrics/api/cluster/summary';
     } else if (/^2.2/.test(App.get('currentStackVersionNumber'))) {
-      stormMetric = 'metrics/api/v1/cluster/summary,metrics/api/v1/topology/summary';
+      serviceSpecificParams.STORM = 'metrics/api/v1/cluster/summary,metrics/api/v1/topology/summary';
     }
-    var serviceSpecificParams = {
-      'FLUME': "host_components/processes/HostComponentProcess",
-      'YARN': "host_components/metrics/yarn/Queue," +
-        "host_components/metrics/yarn/ClusterMetrics/NumActiveNMs," +
-        "host_components/metrics/yarn/ClusterMetrics/NumLostNMs," +
-        "host_components/metrics/yarn/ClusterMetrics/NumUnhealthyNMs," +
-        "host_components/metrics/yarn/ClusterMetrics/NumRebootedNMs," +
-        "host_components/metrics/yarn/ClusterMetrics/NumDecommissionedNMs",
-      'HBASE': "host_components/metrics/hbase/master/IsActiveMaster," +
-        "host_components/metrics/hbase/master/MasterStartTime," +
-        "host_components/metrics/hbase/master/MasterActiveTime," +
-        "host_components/metrics/hbase/master/AverageLoad," +
-        "host_components/metrics/master/AssignmentManger/ritCount",
-      'STORM': stormMetric
-    };
-    var services = App.cache['services'];
-    services.forEach(function (service) {
+
+    App.cache.services.forEach(function (service) {
       var urlParams = serviceSpecificParams[service.ServiceInfo.service_name];
       if (urlParams) {
         conditionalFields.push(urlParams);
       }
     });
+
+    //first load shouldn't contain metrics in order to make call lighter
+    if (!App.get('router.clusterController.isServiceMetricsLoaded')) {
+      return conditionalFields.filter(function (condition) {
+        return condition.indexOf(metricsKey) === -1;
+      });
+    }
+
     return conditionalFields;
   },
+
   updateServices: function (callback) {
     var testUrl = '/data/services/HDP2/services.json';
     var componentConfigUrl = this.getUrl(testUrl, '/services?fields=ServiceInfo/state,ServiceInfo/maintenance_state,components/ServiceComponentInfo/component_name&minimal_response=true');
@@ -497,27 +533,29 @@ App.UpdateController = Em.Controller.extend({
   },
   updateComponentConfig: function (callback) {
     var testUrl = '/data/services/host_component_stale_configs.json';
-    var componentConfigUrl = this.getUrl(testUrl, '/components?host_components/HostRoles/stale_configs=true&fields=host_components/HostRoles/service_name,host_components/HostRoles/state,host_components/HostRoles/maintenance_state,host_components/HostRoles/host_name,host_components/HostRoles/stale_configs,host_components/HostRoles/desired_admin_state&minimal_response=true');
+    var componentConfigUrl = this.getUrl(testUrl, '/components?host_components/HostRoles/stale_configs=true&fields=host_components/HostRoles/display_name,host_components/HostRoles/service_name,host_components/HostRoles/state,host_components/HostRoles/maintenance_state,host_components/HostRoles/host_name,host_components/HostRoles/stale_configs,host_components/HostRoles/desired_admin_state&minimal_response=true');
     App.HttpClient.get(componentConfigUrl, App.componentConfigMapper, {
       complete: callback
     });
   },
+
   updateComponentsState: function (callback) {
     var testUrl = '/data/services/HDP2/components_state.json';
     var realUrl = '/components/?fields=ServiceComponentInfo/service_name,' +
-      'ServiceComponentInfo/category,ServiceComponentInfo/installed_count,ServiceComponentInfo/started_count,ServiceComponentInfo/total_count,host_components/HostRoles/host_name&minimal_response=true';
+      'ServiceComponentInfo/category,ServiceComponentInfo/installed_count,ServiceComponentInfo/started_count,ServiceComponentInfo/init_count,ServiceComponentInfo/install_failed_count,ServiceComponentInfo/unknown_count,ServiceComponentInfo/total_count,ServiceComponentInfo/display_name,host_components/HostRoles/host_name&minimal_response=true';
     var url = this.getUrl(testUrl, realUrl);
 
     App.HttpClient.get(url, App.componentsStateMapper, {
       complete: callback
     });
   },
+
   updateAlertDefinitions: function (callback) {
     var testUrl = '/data/alerts/alertDefinitions.json';
     var realUrl = '/alert_definitions?fields=' +
-      'AlertDefinition/component_name,AlertDefinition/description,AlertDefinition/enabled,AlertDefinition/id,' +
-      'AlertDefinition/ignore_host,AlertDefinition/interval,AlertDefinition/label,AlertDefinition/name,' +
-      'AlertDefinition/scope,AlertDefinition/service_name,AlertDefinition/source';
+      'AlertDefinition/component_name,AlertDefinition/description,AlertDefinition/enabled,AlertDefinition/repeat_tolerance,AlertDefinition/repeat_tolerance_enabled,' +
+      'AlertDefinition/id,AlertDefinition/ignore_host,AlertDefinition/interval,AlertDefinition/label,AlertDefinition/name,' +
+      'AlertDefinition/scope,AlertDefinition/service_name,AlertDefinition/source,AlertDefinition/help_url';
     var url = this.getUrl(testUrl, realUrl);
 
     App.HttpClient.get(url, App.alertDefinitionsMapper, {
@@ -531,7 +569,7 @@ App.UpdateController = Em.Controller.extend({
     var realUrl = '/alerts?fields=' +
       'Alert/component_name,Alert/definition_id,Alert/definition_name,Alert/host_name,Alert/id,Alert/instance,' +
       'Alert/label,Alert/latest_timestamp,Alert/maintenance_state,Alert/original_timestamp,Alert/scope,' +
-      'Alert/service_name,Alert/state,Alert/text' +
+      'Alert/service_name,Alert/state,Alert/text,Alert/repeat_tolerance,Alert/repeat_tolerance_remaining' +
       '&Alert/state.in(CRITICAL,WARNING)&Alert/maintenance_state.in(OFF)&from=' + queryParams.from + '&page_size=' + queryParams.page_size;
     var url = this.getUrl(testUrl, realUrl);
 
@@ -566,10 +604,10 @@ App.UpdateController = Em.Controller.extend({
       complete: callback
     });
   },
-  
+
   updateUpgradeState: function (callback) {
     var currentStateName = App.get('router.currentState.name'),
-      parentStateName = App.get('router.parentState.name'),
+      parentStateName = App.get('router.currentState.parentState.name'),
       mainAdminStackAndUpgradeController = App.get('router.mainAdminStackAndUpgradeController');
     if (!(currentStateName === 'versions' && parentStateName === 'stackAndUpgrade') && currentStateName !== 'stackUpgrade' && App.get('wizardIsNotFinished') && !mainAdminStackAndUpgradeController.get('isLoadUpgradeDataPending')) {
       mainAdminStackAndUpgradeController.loadUpgradeData(true).done(callback);
@@ -578,8 +616,63 @@ App.UpdateController = Em.Controller.extend({
     }
   },
 
+  //TODO - update service auto-start to use this
+  updateClusterEnv: function (callback) {
+    this.loadClusterConfig(callback).done(function (data) {
+      var tag = [
+        {
+          siteName: 'cluster-env',
+          tagName: data.Clusters.desired_configs['cluster-env'].tag,
+          newTagName: null
+        }
+      ];
+      App.router.get('configurationController').getConfigsByTags(tag).done(function (config) {
+        App.router.get('clusterController').set('clusterEnv', config[0]);
+      });
+    });
+  },
+
+  loadClusterConfig: function (callback) {
+    return App.ajax.send({
+      name: 'config.tags.site',
+      sender: this,
+      data: {
+        site: 'cluster-env'
+      },
+      callback: callback
+    });
+  },
+
   updateWizardWatcher: function(callback) {
     App.router.get('wizardWatcherController').getUser().complete(callback);
-  }
+  },
 
+  /**
+   * Request to fetch logging info for specified host.
+   *
+   * @method updateLogging
+   * @param {string} hostName
+   * @param {string[]|boolean} fields additional fields to request e.g. ['field1', 'field2']
+   * @param {function} callback execute on when request succeed, json response will be passed to first argument
+   * @returns {$.Deferred.promise()}
+   */
+  updateLogging: function(hostName, fields, callback) {
+    var flds = !!fields ? "," + fields.join(',') : "" ;
+
+    return App.ajax.send({
+      name: 'host.logging',
+      sender: this,
+      data: {
+        hostName: hostName,
+        callback: callback,
+        fields: flds
+      },
+      success: 'updateLoggingSuccess'
+    });
+  },
+
+  updateLoggingSuccess: function(data, opt, params) {
+    var clbk = params.callback || function() {};
+    clbk(data);
+  }
 });

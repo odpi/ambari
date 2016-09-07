@@ -43,27 +43,13 @@ App.HostComponentView = Em.View.extend({
   /**
    * @type {String}
    */
-  workStatus: function () {
-    var workStatus = this.get('content.workStatus');
-    var hostComponent = this.get('hostComponent');
-    if (hostComponent) {
-      workStatus = hostComponent.get('workStatus');
-    }
-    return workStatus;
-  }.property('content.workStatus', 'hostComponent.workStatus'),
+  workStatus: Em.computed.firstNotBlank('hostComponent.workStatus', 'content.workStatus'),
 
   /**
    * Return host component text status
    * @type {String}
    */
-  componentTextStatus: function () {
-    var componentTextStatus = this.get('content.componentTextStatus');
-    var hostComponent = this.get('hostComponent');
-    if (hostComponent) {
-      componentTextStatus = hostComponent.get('componentTextStatus');
-    }
-    return componentTextStatus;
-  }.property('content.passiveState','workStatus'),
+  componentTextStatus: Em.computed.firstNotBlank('hostComponent.componentTextStatus', 'content.componentTextStatus'),
 
   /**
    * CSS-class for host component status
@@ -114,75 +100,73 @@ App.HostComponentView = Em.View.extend({
    * For Upgrade failed state
    * @type {bool}
    */
-  isUpgradeFailed: function () {
-    return App.HostComponentStatus.getKeyName(this.get('workStatus')) === "upgrade_failed";
-  }.property("workStatus"),
+  isUpgradeFailed: Em.computed.equal('workStatus', App.HostComponentStatus.upgrade_failed),
 
   /**
    * For Install failed state
    * @type {bool}
    */
-  isInstallFailed: function () {
-    return App.HostComponentStatus.getKeyName(this.get('workStatus')) === "install_failed";
-  }.property("workStatus"),
+  isInstallFailed: Em.computed.equal('workStatus', App.HostComponentStatus.install_failed),
 
   /**
    * For Started and Starting states
    * @type {bool}
    */
-  isStart: function () {
-    return [App.HostComponentStatus.started, App.HostComponentStatus.starting].contains(this.get('workStatus'));
-  }.property('workStatus'),
+  isStart: Em.computed.existsIn('workStatus', [App.HostComponentStatus.started, App.HostComponentStatus.starting]),
 
   /**
    * For Installed state
    * @type {bool}
    */
-  isStop: function () {
-    return (this.get('workStatus') == App.HostComponentStatus.stopped);
-  }.property('workStatus'),
+  isStop: Em.computed.equal('workStatus', App.HostComponentStatus.stopped),
 
   /**
    * For Installing state
    * @type {bool}
    */
-  isInstalling: function () {
-    return (this.get('workStatus') == App.HostComponentStatus.installing);
-  }.property('workStatus'),
+  isInstalling: Em.computed.equal('workStatus', App.HostComponentStatus.installing),
 
   /**
    * For Init state
    * @type {bool}
    */
-  isInit: function() {
-    return this.get('workStatus') == App.HostComponentStatus.init;
-  }.property('workStatus'),
-
-  /**
-   * No action available while component is starting/stopping/unknown
-   * @type {String}
-   */
-  noActionAvailable: function () {
-    var workStatus = this.get('workStatus');
-    return [App.HostComponentStatus.starting, App.HostComponentStatus.stopping,
-      App.HostComponentStatus.unknown, App.HostComponentStatus.disabled].contains(workStatus) ? "hidden" : '';
-  }.property('workStatus'),
+  isInit: Em.computed.equal('workStatus', App.HostComponentStatus.init),
 
   /**
    * For Stopping or Starting states
    * @type {bool}
    */
-  isInProgress: function () {
-    return (this.get('workStatus') === App.HostComponentStatus.stopping ||
-      this.get('workStatus') === App.HostComponentStatus.starting);
-  }.property('workStatus'),
+  isInProgress: Em.computed.existsIn('workStatus', [App.HostComponentStatus.stopping, App.HostComponentStatus.starting]),
+
+  withoutActions: Em.computed.existsIn('workStatus', [App.HostComponentStatus.starting, App.HostComponentStatus.stopping, App.HostComponentStatus.unknown, App.HostComponentStatus.disabled]),
+
+  /**
+   * No action available while component is starting/stopping/unknown
+   * @type {String}
+   */
+  noActionAvailable: Em.computed.ifThenElse('withoutActions', 'hidden', ''),
 
   /**
    * For OFF <code>passiveState</code> of host component
    * @type {bool}
    */
-  isActive: function () {
-    return (this.get('content.passiveState') == "OFF");
+  isActive: Em.computed.equal('content.passiveState', 'OFF'),
+
+  /**
+   *  Tooltip message for switch maintenance mode option
+   *  @type {Strting}
+   */
+  maintenanceTooltip: function () {
+    switch (this.get('content.passiveState')) {
+      case 'IMPLIED_FROM_SERVICE':
+        return Em.I18n.t('passiveState.disabled.impliedFromHighLevel').format(this.get('content.displayName'), this.get('content.service.serviceName'));
+      case 'IMPLIED_FROM_HOST':
+        return Em.I18n.t('passiveState.disabled.impliedFromHighLevel').format(this.get('content.displayName'), this.get('content.host.hostName'));
+      case 'IMPLIED_FROM_SERVICE_AND_HOST':
+        return Em.I18n.t('passiveState.disabled.impliedFromServiceAndHost').format(this.get('content.displayName'), this.get('content.service.serviceName'), this.get('content.host.hostName'));
+      default:
+        return '';
+    }
   }.property('content.passiveState'),
 
   /**
@@ -195,11 +179,11 @@ App.HostComponentView = Em.View.extend({
 
   /**
    * Host component with some <code>workStatus</code> can't be moved (so, disable such action in the dropdown list)
-   * @type {bool}
+   * @type {boolean}
    */
   isMoveComponentDisabled: function () {
-    return App.allHostNames.length === App.HostComponent.find().filterProperty('componentName', this.get('content.componentName')).mapProperty('hostName').length;
-  }.property('content'),
+    return App.get('allHostNames').length === App.HostComponent.find().filterProperty('componentName', this.get('content.componentName')).mapProperty('hostName').length;
+  }.property('content.componentName', 'App.allHostNames'),
 
   /**
    * Host component with some <code>workStatus</code> can't be deleted (so, disable such action in the dropdown list)
@@ -207,41 +191,27 @@ App.HostComponentView = Em.View.extend({
    */
   isDeleteComponentDisabled: function () {
     var stackComponentCount = App.StackServiceComponent.find(this.get('hostComponent.componentName')).get('minToInstall');
-    var installedCount = this.get('componentCounter');
+    var installedCount = App.HostComponent.getCount(this.get('hostComponent.componentName'), 'totalCount');
+    if(this.get('hostComponent.componentName') == 'MYSQL_SERVER' && this.get('hostComponent.serviceDisplayName') == 'Hive') {
+      var db_type=App.db.getConfigs().findProperty('type','hive-env').properties['hive_database'];
+      var status=[App.HostComponentStatus.stopped, App.HostComponentStatus.unknown, App.HostComponentStatus.install_failed, App.HostComponentStatus.upgrade_failed, App.HostComponentStatus.init].contains(this.get('workStatus'));
+      if(db_type.indexOf('Existing') > -1 && status)
+        return false;
+      else
+    	return true;
+    }    
     return (installedCount <= stackComponentCount)
       || ![App.HostComponentStatus.stopped, App.HostComponentStatus.unknown, App.HostComponentStatus.install_failed, App.HostComponentStatus.upgrade_failed, App.HostComponentStatus.init].contains(this.get('workStatus'));
-  }.property('workStatus', 'componentCounter'),
-
-  /**
-   * gets number of current component that are applied to the cluster;
-   * @returns {Number}
-   */
-  componentCounter: function() {
-    var component;
-    var stackServiceComponent =  App.StackServiceComponent.find(this.get('hostComponent.componentName'));
-    if (stackServiceComponent && App.get('router.clusterController.isHostContentLoaded')) {
-      if (stackServiceComponent.get('isMaster')) {
-        component = App.MasterComponent.find().findProperty('componentName', this.get('content.componentName'))
-      } else {
-        component = App.SlaveComponent.find().findProperty('componentName', this.get('content.componentName'));
-      }
-    }
-    return component ? component.get('totalCount') : 0;
-  }.property('App.router.clusterController.isHostContentLoaded'),
+  }.property('workStatus'),
 
   /**
    * Gets number of current running components that are applied to the cluster
    * @returns {Number}
    */
   runningComponentCounter: function () {
-    var runningComponents;
-    var self = this;
-
-    runningComponents = App.HostComponent.find().filter(function (component) {
-      return (component.get('componentName') === self.get('content.componentName') && [App.HostComponentStatus.started, App.HostComponentStatus.starting].contains(component.get('workStatus')))
-    });
-
-    return runningComponents ? runningComponents.length : 0;
+    return App.HostComponent.find().filter(function (component) {
+      return (component.get('componentName') === this.get('content.componentName') && [App.HostComponentStatus.started, App.HostComponentStatus.starting].contains(component.get('workStatus')))
+    }, this).length;
   },
 
   /**
@@ -264,9 +234,7 @@ App.HostComponentView = Em.View.extend({
    * Host component with some <code>workStatus</code> can't be restarted (so, disable such action in the dropdown list)
    * @type {bool}
    */
-  isRestartComponentDisabled: function() {
-    return ![App.HostComponentStatus.started].contains(this.get('workStatus'));
-  }.property('workStatus'),
+  isRestartComponentDisabled: Em.computed.notEqual('workStatus', App.HostComponentStatus.started),
 
   /**
    * Check if component configs can be refreshed
@@ -351,15 +319,19 @@ App.HostComponentView = Em.View.extend({
         return;
       }
 
-      var isContextPresent =  (!isSlave && (command in App.HostComponentActionMap.getMap(self)) &&  App.HostComponentActionMap.getMap(self)[command].context);
-      customCommands.push({
-        label: self.getCustomCommandLabel(command, isSlave),
-        service: component.get('serviceName'),
-        hosts: hostComponent.get('hostName'),
-        context: isContextPresent ? App.HostComponentActionMap.getMap(self)[command].context : null,
-        component: component.get('componentName'),
-        command: command
-      });
+      var commandMap = App.HostComponentActionMap.getMap(self)[command];
+      // push command if either there is no map or map is not instructing to hide command from this view
+      if (!commandMap || !commandMap.hideFromComponentView) {
+        customCommands.push({
+          label: self.getCustomCommandLabel(command),
+          service: component.get('serviceName'),
+          hosts: hostComponent.get('hostName'),
+          context: (!!commandMap && !!commandMap.context) ? commandMap.context : null,
+          component: component.get('componentName'),
+          command: command,
+          disabled: !!commandMap ? !!commandMap.disabled : false
+        });
+      }
     });
 
     return customCommands;
@@ -371,11 +343,11 @@ App.HostComponentView = Em.View.extend({
    * @param command
    * @returns {String}
    */
-  getCustomCommandLabel: function (command, isSlave) {
-    if (isSlave || !(command in App.HostComponentActionMap.getMap(this)) || !App.HostComponentActionMap.getMap(this)[command].label) {
-      return Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format(command)
-    }
-    return App.HostComponentActionMap.getMap(this)[command].label;
+  getCustomCommandLabel: function (command) {
+    if (command in App.HostComponentActionMap.getMap(this) && App.HostComponentActionMap.getMap(this)[command].label)
+      return App.HostComponentActionMap.getMap(this)[command].label;
+    
+    return Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format(App.format.normalizeNameBySeparators(command, ["_", "-", " "]));
   },
 
   /**
@@ -395,7 +367,7 @@ App.HostComponentView = Em.View.extend({
 
     if (component.get('cardinality') !== '1') {
       if (!this.get('isStart')) {
-        if (this.get('componentCounter') > 1) {
+        if (App.HostComponent.getCount(this.get('hostComponent.componentName'), 'totalCount') > 1) {
           if (this.runningComponentCounter()) {
             return false;
           }

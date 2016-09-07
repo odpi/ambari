@@ -22,18 +22,20 @@ import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.google.inject.Module;
 import com.google.inject.util.Modules;
-import org.apache.ambari.server.controller.spi.RequestStatus;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.spi.Predicate;
 import org.apache.ambari.server.controller.spi.Request;
+import org.apache.ambari.server.controller.spi.RequestStatus;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.utilities.PredicateBuilder;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
 import org.apache.ambari.server.orm.dao.WidgetDAO;
 import org.apache.ambari.server.orm.entities.WidgetEntity;
+import org.apache.ambari.server.security.encryption.CredentialStoreService;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.utils.CollectionPresentationUtils;
 import org.easymock.Capture;
 import org.easymock.EasyMock;
 import org.junit.Assert;
@@ -351,7 +353,8 @@ public class WidgetResourceProviderTest {
     Assert.assertFalse(oldMetrics.equals(entity.getMetrics()));
     Assert.assertFalse(oldProperties.equals(entity.getProperties()));
     Assert.assertEquals("[{\"name\":\"new_value\",\"new_name\":\"new_value2\"}]",entity.getMetrics());
-    Assert.assertEquals("{\"new_property\":\"new_value2\",\"property1\":\"new_value1\"}",entity.getProperties());
+    // Depends on hashing, string representation can be different
+    Assert.assertTrue(CollectionPresentationUtils.isJsonsEquals("{\"new_property\":\"new_value2\",\"property1\":\"new_value1\"}", entity.getProperties()));
     Assert.assertEquals("widget name2",entity.getWidgetName());
     Assert.assertEquals(null,entity.getDefaultSectionName());
 
@@ -416,7 +419,7 @@ public class WidgetResourceProviderTest {
     expectLastCall();
     replay(dao);
 
-    provider.deleteResources(predicate);
+    provider.deleteResources(request, predicate);
 
     WidgetEntity entity1 = entityCapture.getValue();
     Assert.assertEquals(Long.valueOf(1), entity1.getId());
@@ -510,6 +513,9 @@ public class WidgetResourceProviderTest {
           EasyMock.createNiceMock(Clusters.class));
       binder.bind(Cluster.class).toInstance(
               EasyMock.createNiceMock(Cluster.class));
+      binder.bind(CredentialStoreService.class).toInstance(
+        EasyMock.createNiceMock(CredentialStoreService.class)
+      );
     }
   }
 }

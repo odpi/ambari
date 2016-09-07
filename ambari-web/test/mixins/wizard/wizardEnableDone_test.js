@@ -20,17 +20,28 @@ var App = require('app');
 
 describe('App.WizardEnableDone', function () {
   var baseObject = Em.Object.extend({
-        statusChangeCallback: function (data) {
-          isSubmitDisabled: true
-        }
+        statusChangeCallback: function () {}
       }),
       mixedObject = baseObject.extend(App.WizardEnableDone),
       mixedObjectInstance;
   beforeEach(function () {
     mixedObjectInstance = mixedObject.create({
-      tasks: [{id: 77, status: 'FAILED'}],
-      currentTaskId: 77
+      tasks: [{status: 'COMPLETED'}, {status: 'FAILED'}],
+      content: Em.Object.create({
+        controllerName: 'wizardControllerName'
+      })
     });
+    sinon.stub(App.router, 'get', function () {
+          return Em.Object.create({
+            totalSteps: 6,
+            currentStep: 6
+          });
+        }
+    );
+  });
+
+  afterEach(function () {
+    App.router.get.restore();
   });
 
   it('#statusChangeCallback should enable done/complete button', function () {

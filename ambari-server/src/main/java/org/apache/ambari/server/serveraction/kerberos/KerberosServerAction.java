@@ -24,6 +24,7 @@ import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.agent.CommandReport;
 import org.apache.ambari.server.agent.ExecutionCommand;
 import org.apache.ambari.server.controller.KerberosHelper;
+import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
 import org.apache.ambari.server.serveraction.AbstractServerAction;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
@@ -68,6 +69,11 @@ public abstract class KerberosServerAction extends AbstractServerAction {
    * A (command parameter) property name used to hold the (serialized) service/component filter map.
    */
   public static final String SERVICE_COMPONENT_FILTER = "service_component_filter";
+
+  /**
+   * A (command parameter) property name used to hold the (serialized) host filter list.
+   */
+  public static final String HOST_FILTER = "host_filter";
 
   /**
    * A (command parameter) property name used to hold the (serialized) identity filter list.
@@ -117,6 +123,12 @@ public abstract class KerberosServerAction extends AbstractServerAction {
   * for all principals ("true") or only those that are missing ("false")
   */
   public static final String REGENERATE_ALL = "regenerate_all";
+
+  /*
+  * Key used in kerberosCommandParams in ExecutionCommand to indicate whether to include Ambari server indetity
+  * ("true") or ignore it ("false")
+  */
+  public static final String INCLUDE_AMBARI_IDENTITY = "include_ambari_identity";
 
   private static final Logger LOG = LoggerFactory.getLogger(KerberosServerAction.class);
 
@@ -341,7 +353,7 @@ public abstract class KerberosServerAction extends AbstractServerAction {
 
     if (commandParameters != null) {
       // Grab the relevant data from this action's command parameters map
-      KerberosCredential administratorCredential = kerberosHelper.getKDCCredentials();
+      PrincipalKeyCredential administratorCredential = kerberosHelper.getKDCAdministratorCredentials(getClusterName());
       String defaultRealm = getDefaultRealm(commandParameters);
       KDCType kdcType = getKDCType(commandParameters);
       String dataDirectoryPath = getDataDirectoryPath(commandParameters);

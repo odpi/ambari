@@ -18,6 +18,7 @@
 package org.apache.ambari.server.checks;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -27,6 +28,7 @@ import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.stack.PrereqCheckStatus;
 import org.apache.ambari.server.state.stack.PrerequisiteCheck;
+import org.apache.ambari.server.state.stack.UpgradePack.PrerequisiteCheckConfig;
 import org.apache.ambari.server.utils.VersionUtils;
 import org.apache.commons.lang.StringUtils;
 
@@ -37,12 +39,13 @@ import com.google.inject.Singleton;
  * is properly configured for dynamic discovery.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.DEFAULT, order = 1.0f)
+@UpgradeCheck(group = UpgradeCheckGroup.DEFAULT, order = 20.0f, required = true)
 public class HiveDynamicServiceDiscoveryCheck extends AbstractCheckDescriptor {
 
   static final String HIVE_DYNAMIC_SERVICE_DISCOVERY_ENABLED_KEY = "hive.dynamic-service.discovery.enabled.key";
   static final String HIVE_DYNAMIC_SERVICE_ZK_QUORUM_KEY = "hive.dynamic-service.discovery.zk-quorum.key";
   static final String HIVE_DYNAMIC_SERVICE_ZK_NAMESPACE_KEY = "hive.dynamic-service.zk-namespace.key";
+  static final String MIN_FAILURE_STACK_VERSION_PROPERTY_NAME = "min-failure-stack-version";
 
   /**
    * Constructor.
@@ -56,17 +59,7 @@ public class HiveDynamicServiceDiscoveryCheck extends AbstractCheckDescriptor {
    */
   @Override
   public boolean isApplicable(PrereqCheckRequest request) throws AmbariException {
-    if (!super.isApplicable(request)) {
-      return false;
-    }
-
-    final Cluster cluster = clustersProvider.get().getCluster(request.getClusterName());
-    Map<String, Service> services = cluster.getServices();
-    if (services.containsKey("HIVE")) {
-      return true;
-    }
-
-    return false;
+    return super.isApplicable(request, Arrays.asList("HIVE"), true);
   }
 
   /**
@@ -94,15 +87,32 @@ public class HiveDynamicServiceDiscoveryCheck extends AbstractCheckDescriptor {
           request));
     }
 
+    String minFailureStackVersion = null;
+    PrerequisiteCheckConfig prerequisiteCheckConfig = request.getPrerequisiteCheckConfig();
+    Map<String, String> checkProperties = null;
+    if(prerequisiteCheckConfig != null) {
+      checkProperties = prerequisiteCheckConfig.getCheckProperties(this.getClass().getName());
+    }
+    if(checkProperties != null && checkProperties.containsKey(MIN_FAILURE_STACK_VERSION_PROPERTY_NAME)) {
+      minFailureStackVersion = checkProperties.get(MIN_FAILURE_STACK_VERSION_PROPERTY_NAME);
+    }
+
     if (!errorMessages.isEmpty()) {
       prerequisiteCheck.setFailReason(StringUtils.join(errorMessages, " "));
       prerequisiteCheck.getFailedOn().add("HIVE");
       PrereqCheckStatus checkStatus = PrereqCheckStatus.FAIL;
-      if ("HDP".equals(request.getSourceStackId().getStackName())) {
-        if (VersionUtils.compareVersions(request.getSourceStackId().getStackVersion(), "2.3.0.0") < 0
-            && VersionUtils.compareVersions(request.getTargetStackId().getStackVersion(), "2.3.0.0") < 0
-            && VersionUtils.compareVersions(request.getSourceStackId().getStackVersion(), request.getTargetStackId().getStackVersion()) < 0) {
-          checkStatus = PrereqCheckStatus.WARNING;
+      if(minFailureStackVersion != null && !minFailureStackVersion.isEmpty()) {
+        String[] minStack = minFailureStackVersion.split("-");
+        if (minStack.length == 2) {
+          String minStackName = minStack[0];
+          String minStackVersion = minStack[1];
+          if (minStackName.equals(request.getSourceStackId().getStackName())) {
+            if (VersionUtils.compareVersions(request.getSourceStackId().getStackVersion(), minStackVersion) < 0
+                && VersionUtils.compareVersions(request.getTargetStackId().getStackVersion(), minStackVersion) < 0
+                && VersionUtils.compareVersions(request.getSourceStackId().getStackVersion(), request.getTargetStackId().getStackVersion()) < 0) {
+              checkStatus = PrereqCheckStatus.WARNING;
+            }
+          }
         }
       }
       prerequisiteCheck.setStatus(checkStatus);

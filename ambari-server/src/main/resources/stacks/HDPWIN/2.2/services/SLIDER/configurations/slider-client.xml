@@ -20,10 +20,9 @@
   Properties set here are picked up in the client.
 -->
 <configuration>
-
   <property>
     <name>slider.zookeeper.quorum</name>
     <value>localhost</value>
+    <on-ambari-upgrade add="true"/>
   </property>
-
 </configuration>

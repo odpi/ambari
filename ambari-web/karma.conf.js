@@ -54,10 +54,13 @@ module.exports = function(config) {
       'vendor/scripts/ember-i18n-1.4.1.js',
       'vendor/scripts/bootstrap.js',
       'vendor/scripts/bootstrap-combobox.js',
+      'vendor/scripts/bootstrap-switch.min.js',
       'vendor/scripts/d3.v2.js',
       'vendor/scripts/cubism.v1.js',
       'vendor/scripts/jquery.ui.core.js',
+      'vendor/scripts/jquery.ui.position.js',
       'vendor/scripts/jquery.ui.widget.js',
+      'vendor/scripts/jquery.ui.autocomplete.js',
       'vendor/scripts/jquery.ui.mouse.js',
       'vendor/scripts/jquery.ui.datepicker.js',
       'vendor/scripts/jquery-ui-timepicker-addon.js',
@@ -66,12 +69,19 @@ module.exports = function(config) {
       'vendor/scripts/jquery.ui.custom-effects.js',
       'vendor/scripts/jquery.timeago.js',
       'vendor/scripts/jquery.ajax-retry.js',
+      'vendor/scripts/difflib.js',
+      'vendor/scripts/diffview.js',
+      'vendor/scripts/underscore.js',
+      'vendor/scripts/backbone.js',
+      'vendor/scripts/visualsearch.js',
       'vendor/scripts/workflow_visualization.js',
       'vendor/scripts/rickshaw.js',
       'vendor/scripts/spin.js',
       'vendor/scripts/jquery.flexibleArea.js',
       'vendor/scripts/FileSaver.js',
       'vendor/scripts/Blob.js',
+      'vendor/scripts/moment.min.js',
+      'vendor/scripts/moment-timezone-with-data-2010-2020.js',
       'vendor/**/*.js',
       'app/templates/**/*.hbs',
       'app!(assets)/**/!(karma_setup|tests).js',
@@ -102,7 +112,7 @@ module.exports = function(config) {
     },
 
     preprocessors: {
-//      '!(vendor|node_modules|test)/**/!(karma_setup|tests).js': 'coverage',
+      '!(vendor|node_modules|test)/**/!(karma_setup|tests).js': 'coverage',
       'app/templates/**/*.hbs': ['ember-precompiler-brunch', 'common-require'],
       'app!(assets)/**/!(karma_setup|tests).js': ['common-require'],
       'test/**/*.js': ['common-require']
@@ -117,7 +127,7 @@ module.exports = function(config) {
     // test results reporter to use
     // possible values: 'dots', 'progress', 'junit', 'growl', 'coverage'
 //    reporters: ['progress', 'coverage'],
-    reporters: ['progress'],
+    reporters: ['progress', 'coverage'],
 
 
     // web server port
@@ -154,6 +164,6 @@ module.exports = function(config) {
 
     // Continuous Integration mode
     // if true, it capture browsers, run tests and exit
-    singleRun: false
+    singleRun: true
   });
 };

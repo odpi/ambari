@@ -27,6 +27,11 @@ App.StackServiceComponent = DS.Model.extend({
   displayName: DS.attr('string'),
   cardinality: DS.attr('string'),
   customCommands: DS.attr('array'),
+  reassignAllowed: DS.attr('boolean'),
+  decommissionAllowed: DS.attr('boolean'),
+  hasBulkCommandsDefinition: DS.attr('boolean'),
+  bulkCommandsDisplayName: DS.attr('string'),
+  bulkCommandsMasterComponentName: DS.attr('string'),
   dependencies: DS.attr('array'),
   serviceName: DS.attr('string'),
   componentCategory: DS.attr('string'),
@@ -56,28 +61,25 @@ App.StackServiceComponent = DS.Model.extend({
   }.property('cardinality'),
 
   /** @property {Boolean} isRequired - component required to install **/
-  isRequired: function() {
-    return this.get('minToInstall') > 0;
-  }.property('cardinality'),
+  isRequired: Em.computed.gt('minToInstall', 0),
 
   /** @property {Boolean} isMultipleAllowed - component can be assigned for more than one host **/
-  isMultipleAllowed: function() {
-    return this.get('maxToInstall') > 1;
-  }.property('cardinality'),
+  isMultipleAllowed: Em.computed.gt('maxToInstall', 1),
 
   /** @property {Boolean} isSlave **/
-  isSlave: function() {
-   return this.get('componentCategory') === 'SLAVE';
-  }.property('componentCategory'),
+  isSlave: Em.computed.equal('componentCategory', 'SLAVE'),
 
   /** @property {Boolean} isRestartable - component supports restart action **/
-  isRestartable: function() {
-    return !this.get('isClient');
-  }.property('isClient'),
+  isRestartable: Em.computed.not('isClient'),
 
   /** @property {Boolean} isReassignable - component supports reassign action **/
-  isReassignable: function() {
-    return ['NAMENODE', 'SECONDARY_NAMENODE', 'JOBTRACKER', 'RESOURCEMANAGER', 'APP_TIMELINE_SERVER', 'OOZIE_SERVER', 'WEBHCAT_SERVER', 'HIVE_SERVER', 'HIVE_METASTORE', 'MYSQL_SERVER', 'METRICS_COLLECTOR'].contains(this.get('componentName'));
+  isReassignable: function(){
+    return this.get('reassignAllowed');
+  }.property('reassignAllowed'),
+
+  /** @property {Boolean} isNonHDPComponent - component not belongs to HDP services **/
+  isNonHDPComponent: function() {
+    return ['METRICS_COLLECTOR', 'METRICS_MONITOR'].contains(this.get('componentName'));
   }.property('componentName'),
 
   /** @property {Boolean} isRollinRestartAllowed - component supports rolling restart action **/
@@ -87,13 +89,11 @@ App.StackServiceComponent = DS.Model.extend({
 
   /** @property {Boolean} isDecommissionAllowed - component supports decommission action **/
   isDecommissionAllowed: function() {
-    return ["DATANODE", "TASKTRACKER", "NODEMANAGER", "HBASE_REGIONSERVER"].contains(this.get('componentName'));
-  }.property('componentName'),
+   return this.get('decommissionAllowed');
+  }.property('decommissionAllowed'),
 
   /** @property {Boolean} isRefreshConfigsAllowed - component supports refresh configs action **/
-  isRefreshConfigsAllowed: function() {
-    return ["FLUME_HANDLER"].contains(this.get('componentName'));
-  }.property('componentName'),
+  isRefreshConfigsAllowed: Em.computed.existsIn('componentName', ['FLUME_HANDLER']),
 
   /** @property {Boolean} isAddableToHost - component can be added on host details page **/
   isAddableToHost: function() {
@@ -103,17 +103,19 @@ App.StackServiceComponent = DS.Model.extend({
   /** @property {Boolean} isDeletable - component supports delete action **/
   isDeletable: function() {
     var ignored = [];
-    return this.get('isAddableToHost') && !ignored.contains(this.get('componentName'));
+    return (this.get('isAddableToHost') && !ignored.contains(this.get('componentName'))) || (this.get('componentName') == 'MYSQL_SERVER');
   }.property('componentName'),
 
   /** @property {Boolean} isShownOnInstallerAssignMasterPage - component visible on "Assign Masters" step of Install Wizard **/
+  // Note: Components that are not visible on Assign Master Page are not saved as part of host component recommendation/validation layout
   isShownOnInstallerAssignMasterPage: function() {
     var component = this.get('componentName');
-    var mastersNotShown = ['MYSQL_SERVER', 'POSTGRESQL_SERVER'];
+    var mastersNotShown = ['MYSQL_SERVER', 'POSTGRESQL_SERVER', 'HIVE_SERVER_INTERACTIVE'];
     return this.get('isMaster') && !mastersNotShown.contains(component);
   }.property('isMaster','componentName'),
 
   /** @property {Boolean} isShownOnInstallerSlaveClientPage - component visible on "Assign Slaves and Clients" step of Install Wizard**/
+  // Note: Components that are not visible on Assign Slaves and Clients Page are saved as part of host component recommendation/validation layout
   isShownOnInstallerSlaveClientPage: function() {
     var component = this.get('componentName');
     var slavesNotShown = ['JOURNALNODE','ZKFC','APP_TIMELINE_SERVER'];
@@ -121,6 +123,7 @@ App.StackServiceComponent = DS.Model.extend({
   }.property('isSlave','componentName', 'isRequiredOnAllHosts'),
 
   /** @property {Boolean} isShownOnAddServiceAssignMasterPage - component visible on "Assign Masters" step of Add Service Wizard **/
+  // Note: Components that are not visible on Assign Master Page are not saved as part of host component recommendation/validation layout
   isShownOnAddServiceAssignMasterPage: function() {
     var isVisible = this.get('isShownOnInstallerAssignMasterPage');
     if (App.get('isHaEnabled')) {
@@ -141,29 +144,20 @@ App.StackServiceComponent = DS.Model.extend({
    *
    * @property {Boolean} isMasterAddableInstallerWizard
    **/
-  isMasterAddableInstallerWizard: function() {
-    return this.get('isMaster') && this.get('isMultipleAllowed') && !this.get('isMasterAddableOnlyOnHA') && !this.get('isNotAddableOnlyInInstall');
-  }.property('componentName'),
+  isMasterAddableInstallerWizard: Em.computed.and('isMaster', 'isMultipleAllowed', '!isMasterAddableOnlyOnHA', '!isNotAddableOnlyInInstall'),
 
   /**
    * Master components with cardinality more than 1 (n+ or n-n) that could not be added in wizards
    * New instances of these components are added in appropriate HA wizards
    * @property {Boolean} isMasterAddableOnlyOnHA
    */
-  isMasterAddableOnlyOnHA: function () {
-    return ['NAMENODE', 'RESOURCEMANAGER', 'RANGER_ADMIN', 'OOZIE_SERVER'].contains(this.get('componentName'));
-  }.property('componentName'),
+  isMasterAddableOnlyOnHA: Em.computed.existsIn('componentName', ['NAMENODE', 'RESOURCEMANAGER', 'RANGER_ADMIN']),
 
   /** @property {Boolean} isHAComponentOnly - Components that can be installed only if HA enabled **/
-  isHAComponentOnly: function() {
-    var HAComponentNames = ['ZKFC','JOURNALNODE'];
-    return HAComponentNames.contains(this.get('componentName'));
-  }.property('componentName'),
+  isHAComponentOnly: Em.computed.existsIn('componentName', ['ZKFC','JOURNALNODE']),
 
   /** @property {Boolean} isRequiredOnAllHosts - Is It require to install the components on all hosts. used in step-6 wizard controller **/
-  isRequiredOnAllHosts: function() {
-    return this.get('minToInstall') == Infinity;
-  }.property('stackService','isSlave'),
+  isRequiredOnAllHosts: Em.computed.equal('minToInstall', Infinity),
 
   /** @property {Number} defaultNoOfMasterHosts - default number of master hosts on Assign Master page: **/
   defaultNoOfMasterHosts: function() {
@@ -185,9 +179,7 @@ App.StackServiceComponent = DS.Model.extend({
   }.property('componentName'),
 
   /** @property {Boolean} isOtherComponentCoHosted - Is any other component co-hosted with this component **/
-  isOtherComponentCoHosted: function() {
-    return !!this.get('coHostedComponents').length;
-  }.property('coHostedComponents'),
+  isOtherComponentCoHosted: Em.computed.bool('coHostedComponents.length'),
 
   /** @property {Boolean} isCoHostedComponent - Is this component co-hosted with other component **/
   isCoHostedComponent: function() {
@@ -196,9 +188,10 @@ App.StackServiceComponent = DS.Model.extend({
   }.property('componentName'),
 
   /** @property {Boolean} isNotAddableOnlyInInstall - is this component addable, except Install and Add Service Wizards  **/
-  isNotAddableOnlyInInstall: function() {
-    return ['HIVE_METASTORE', 'HIVE_SERVER', 'RANGER_KMS_SERVER'].contains(this.get('componentName'));
-  }.property('componentName')
+  isNotAddableOnlyInInstall: Em.computed.existsIn('componentName', ['HIVE_METASTORE', 'HIVE_SERVER', 'RANGER_KMS_SERVER', 'OOZIE_SERVER']),
+
+  /** @property {Boolean} isNotAllowedOnSingleNodeCluster - is this component allowed on single node  **/
+  isNotAllowedOnSingleNodeCluster: Em.computed.existsIn('componentName', ['HAWQSTANDBY'])
 
 });
 

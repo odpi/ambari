@@ -28,22 +28,78 @@ function _getCapacitySchedulerViewUri(adapter) {
     return "/data";
 
   var parts = window.location.pathname.match(/[^\/]*/g).filterBy('').removeAt(0),
-      view = parts[0],
-      version = parts[1],
-      instance = parts[2];
-  if (parts.length == 2) { // version is not present
-    instance = parts[1];
+      view = parts[parts.length - 3],
+      version = parts[parts.length - 2],
+      instance = parts[parts.length - 1];
+  if (!/^(\d+\.){2,3}\d+$/.test(parts[parts.length - 2])) { // version is not present
+    instance = parts[parts.length - 2];
     version = '';
   }
 
   return '/' + [adapter.namespace,'views',view,'versions',version,'instances',instance,'resources','scheduler','configuration'].join('/');
 }
 
+function _ajaxOptions(url, type, hash) {
+  hash = hash || {};
+  hash.url = url;
+  hash.type = type;
+  hash.dataType = 'json';
+  hash.context = this;
+
+  hash.beforeSend = function (xhr) {
+    xhr.setRequestHeader('X-Requested-By', 'view-capacity-scheduler');
+  };
+  return hash;
+};
+function _ajaxError(jqXHR) {
+  if (jqXHR && typeof jqXHR === 'object') {
+    jqXHR.then = null;
+  }
+
+  return jqXHR;
+};
+function _ajax(url, type, hash) {
+  return new Ember.RSVP.Promise(function(resolve, reject) {
+    hash = _ajaxOptions(url, type, hash);
+
+    hash.success = function(json) {
+      Ember.run(null, resolve, json);
+    };
+
+    hash.error = function(jqXHR, textStatus, errorThrown) {
+      Ember.run(null, reject, _ajaxError(jqXHR));
+    };
+
+    Ember.$.ajax(hash);
+  }, "App: Adapters#ajax " + type + " to " + url);
+};
+
+
+App.ConfigAdapter = DS.Adapter.extend({
+  defaultSerializer:'config',
+  namespace: 'api/v1'.replace(/^\//, ''),
+  findQuery : function(store, type, query){
+    var adapter = this;
+    var uri = [_getCapacitySchedulerViewUri(this),'getConfig'].join('/') + "?siteName=" + query.siteName + "&configName="+ query.configName;
+
+    if (App.testMode)
+      uri = uri + ".json";
+
+    return new Ember.RSVP.Promise(function(resolve, reject) {
+      _ajax(uri ,'GET').then(function(data) {
+        Ember.run(null, resolve, data);
+      }, function(jqXHR) {
+        jqXHR.then = null;
+        Ember.run(null, resolve, false);
+      });
+    }, "App: ConfigAdapter#findQuery siteName : " + query.siteName + ", configName : " + query.configName);
+  }
+});
 
 App.QueueAdapter = DS.Adapter.extend({
   defaultSerializer:'queue',
   PREFIX: "yarn.scheduler.capacity",
-  namespace: 'api/v1',
+  namespace: 'api/v1'.replace(/^\//, ''),
   queues: [],
 
   createRecord: function(store, type, record) {
@@ -102,7 +158,7 @@ App.QueueAdapter = DS.Adapter.extend({
     });
 
     return new Ember.RSVP.Promise(function(resolve, reject) {
-      adapter.ajax(uri,'PUT',{contentType:'application/json; charset=utf-8',data:data}).then(function(data) {
+      _ajax(uri,'PUT',{contentType:'text/plain; charset=utf-8',data:data}).then(function(data) {
         store.setProperties({'current_tag':new_tag,'tag':new_tag});
         Ember.run(null, resolve, data.resources.objectAt(0).configurations.objectAt(0).configs);
       }, function(jqXHR) {
@@ -116,7 +172,7 @@ App.QueueAdapter = DS.Adapter.extend({
     if (!opt) return;
     var uri = [_getCapacitySchedulerViewUri(this),opt].join('/');
     return new Ember.RSVP.Promise(function(resolve, reject) {
-      this.ajax(uri,'PUT',{contentType:'application/json; charset=utf-8',data:JSON.stringify({save:true})})
+      _ajax(uri,'PUT',{contentType:'application/json; charset=utf-8',data:JSON.stringify({save:true})})
       .then(function (data) {
         resolve(data);
       },function (error) {
@@ -158,7 +214,7 @@ App.QueueAdapter = DS.Adapter.extend({
       uri = uri + "/scheduler-configuration.json";
 
     return new Ember.RSVP.Promise(function(resolve, reject) {
-      adapter.ajax(uri,'GET').then(function(data) {
+      _ajax(uri,'GET').then(function(data) {
         var config = data.items.objectAt(0);
         if (!store.get('isInitialized')) {
           store.set('current_tag',config.tag);
@@ -178,7 +234,7 @@ App.QueueAdapter = DS.Adapter.extend({
         uri = [_getCapacitySchedulerViewUri(this),'byTag',tag].join('/');
 
     return new Ember.RSVP.Promise(function(resolve, reject) {
-      adapter.ajax(uri,'GET').then(function(data) {
+      _ajax(uri,'GET').then(function(data) {
         Ember.run(null, resolve, data);
       }, function(jqXHR) {
         jqXHR.then = null;
@@ -187,24 +243,43 @@ App.QueueAdapter = DS.Adapter.extend({
     },'App: QueueAdapter#findAllTagged ' + tag);
   },
 
-  getNodeLabels:function () {
+  getNodeLabels:function (store) {
     var uri = [_getCapacitySchedulerViewUri(this),'nodeLabels'].join('/');
+    var stackId = store.get('stackId'),
+    stackVersion = stackId.substr(stackId.indexOf('-') + 1);
+
     if (App.testMode)
       uri = uri + ".json";
 
     return new Ember.RSVP.Promise(function(resolve, reject) {
-      this.ajax(uri,'GET').then(function(data) {
+      _ajax(uri,'GET').then(function(data) {
         var parsedData = JSON.parse(data), labels;
 
-        if (parsedData && Em.isArray(parsedData.nodeLabels)) {
-          labels = parsedData.nodeLabels;
+        if (parsedData !== null) {
+          store.set('isNodeLabelsConfiguredByRM', true);
         } else {
-          labels = (parsedData && parsedData.nodeLabels)?[parsedData.nodeLabels]:[];
+          store.set('isNodeLabelsConfiguredByRM', false);
         }
 
-        Ember.run(null, resolve, labels.map(function (label) {
-          return {name:label};
-        }));
+        if (stackVersion >= 2.5) {
+          if (parsedData && Em.isArray(parsedData.nodeLabelInfo)) {
+            labels = parsedData.nodeLabelInfo;
+          } else {
+            labels = (parsedData && parsedData.nodeLabelInfo)?[parsedData.nodeLabelInfo]:[];
+          }
+          Ember.run(null, resolve, labels.map(function (label) {
+            return {name:label.name,exclusivity:label.exclusivity};
+          }));
+        } else {
+          if (parsedData && Em.isArray(parsedData.nodeLabels)) {
+            labels = parsedData.nodeLabels;
+          } else {
+            labels = (parsedData && parsedData.nodeLabels)?[parsedData.nodeLabels]:[];
+          }
+          Ember.run(null, resolve, labels.map(function (label) {
+            return {name:label};
+          }));
+        }
       }, function(jqXHR) {
         jqXHR.then = null;
         Ember.run(null, reject, jqXHR);
@@ -217,7 +292,7 @@ App.QueueAdapter = DS.Adapter.extend({
     if (App.testMode)
       uri = uri + ".json";
     return new Ember.RSVP.Promise(function(resolve, reject) {
-      this.ajax(uri,'GET').then(function(data) {
+      _ajax(uri,'GET').then(function(data) {
         Ember.run(null, resolve, data);
       }, function(jqXHR) {
         jqXHR.then = null;
@@ -226,12 +301,15 @@ App.QueueAdapter = DS.Adapter.extend({
     }.bind(this),'App: QueueAdapter#getPrivilege');
   },
 
-  checkCluster:function () {
+  checkCluster:function (store) {
     var uri = [_getCapacitySchedulerViewUri(this),'cluster'].join('/');
     if (App.testMode)
       uri = uri + ".json";
     return new Ember.RSVP.Promise(function(resolve, reject) {
-      this.ajax(uri,'GET').then(function(data) {
+      _ajax(uri,'GET').then(function(data) {
+        if (data && data.Clusters && data.Clusters.version) {
+          store.set("stackId", data.Clusters.version);
+        }
         Ember.run(null, resolve, data);
       }, function(jqXHR) {
         if (jqXHR.status === 404) {
@@ -244,43 +322,19 @@ App.QueueAdapter = DS.Adapter.extend({
     }.bind(this),'App: QueueAdapter#checkCluster');
   },
 
-  ajax: function(url, type, hash) {
-    var adapter = this;
-
-    return new Ember.RSVP.Promise(function(resolve, reject) {
-      hash = adapter.ajaxOptions(url, type, hash);
-
-      hash.success = function(json) {
-        Ember.run(null, resolve, json);
-      };
-
-      hash.error = function(jqXHR, textStatus, errorThrown) {
-        Ember.run(null, reject, adapter.ajaxError(jqXHR));
-      };
-
-      Ember.$.ajax(hash);
-    }, "App: QueueAdapter#ajax " + type + " to " + url);
-  },
-
-  ajaxOptions: function(url, type, hash) {
-    hash = hash || {};
-    hash.url = url;
-    hash.type = type;
-    hash.dataType = 'json';
-    hash.context = this;
-
-    hash.beforeSend = function (xhr) {
-      xhr.setRequestHeader('X-Requested-By', 'view-capacity-scheduler');
-    };
-    return hash;
-  },
-
-  ajaxError: function(jqXHR) {
-    if (jqXHR && typeof jqXHR === 'object') {
-      jqXHR.then = null;
+  getRmSchedulerConfigInfo: function() {
+    var uri = [_getCapacitySchedulerViewUri(this), 'rmCurrentConfig'].join('/');
+    if (App.testMode) {
+      uri = uri + ".json";
     }
-
-    return jqXHR;
+    return new Ember.RSVP.Promise(function(resolve, reject) {
+      _ajax(uri, 'GET').then(function(data) {
+        Ember.run(null, resolve, data);
+      }, function(jqXHR) {
+        jqXHR.then = null;
+        Ember.run(null, reject, jqXHR);
+      });
+    }.bind(this),'App: QueueAdapter#getRmSchedulerConfigInfo');
   }
 });
 
@@ -305,7 +359,7 @@ App.TagAdapter = App.QueueAdapter.extend({
       uri = uri + ".json";
 
     return new Ember.RSVP.Promise(function(resolve, reject) {
-      adapter.ajax(uri ,'GET').then(function(data) {
+      _ajax(uri ,'GET').then(function(data) {
         Ember.run(null, resolve, data);
       }, function(jqXHR) {
         jqXHR.then = null;
@@ -314,4 +368,3 @@ App.TagAdapter = App.QueueAdapter.extend({
     }, "App: TagAdapter#findAll " + type);
   }
 });
-

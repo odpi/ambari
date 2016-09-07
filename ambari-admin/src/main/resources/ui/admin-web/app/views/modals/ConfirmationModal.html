@@ -23,6 +23,6 @@
   <div ng-show="isTempalte" ng-include="body.url"></div>
 </div>
 <div class="modal-footer">
-    <button class="btn btn-default" ng-click="cancel()">{{cancelText}}</button>
+    <button class="btn btn-default" ng-if="showCancelButton" ng-click="cancel()">{{cancelText}}</button>
     <button class="btn btn-primary" ng-click="ok()">{{confirmText}}</button>
 </div>

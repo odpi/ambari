@@ -24,19 +24,15 @@ from ambari_agent.LiveStatus import LiveStatus
 from ambari_agent.ActionQueue import ActionQueue
 from ambari_agent.AmbariConfig import AmbariConfig
 import os, errno, time, pprint, tempfile, threading
-import StringIO
 import sys
 from threading import Thread
 import copy
 
 from mock.mock import patch, MagicMock, call
-from ambari_agent.StackVersionsFileHandler import StackVersionsFileHandler
 from ambari_agent.CustomServiceOrchestrator import CustomServiceOrchestrator
 from ambari_agent.PythonExecutor import PythonExecutor
-from ambari_agent.CommandStatusDict import CommandStatusDict
 from ambari_agent.ActualConfigHandler import ActualConfigHandler
 from ambari_agent.RecoveryManager import RecoveryManager
-from ambari_agent.FileCache import FileCache
 from ambari_commons import OSCheck
 from only_for_platform import not_for_platform, os_distro_value, PLATFORM_WINDOWS, PLATFORM_LINUX
 
@@ -63,7 +59,26 @@ class TestActionQueue(TestCase):
     'serviceName': u'HDFS',
     'hostLevelParams': {},
     'configurations':{'global' : {}},
-    'configurationTags':{'global' : { 'tag': 'v1' }}
+    'configurationTags':{'global' : { 'tag': 'v1' }},
+    'commandParams': {
+      'command_retry_enabled': 'true'
+    }
+  }
+
+  datanode_install_no_retry_command = {
+    'commandType': 'EXECUTION_COMMAND',
+    'role': u'DATANODE',
+    'roleCommand': u'INSTALL',
+    'commandId': '1-1',
+    'taskId': 3,
+    'clusterName': u'cc',
+    'serviceName': u'HDFS',
+    'hostLevelParams': {},
+    'configurations':{'global' : {}},
+    'configurationTags':{'global' : { 'tag': 'v1' }},
+    'commandParams': {
+      'command_retry_enabled': 'false'
+    }
   }
 
   datanode_auto_start_command = {
@@ -128,8 +143,11 @@ class TestActionQueue(TestCase):
     'taskId': 7,
     'clusterName': u'cc',
     'serviceName': u'HDFS',
-    'hostLevelParams': {}
+    'hostLevelParams': {},
+    'commandParams': {
+      'command_retry_enabled': 'true'
     }
+  }
 
   status_command = {
     "serviceName" : 'HDFS',
@@ -151,6 +169,22 @@ class TestActionQueue(TestCase):
     'configurations':{'global' : {}},
     'configurationTags':{'global' : { 'tag': 'v123' }},
     'hostLevelParams':{'custom_command': 'RESTART', 'clientsToUpdateConfigs': []}
+  }
+
+  datanode_restart_command_no_logging = {
+    'commandType': 'EXECUTION_COMMAND',
+    'role': u'DATANODE',
+    'roleCommand': u'CUSTOM_COMMAND',
+    'commandId': '1-1',
+    'taskId': 9,
+    'clusterName': u'cc',
+    'serviceName': u'HDFS',
+    'configurations': {'global': {}},
+    'configurationTags': {'global': {'tag': 'v123'}},
+    'commandParams': {
+      'log_output': 'false'
+    },
+    'hostLevelParams': {'custom_command': 'RESTART', 'clientsToUpdateConfigs': []}
   }
 
   datanode_restart_command_no_clients_update = {
@@ -261,11 +295,11 @@ class TestActionQueue(TestCase):
 
 
   @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
-  @patch("traceback.print_exc")
+  @patch("logging.RootLogger.exception")
   @patch.object(ActionQueue, "execute_command")
   @patch.object(ActionQueue, "execute_status_command")
   def test_process_command(self, execute_status_command_mock,
-                           execute_command_mock, print_exc_mock):
+                           execute_command_mock, log_exc_mock):
     dummy_controller = MagicMock()
     config = AmbariConfig()
     config.set('agent', 'tolerate_download_failures', "true")
@@ -283,42 +317,133 @@ class TestActionQueue(TestCase):
     actionQueue.process_command(wrong_command)
     self.assertFalse(execute_command_mock.called)
     self.assertFalse(execute_status_command_mock.called)
-    self.assertFalse(print_exc_mock.called)
+    self.assertFalse(log_exc_mock.called)
 
     execute_command_mock.reset_mock()
     execute_status_command_mock.reset_mock()
-    print_exc_mock.reset_mock()
+    log_exc_mock.reset_mock()
     # Try normal execution
     actionQueue.process_command(execution_command)
     self.assertTrue(execute_command_mock.called)
     self.assertFalse(execute_status_command_mock.called)
-    self.assertFalse(print_exc_mock.called)
+    self.assertFalse(log_exc_mock.called)
 
     execute_command_mock.reset_mock()
     execute_status_command_mock.reset_mock()
-    print_exc_mock.reset_mock()
+    log_exc_mock.reset_mock()
 
     actionQueue.process_command(status_command)
     self.assertFalse(execute_command_mock.called)
     self.assertTrue(execute_status_command_mock.called)
-    self.assertFalse(print_exc_mock.called)
+    self.assertFalse(log_exc_mock.called)
 
     execute_command_mock.reset_mock()
     execute_status_command_mock.reset_mock()
-    print_exc_mock.reset_mock()
+    log_exc_mock.reset_mock()
 
     # Try exception to check proper logging
     def side_effect(self):
       raise Exception("TerribleException")
     execute_command_mock.side_effect = side_effect
     actionQueue.process_command(execution_command)
-    self.assertTrue(print_exc_mock.called)
+    self.assertTrue(log_exc_mock.called)
 
-    print_exc_mock.reset_mock()
+    log_exc_mock.reset_mock()
 
     execute_status_command_mock.side_effect = side_effect
     actionQueue.process_command(execution_command)
-    self.assertTrue(print_exc_mock.called)
+    self.assertTrue(log_exc_mock.called)
+
+  @patch.object(ActionQueue, "log_command_output")
+  @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
+  @patch.object(CustomServiceOrchestrator, "runCommand")
+  @patch("CommandStatusDict.CommandStatusDict")
+  @patch.object(ActionQueue, "status_update_callback")
+  def test_log_execution_commands(self, status_update_callback_mock,
+                                  command_status_dict_mock,
+                                  cso_runCommand_mock, mock_log_command_output):
+    custom_service_orchestrator_execution_result_dict = {
+        'stdout': 'out',
+        'stderr': 'stderr',
+        'structuredOut' : '',
+        'exitcode' : 0
+    }
+    cso_runCommand_mock.return_value = custom_service_orchestrator_execution_result_dict
+
+    config = AmbariConfig()
+    tempdir = tempfile.gettempdir()
+    config.set('agent', 'prefix', tempdir)
+    config.set('agent', 'cache_dir', "/var/lib/ambari-agent/cache")
+    config.set('agent', 'tolerate_download_failures', "true")
+    config.set('logging', 'log_command_executes', 1)
+    dummy_controller = MagicMock()
+    actionQueue = ActionQueue(config, dummy_controller)
+    actionQueue.execute_command(self.datanode_restart_command)
+    report = actionQueue.result()
+    expected = {'status': 'COMPLETED',
+                'configurationTags': {'global': {'tag': 'v123'}},
+                'stderr': 'stderr',
+                'stdout': 'out\n\nCommand completed successfully!\n',
+                'clusterName': u'cc',
+                'structuredOut': '""',
+                'roleCommand': u'CUSTOM_COMMAND',
+                'serviceName': u'HDFS',
+                'role': u'DATANODE',
+                'actionId': '1-1',
+                'taskId': 9,
+                'customCommand': 'RESTART',
+                'exitCode': 0}
+    # Agent caches configurationTags if custom_command RESTART completed
+    mock_log_command_output.assert_has_calls([call("out\n\nCommand completed successfully!\n", "9"), call("stderr", "9")], any_order=True)
+    self.assertEqual(len(report['reports']), 1)
+    self.assertEqual(expected, report['reports'][0])
+
+
+  @patch.object(ActionQueue, "log_command_output")
+  @patch.object(OSCheck, "os_distribution", new=MagicMock(return_value=os_distro_value))
+  @patch.object(CustomServiceOrchestrator, "runCommand")
+  @patch("CommandStatusDict.CommandStatusDict")
+  @patch.object(ActionQueue, "status_update_callback")
+  def test_do_not_log_execution_commands(self, status_update_callback_mock,
+                                         command_status_dict_mock,
+                                         cso_runCommand_mock, mock_log_command_output):
+    custom_service_orchestrator_execution_result_dict = {
+      'stdout': 'out',
+      'stderr': 'stderr',
+      'structuredOut': '',
+      'exitcode': 0
+    }
+    cso_runCommand_mock.return_value = custom_service_orchestrator_execution_result_dict
+
+    config = AmbariConfig()
+    tempdir = tempfile.gettempdir()
+    config.set('agent', 'prefix', tempdir)
+    config.set('agent', 'cache_dir', "/var/lib/ambari-agent/cache")
+    config.set('agent', 'tolerate_download_failures', "true")
+    config.set('logging', 'log_command_executes', 1)
+    dummy_controller = MagicMock()
+    actionQueue = ActionQueue(config, dummy_controller)
+    actionQueue.execute_command(self.datanode_restart_command_no_logging)
+    report = actionQueue.result()
+    expected = {'status': 'COMPLETED',
+                'configurationTags': {'global': {'tag': 'v123'}},
+                'stderr': 'stderr',
+                'stdout': 'out\n\nCommand completed successfully!\n',
+                'clusterName': u'cc',
+                'structuredOut': '""',
+                'roleCommand': u'CUSTOM_COMMAND',
+                'serviceName': u'HDFS',
+                'role': u'DATANODE',
+                'actionId': '1-1',
+                'taskId': 9,
+                'customCommand': 'RESTART',
+                'exitCode': 0}
+    # Agent caches configurationTags if custom_command RESTART completed
+    mock_log_command_output.assert_not_called(
+      [call("out\n\nCommand completed successfully!\n", "9"), call("stderr", "9")], any_order=True)
+    self.assertEqual(len(report['reports']), 1)
+    self.assertEqual(expected, report['reports'][0])
+
 
   @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
   @patch("__builtin__.open")
@@ -340,8 +465,8 @@ class TestActionQueue(TestCase):
     config.set('agent', 'cache_dir', "/var/lib/ambari-agent/cache")
     config.set('agent', 'tolerate_download_failures', "true")
     dummy_controller = MagicMock()
-    dummy_controller.recovery_manager = RecoveryManager()
-    dummy_controller.recovery_manager.update_config(5, 5, 1, 11, True, False)
+    dummy_controller.recovery_manager = RecoveryManager(tempfile.mktemp())
+    dummy_controller.recovery_manager.update_config(5, 5, 1, 11, True, False, False, "", -1)
 
     actionQueue = ActionQueue(config, dummy_controller)
     unfreeze_flag = threading.Event()
@@ -478,7 +603,7 @@ class TestActionQueue(TestCase):
     configname = os.path.join(tempdir, 'config.json')
     expected = {'status': 'COMPLETED',
                 'stderr': 'stderr',
-                'stdout': 'out',
+                'stdout': 'out\n\nCommand completed successfully!\n',
                 'clusterName': u'cc',
                 'structuredOut': '""',
                 'roleCommand': u'INSTALL',
@@ -517,7 +642,7 @@ class TestActionQueue(TestCase):
       # check report
     expected = {'status': 'FAILED',
                 'stderr': 'stderr',
-                'stdout': 'out',
+                'stdout': 'out\n\nCommand completed successfully!\n\n\nCommand failed after 1 tries\n',
                 'clusterName': u'cc',
                 'structuredOut': '""',
                 'roleCommand': u'INSTALL',
@@ -549,7 +674,7 @@ class TestActionQueue(TestCase):
     # check report
     expected = {'status': 'COMPLETED',
                 'stderr': 'stderr',
-                'stdout': 'out',
+                'stdout': 'out\n\nCommand completed successfully!\n\n\nCommand failed after 1 tries\n\n\nCommand completed successfully!\n',
                 'clusterName': 'clusterName',
                 'structuredOut': '""',
                 'roleCommand': 'UPGRADE',
@@ -593,7 +718,7 @@ class TestActionQueue(TestCase):
     expected = {'status': 'COMPLETED',
                 'configurationTags': {'global': {'tag': 'v123'}},
                 'stderr': 'stderr',
-                'stdout': 'out',
+                'stdout': 'out\n\nCommand completed successfully!\n',
                 'clusterName': u'cc',
                 'structuredOut': '""',
                 'roleCommand': u'CUSTOM_COMMAND',
@@ -635,7 +760,7 @@ class TestActionQueue(TestCase):
     expected = {'status': 'COMPLETED',
                 'configurationTags': {'global': {'tag': 'v123'}},
                 'stderr': 'stderr',
-                'stdout': 'out',
+                'stdout': 'out\n\nCommand completed successfully!\n',
                 'clusterName': u'cc',
                 'structuredOut': '""',
                 'roleCommand': u'CUSTOM_COMMAND',
@@ -652,7 +777,6 @@ class TestActionQueue(TestCase):
 
   @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
   @patch.object(ActionQueue, "status_update_callback")
-  @patch.object(StackVersionsFileHandler, "read_stack_version")
   @patch.object(CustomServiceOrchestrator, "requestComponentStatus")
   @patch.object(CustomServiceOrchestrator, "requestComponentSecurityState")
   @patch.object(ActionQueue, "execute_command")
@@ -660,7 +784,7 @@ class TestActionQueue(TestCase):
   @patch.object(CustomServiceOrchestrator, "__init__")
   def test_execute_status_command(self, CustomServiceOrchestrator_mock,
                                   build_mock, execute_command_mock, requestComponentSecurityState_mock,
-                                  requestComponentStatus_mock, read_stack_version_mock,
+                                  requestComponentStatus_mock,
                                   status_update_callback):
     CustomServiceOrchestrator_mock.return_value = None
     dummy_controller = MagicMock()
@@ -668,7 +792,7 @@ class TestActionQueue(TestCase):
 
     build_mock.return_value = {'dummy report': '' }
 
-    dummy_controller.recovery_manager = RecoveryManager()
+    dummy_controller.recovery_manager = RecoveryManager(tempfile.mktemp())
 
     requestComponentStatus_mock.reset_mock()
     requestComponentStatus_mock.return_value = {'exitcode': 0 }
@@ -685,9 +809,66 @@ class TestActionQueue(TestCase):
     self.assertEqual(report['componentStatus'][0], expected)
     self.assertTrue(requestComponentStatus_mock.called)
 
+  @patch.object(RecoveryManager, "command_exists")
+  @patch.object(RecoveryManager, "requires_recovery")
   @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
   @patch.object(ActionQueue, "status_update_callback")
-  @patch.object(StackVersionsFileHandler, "read_stack_version")
+  @patch.object(CustomServiceOrchestrator, "requestComponentStatus")
+  @patch.object(CustomServiceOrchestrator, "requestComponentSecurityState")
+  @patch.object(ActionQueue, "execute_command")
+  @patch.object(LiveStatus, "build")
+  @patch.object(CustomServiceOrchestrator, "__init__")
+  def test_execute_status_command_recovery(self, CustomServiceOrchestrator_mock,
+                                  build_mock, execute_command_mock, requestComponentSecurityState_mock,
+                                  requestComponentStatus_mock,
+                                  status_update_callback, requires_recovery_mock,
+                                  command_exists_mock):
+    CustomServiceOrchestrator_mock.return_value = None
+    dummy_controller = MagicMock()
+    actionQueue = ActionQueue(AmbariConfig(), dummy_controller)
+
+    build_mock.return_value = {'dummy report': '' }
+    requires_recovery_mock.return_value = True
+    command_exists_mock.return_value = False
+
+    dummy_controller.recovery_manager = RecoveryManager(tempfile.mktemp(), True, False)
+
+    requestComponentStatus_mock.reset_mock()
+    requestComponentStatus_mock.return_value = {'exitcode': 0 }
+
+    requestComponentSecurityState_mock.reset_mock()
+    requestComponentSecurityState_mock.return_value = 'UNKNOWN'
+
+    actionQueue.execute_status_command(self.status_command)
+    report = actionQueue.result()
+    expected = {'dummy report': '',
+                'securityState' : 'UNKNOWN',
+                'sendExecCmdDet': 'True'}
+
+    self.assertEqual(len(report['componentStatus']), 1)
+    self.assertEqual(report['componentStatus'][0], expected)
+    self.assertTrue(requestComponentStatus_mock.called)
+
+    requires_recovery_mock.return_value = True
+    command_exists_mock.return_value = True
+    requestComponentStatus_mock.reset_mock()
+    requestComponentStatus_mock.return_value = {'exitcode': 0 }
+
+    requestComponentSecurityState_mock.reset_mock()
+    requestComponentSecurityState_mock.return_value = 'UNKNOWN'
+
+    actionQueue.execute_status_command(self.status_command)
+    report = actionQueue.result()
+    expected = {'dummy report': '',
+                'securityState' : 'UNKNOWN',
+                'sendExecCmdDet': 'False'}
+
+    self.assertEqual(len(report['componentStatus']), 1)
+    self.assertEqual(report['componentStatus'][0], expected)
+    self.assertTrue(requestComponentStatus_mock.called)
+
+  @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
+  @patch.object(ActionQueue, "status_update_callback")
   @patch.object(CustomServiceOrchestrator, "requestComponentStatus")
   @patch.object(CustomServiceOrchestrator, "requestComponentSecurityState")
   @patch.object(ActionQueue, "execute_command")
@@ -696,7 +877,7 @@ class TestActionQueue(TestCase):
   def test_execute_status_command_with_alerts(self, CustomServiceOrchestrator_mock,
                                               requestComponentSecurityState_mock,
                                   build_mock, execute_command_mock,
-                                  requestComponentStatus_mock, read_stack_version_mock,
+                                  requestComponentStatus_mock,
                                   status_update_callback):
     CustomServiceOrchestrator_mock.return_value = None
     dummy_controller = MagicMock()
@@ -728,7 +909,7 @@ class TestActionQueue(TestCase):
                                 get_mock, process_command_mock, gpeo_mock):
     CustomServiceOrchestrator_mock.return_value = None
     dummy_controller = MagicMock()
-    dummy_controller.recovery_manager = RecoveryManager()
+    dummy_controller.recovery_manager = RecoveryManager(tempfile.mktemp())
     config = MagicMock()
     gpeo_mock.return_value = 0
     config.get_parallel_exec_option = gpeo_mock
@@ -788,13 +969,35 @@ class TestActionQueue(TestCase):
     self.assertEqual(2, process_command_mock.call_count)
     process_command_mock.assert_any_calls([call(self.datanode_install_command), call(self.hbase_install_command)])
 
+  @patch("threading.Thread")
+  @patch.object(AmbariConfig, "get_parallel_exec_option")
+  @patch.object(ActionQueue, "process_command")
+  @patch.object(CustomServiceOrchestrator, "__init__")
+  def test_parallel_exec_no_retry(self, CustomServiceOrchestrator_mock,
+                         process_command_mock, gpeo_mock, threading_mock):
+    CustomServiceOrchestrator_mock.return_value = None
+    dummy_controller = MagicMock()
+    config = MagicMock()
+    gpeo_mock.return_value = 1
+    config.get_parallel_exec_option = gpeo_mock
+    actionQueue = ActionQueue(config, dummy_controller)
+    actionQueue.put([self.datanode_install_no_retry_command, self.snamenode_install_command])
+    self.assertEqual(2, actionQueue.commandQueue.qsize())
+    actionQueue.start()
+    time.sleep(1)
+    actionQueue.stop()
+    actionQueue.join()
+    self.assertEqual(actionQueue.stopped(), True, 'Action queue is not stopped.')
+    self.assertEqual(2, process_command_mock.call_count)
+    self.assertEqual(0, threading_mock.call_count)
+    process_command_mock.assert_any_calls([call(self.datanode_install_command), call(self.hbase_install_command)])
 
+  @not_for_platform(PLATFORM_LINUX)
   @patch("time.sleep")
   @patch.object(OSCheck, "os_distribution", new=MagicMock(return_value=os_distro_value))
-  @patch.object(StackVersionsFileHandler, "read_stack_version")
   @patch.object(CustomServiceOrchestrator, "__init__")
   def test_execute_retryable_command(self, CustomServiceOrchestrator_mock,
-                                     read_stack_version_mock, sleep_mock
+                                     sleep_mock
   ):
     CustomServiceOrchestrator_mock.return_value = None
     dummy_controller = MagicMock()
@@ -832,13 +1035,13 @@ class TestActionQueue(TestCase):
   @patch("time.time")
   @patch("time.sleep")
   @patch.object(OSCheck, "os_distribution", new=MagicMock(return_value=os_distro_value))
-  @patch.object(StackVersionsFileHandler, "read_stack_version")
   @patch.object(CustomServiceOrchestrator, "__init__")
   def test_execute_retryable_command_with_time_lapse(self, CustomServiceOrchestrator_mock,
-                                     read_stack_version_mock, sleep_mock, time_mock
+                                     sleep_mock, time_mock
   ):
     CustomServiceOrchestrator_mock.return_value = None
     dummy_controller = MagicMock()
+    dummy_controller.recovery_manager = RecoveryManager(tempfile.mktemp())
     actionQueue = ActionQueue(AmbariConfig(), dummy_controller)
     python_execution_result_dict = {
       'exitcode': 1,
@@ -848,7 +1051,7 @@ class TestActionQueue(TestCase):
       'status': 'FAILED'
     }
 
-    times_arr = [8, 10, 14, 18, 22]
+    times_arr = [8, 10, 14, 18, 22, 26, 30, 34]
     if self.logger.isEnabledFor(logging.INFO):
       times_arr.insert(0, 4)
     time_mock.side_effect = times_arr
@@ -865,7 +1068,7 @@ class TestActionQueue(TestCase):
     self.assertTrue(runCommand_mock.called)
     self.assertEqual(2, runCommand_mock.call_count)
     self.assertEqual(1, sleep_mock.call_count)
-    sleep_mock.assert_has_calls([call(2)], False)
+    sleep_mock.assert_has_calls([call(1)], False)
     runCommand_mock.assert_has_calls([
       call(command, os.sep + 'tmp' + os.sep + 'ambari-agent' + os.sep + 'output-19.txt',
            os.sep + 'tmp' + os.sep + 'ambari-agent' + os.sep + 'errors-19.txt', override_output_files=True, retry=False),
@@ -876,10 +1079,9 @@ class TestActionQueue(TestCase):
   @not_for_platform(PLATFORM_LINUX)
   @patch("time.sleep")
   @patch.object(OSCheck, "os_distribution", new=MagicMock(return_value=os_distro_value))
-  @patch.object(StackVersionsFileHandler, "read_stack_version")
   @patch.object(CustomServiceOrchestrator, "__init__")
   def test_execute_retryable_command_fail_and_succeed(self, CustomServiceOrchestrator_mock,
-                                                      read_stack_version_mock, sleep_mock
+                                                      sleep_mock
   ):
     CustomServiceOrchestrator_mock.return_value = None
     dummy_controller = MagicMock()
@@ -910,12 +1112,12 @@ class TestActionQueue(TestCase):
     self.assertEqual(1, sleep_mock.call_count)
     sleep_mock.assert_any_call(2)
 
+  @not_for_platform(PLATFORM_LINUX)
   @patch("time.sleep")
   @patch.object(OSCheck, "os_distribution", new=MagicMock(return_value=os_distro_value))
-  @patch.object(StackVersionsFileHandler, "read_stack_version")
   @patch.object(CustomServiceOrchestrator, "__init__")
   def test_execute_retryable_command_succeed(self, CustomServiceOrchestrator_mock,
-                                             read_stack_version_mock, sleep_mock
+                                             sleep_mock
   ):
     CustomServiceOrchestrator_mock.return_value = None
     dummy_controller = MagicMock()
@@ -939,11 +1141,10 @@ class TestActionQueue(TestCase):
     self.assertEqual(1, runCommand_mock.call_count)
 
   @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
-  @patch.object(StackVersionsFileHandler, "read_stack_version")
   @patch.object(CustomServiceOrchestrator, "runCommand")
   @patch.object(CustomServiceOrchestrator, "__init__")
   def test_execute_background_command(self, CustomServiceOrchestrator_mock,
-                                  runCommand_mock, read_stack_version_mock
+                                  runCommand_mock,
                                   ):
     CustomServiceOrchestrator_mock.return_value = None
     CustomServiceOrchestrator.runCommand.return_value = {'exitcode' : 0,
@@ -969,8 +1170,7 @@ class TestActionQueue(TestCase):
 
   @patch.object(CustomServiceOrchestrator, "get_py_executor")
   @patch.object(CustomServiceOrchestrator, "resolve_script_path")
-  @patch.object(StackVersionsFileHandler, "read_stack_version")
-  def test_execute_python_executor(self, read_stack_version_mock, resolve_script_path_mock,
+  def test_execute_python_executor(self, resolve_script_path_mock,
                                    get_py_executor_mock):
     
     dummy_controller = MagicMock()

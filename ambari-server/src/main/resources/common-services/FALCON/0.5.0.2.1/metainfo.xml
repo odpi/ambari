@@ -61,6 +61,13 @@
           <versionAdvertised>true</versionAdvertised>
           <dependencies>
             <dependency>
+              <name>HDFS/HDFS_CLIENT</name>
+              <scope>host</scope>
+              <auto-deploy>
+                <enabled>true</enabled>
+              </auto-deploy>
+            </dependency>
+            <dependency>
               <name>OOZIE/OOZIE_SERVER</name>
               <scope>cluster</scope>
               <auto-deploy>
@@ -80,6 +87,12 @@
             <scriptType>PYTHON</scriptType>
             <timeout>1200</timeout>
           </commandScript>
+          <logs>
+            <log>
+              <logId>falcon_app</logId>
+              <primary>true</primary>
+            </log>
+          </logs>
         </component>
       </components>
 
@@ -108,12 +121,23 @@
         <config-type>falcon-env</config-type>
         <config-type>falcon-startup.properties</config-type>
         <config-type>falcon-runtime.properties</config-type>
+        <config-type>falcon-client.properties</config-type>
+        <config-type>falcon-log4j.xml</config-type>
+        <config-type>falcon-atlas-application.properties</config-type>
+        <config-type>application.properties</config-type>
       </configuration-dependencies>
 
+      <!-- Make a new config version when these config types are changed. -->
       <excluded-config-types>
         <config-type>oozie-site</config-type>
       </excluded-config-types>
 
+      <quickLinksConfigurations>
+        <quickLinksConfiguration>
+          <fileName>quicklinks.json</fileName>
+          <default>true</default>
+        </quickLinksConfiguration>
+      </quickLinksConfigurations>
     </service>
   </services>
 </metainfo>

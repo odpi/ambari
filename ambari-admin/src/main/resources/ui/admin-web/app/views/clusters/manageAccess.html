@@ -19,21 +19,34 @@
 <div class="cluster-manage-access-pane">
   <div class="clearfix">
     <ol class="breadcrumb pull-left">
-      <li class="active">{{clusterName}} Permissions</li>
+      <li class="active">{{clusterName}} {{'common.roles' | translate}}</li>
     </ol>
   </div>
   <hr>
+  <div class="pull-right">
+    <div class="layout-switch-icon-wrapper">
+      <i class="glyphicon glyphicon-th-large layout-switch-icon"></i>
+      <p class="label-block">{{'common.blockViewLabel' | translate}}</p>
+    </div>
+    <div class="layout-switch-icon-wrapper disabled">
+      <i class="glyphicon glyphicon-list layout-switch-icon" ng-click="switchToList()" tooltip-html-unsafe="{{'clusters.switchToList' | translate}}"></i>
+      <p class="label-list">{{'common.listViewLabel' | translate}}</p>
+    </div>
+  </div>
   <table class="table">
     <thead>
       <tr>
-        <th class="col-sm-2" width="20%"><label>Permission</label></th>
-        <th class="col-sm-5" width="40%"><label>Grant permission to these users</label></th>
-        <th class="col-sm-5" width="40%"><label>Grant permission to these groups</label></th>
+        <th class="col-sm-2" width="20%">
+          <label>{{'common.roles' | translate}}</label>&nbsp;
+          <i class="glyphicon glyphicon-question-sign green-icon cursor-pointer" ng-click="showHelpPage()"></i>
+        </th>
+        <th class="col-sm-5" width="40%"><label>{{'clusters.assignRoles' | translate: '{term: getConstant("users")}'}}</label></th>
+        <th class="col-sm-5" width="40%"><label>{{'clusters.assignRoles' | translate: '{term: getConstant("groups")}'}}</label></th>
       </tr>
     </thead>
     <tbody>
       <tr ng-repeat="permission in permissions">
-        <td><label class="" tooltip="{{permission.PermissionInfo.permission_name}}">{{permission.PermissionInfo.permission_name | translate}}</label></td>
+        <td><label class="" tooltip="{{permission.PermissionInfo.permission_name}}">{{permission.PermissionInfo.permission_label}}</label></td>
         <td>
           <div class="" ng-switch="isEditMode">
             <editable-list items-source="permissionsEdit[permission.PermissionInfo.permission_name].USER" resource-type="User" editable="true"></editable-list>

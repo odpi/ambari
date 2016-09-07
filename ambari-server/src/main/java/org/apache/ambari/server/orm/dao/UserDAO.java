@@ -35,6 +35,9 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import com.google.inject.persist.Transactional;
+import org.apache.ambari.server.security.authorization.UserType;
+
+import org.apache.commons.lang.StringUtils;
 
 @Singleton
 public class UserDAO {
@@ -55,10 +58,28 @@ public class UserDAO {
     return daoUtils.selectList(query);
   }
 
+  /**
+   * Results in Exception if two users with same name but different types present in DB
+   * As such situation is valid, use {@link #findUserByNameAndType(String, UserType)} instead
+   */
   @RequiresSession
+  @Deprecated
   public UserEntity findUserByName(String userName) {
     TypedQuery<UserEntity> query = entityManagerProvider.get().createNamedQuery("userByName", UserEntity.class);
     query.setParameter("username", userName.toLowerCase());
+    try {
+      return query.getSingleResult();
+    } catch (NoResultException e) {
+      return null;
+    }
+  }
+
+  @RequiresSession
+  public UserEntity findUserByNameAndType(String userName, UserType userType) {
+    TypedQuery<UserEntity> query = entityManagerProvider.get().createQuery("SELECT user FROM UserEntity user WHERE " +
+        "user.userType=:type AND lower(user.userName)=lower(:name)", UserEntity.class); // do case insensitive compare
+    query.setParameter("type", userType);
+    query.setParameter("name", userName);
     try {
       return query.getSingleResult();
     } catch (NoResultException e) {
@@ -131,21 +152,21 @@ public class UserDAO {
   @Transactional
   public void create(Set<UserEntity> users) {
     for (UserEntity user: users) {
-      user.setUserName(user.getUserName().toLowerCase());
+//      user.setUserName(user.getUserName().toLowerCase());
       entityManagerProvider.get().persist(user);
     }
   }
 
   @Transactional
   public UserEntity merge(UserEntity user) {
-    user.setUserName(user.getUserName().toLowerCase());
+//    user.setUserName(user.getUserName().toLowerCase());
     return entityManagerProvider.get().merge(user);
   }
 
   @Transactional
   public void merge(Set<UserEntity> users) {
     for (UserEntity user: users) {
-      user.setUserName(user.getUserName().toLowerCase());
+//      user.setUserName(user.getUserName().toLowerCase());
       entityManagerProvider.get().merge(user);
     }
   }

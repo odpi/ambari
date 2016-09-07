@@ -19,8 +19,7 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <property>
     <name>hive.client.heapsize</name>
     <value>512</value>
@@ -34,8 +33,8 @@
       <increment-step>512</increment-step>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>hive.metastore.heapsize</name>
     <value>1024</value>
@@ -48,8 +47,8 @@
       <unit>MB</unit>
       <increment-step>512</increment-step>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>hive_database_type</name>
     <value>mysql</value>
@@ -58,6 +57,13 @@
     <value-attributes>
       <overridable>false</overridable>
     </value-attributes>
+    <depends-on>
+      <property>
+        <type>hive-env</type>
+        <name>hive_database</name>
+      </property>
+    </depends-on>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hive_database</name>
@@ -69,21 +75,25 @@
     <value-attributes>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hive_ambari_database</name>
     <value>MySQL</value>
     <description>Database type.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hive_database_name</name>
     <value>hive</value>
     <description>Database name.</description>
     <value-attributes>
+      <type>database</type>
       <visible>false</visible>
       <editable-only-at-install>true</editable-only-at-install>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hive_log_dir</name>
@@ -91,9 +101,10 @@
     <display-name>Hive Log Dir</display-name>
     <description>Directory for Hive Log files.</description>
     <value-attributes>
+      <type>directory</type>
       <overridable>false</overridable>
-      <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hive_pid_dir</name>
@@ -101,28 +112,35 @@
     <display-name>Hive PID Dir</display-name>
     <description>Hive PID Dir.</description>
     <value-attributes>
+      <type>directory</type>
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hive_user</name>
+    <display-name>Hive User</display-name>
     <value>hive</value>
     <property-type>USER</property-type>
     <description>Hive User.</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <!--HCAT-->
-
   <property>
     <name>hcat_log_dir</name>
     <value>/var/log/webhcat</value>
     <display-name>WebHCat Log Dir</display-name>
     <description>WebHCat Log Dir.</description>
     <value-attributes>
+      <type>directory</type>
       <overridable>false</overridable>
-      <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>hcat_pid_dir</name>
@@ -130,38 +148,40 @@
     <display-name>WebHCat Pid Dir</display-name>
     <description>WebHCat Pid Dir.</description>
     <value-attributes>
+      <type>directory</type>
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
-  </property>
-  <property>
-    <name>hcat_user</name>
-    <value>hcat</value>
-    <property-type>USER</property-type>
-    <description>HCat User.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>webhcat_user</name>
+    <display-name>WebHCat User</display-name>
     <value>hcat</value>
     <property-type>USER</property-type>
     <description>WebHCat User.</description>
+    <value-attributes>
+      <type>user</type>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>hive_user_nofile_limit</name>
     <value>32000</value>
     <description>Max open files limit setting for HIVE user.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <property>
     <name>hive_user_nproc_limit</name>
     <value>16000</value>
     <description>Max number of processes limit setting for HIVE user.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
-
   <!-- hive-env.sh -->
   <property>
     <name>content</name>
+    <display-name>hive-env template</display-name>
     <description>This is the jinja template for hive-env.sh file</description>
     <value>
  if [ "$SERVICE" = "cli" ]; then
@@ -175,12 +195,12 @@
 # The heap size of the jvm stared by hive shell script can be controlled via:
 
 if [ "$SERVICE" = "metastore" ]; then
-  export HADOOP_HEAPSIZE="{{hive_metastore_heapsize}}"
+  export HADOOP_HEAPSIZE={{hive_metastore_heapsize}} # Setting for HiveMetastore
 else
-  export HADOOP_HEAPSIZE="{{hive_heapsize}}"
+  export HADOOP_HEAPSIZE={{hive_heapsize}} # Setting for HiveServer2 and Client
 fi
 
-export HADOOP_CLIENT_OPTS="-Xmx${HADOOP_HEAPSIZE}m $HADOOP_CLIENT_OPTS"
+export HADOOP_CLIENT_OPTS="$HADOOP_CLIENT_OPTS  -Xmx${HADOOP_HEAPSIZE}m"
 
 # Larger heap size may be required when running queries over large number of files or partitions.
 # By default hive shell scripts use a heap size of 256 (MB).  Larger heap size would also be
@@ -202,8 +222,10 @@ else
   export HIVE_AUX_JARS_PATH=/usr/lib/hcatalog/share/hcatalog/hcatalog-core.jar
 fi
 export METASTORE_PORT={{hive_metastore_port}}
-
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-  
 </configuration>

@@ -18,8 +18,11 @@
 
 package org.apache.ambari.server.serveraction.kerberos;
 
+import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
 import org.apache.ambari.server.utils.ShellCommandUtil;
 import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.lang.ArrayUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.directory.server.kerberos.shared.crypto.encryption.KerberosKeyFactory;
 import org.apache.directory.server.kerberos.shared.keytab.Keytab;
 import org.apache.directory.server.kerberos.shared.keytab.KeytabEntry;
@@ -63,6 +66,26 @@ public abstract class KerberosOperationHandler {
   public final static String KERBEROS_ENV_PRINCIPAL_CONTAINER_DN = "container_dn";
 
   /**
+   * Kerberos-env configuration property name: group
+   */
+  public final static String KERBEROS_ENV_USER_PRINCIPAL_GROUP = "group";
+
+  /**
+   * Kerberos-env configuration property name: password_chat_timeout
+   */
+  public final static String KERBEROS_ENV_PASSWORD_CHAT_TIMEOUT = "password_chat_timeout";
+
+  /**
+   * Default timeout for password chat
+   */
+  public final static int DEFAULT_PASSWORD_CHAT_TIMEOUT = 5;
+
+  /**
+   * Kerberos-env configuration property name: set_password_expiry
+   */
+  public final static String KERBEROS_ENV_SET_PASSWORD_EXPIRY = "set_password_expiry";
+
+  /**
    * Kerberos-env configuration property name: ad_create_attributes_template
    */
   public final static String KERBEROS_ENV_AD_CREATE_ATTRIBUTES_TEMPLATE = "ad_create_attributes_template";
@@ -78,9 +101,9 @@ public abstract class KerberosOperationHandler {
   public final static String KERBEROS_ENV_ENCRYPTION_TYPES = "encryption_types";
 
   /**
-   * Kerberos-env configuration property name: kdc_host
+   * Kerberos-env configuration property name: kdc_hosts
    */
-  public final static String KERBEROS_ENV_KDC_HOST = "kdc_host";
+  public final static String KERBEROS_ENV_KDC_HOSTS = "kdc_hosts";
 
   /**
    * Kerberos-env configuration property name: admin_server_host
@@ -188,7 +211,7 @@ public abstract class KerberosOperationHandler {
         add(EncryptionType.AES256_CTS_HMAC_SHA1_96);
       }});
 
-  private KerberosCredential administratorCredentials = null;
+  private PrincipalKeyCredential administratorCredential = null;
   private String defaultRealm = null;
   private Set<EncryptionType> keyEncryptionTypes = new HashSet<EncryptionType>(DEFAULT_CIPHERS);
   private boolean open = false;
@@ -202,18 +225,15 @@ public abstract class KerberosOperationHandler {
 
   /**
    * Prepares and creates resources to be used by this KerberosOperationHandler.
-   * Implementation in this class is ignoring parameters ldapUrl and principalContainerDn and delegate to
-   * <code>open(KerberosCredential administratorCredentials, String defaultRealm)</code>
-   * Subclasses that want to use these parameters need to override this method.
    * <p/>
    * It is expected that this KerberosOperationHandler will not be used before this call.
    *
-   * @param administratorCredentials a KerberosCredential containing the administrative credentials
-   *                                 for the relevant KDC
-   * @param defaultRealm             a String declaring the default Kerberos realm (or domain)
-   * @param kerberosConfiguration    a Map of key/value pairs containing data from the kerberos-env configuration set
+   * @param administratorCredential a PrincipalKeyCredential containing the administrative credential
+   *                                for the relevant KDC
+   * @param defaultRealm            a String declaring the default Kerberos realm (or domain)
+   * @param kerberosConfiguration   a Map of key/value pairs containing data from the kerberos-env configuration set
    */
-  public abstract void open(KerberosCredential administratorCredentials, String defaultRealm, Map<String, String> kerberosConfiguration)
+  public abstract void open(PrincipalKeyCredential administratorCredential, String defaultRealm, Map<String, String> kerberosConfiguration)
       throws KerberosOperationException;
 
   /**
@@ -246,6 +266,7 @@ public abstract class KerberosOperationHandler {
    * @param service   a boolean value indicating whether the principal is to be created as a service principal or not
    * @return an Integer declaring the generated key number
    * @throws KerberosOperationException
+   * @throws KerberosPrincipalAlreadyExistsException if the principal already exists
    */
   public abstract Integer createPrincipal(String principal, String password, boolean service)
       throws KerberosOperationException;
@@ -259,6 +280,7 @@ public abstract class KerberosOperationHandler {
    * @param password  a String containing the password to set
    * @return an Integer declaring the new key number
    * @throws KerberosOperationException
+   * @throws KerberosPrincipalDoesNotExistException if the principal does not exist
    */
   public abstract Integer setPrincipalPassword(String principal, String password)
       throws KerberosOperationException;
@@ -288,11 +310,11 @@ public abstract class KerberosOperationHandler {
       throw new KerberosOperationException("This operation handler has not been opened");
     }
 
-    KerberosCredential credentials = getAdministratorCredentials();
-    if (credentials == null) {
-      throw new KerberosOperationException("Missing KDC administrator credentials");
+    PrincipalKeyCredential credential = getAdministratorCredential();
+    if (credential == null) {
+      throw new KerberosOperationException("Missing KDC administrator credential");
     } else {
-      return principalExists(credentials.getPrincipal());
+      return principalExists(credential.getPrincipal());
     }
   }
 
@@ -308,7 +330,7 @@ public abstract class KerberosOperationHandler {
   protected Keytab createKeytab(String principal, String password, Integer keyNumber)
       throws KerberosOperationException {
 
-    if ((principal == null) || principal.isEmpty()) {
+    if (StringUtils.isEmpty(principal)) {
       throw new KerberosOperationException("Failed to create keytab file, missing principal");
     }
 
@@ -478,48 +500,47 @@ public abstract class KerberosOperationHandler {
     return keytab;
   }
 
-  public KerberosCredential getAdministratorCredentials() {
-    return administratorCredentials;
+  /**
+   * Sets the KDC administrator credential.
+   *
+   * @return a credential
+   */
+  public PrincipalKeyCredential getAdministratorCredential() {
+    return administratorCredential;
   }
 
   /**
    * Sets the administrator credentials for this KerberosOperationHandler.
    * <p/>
-   * If the supplied {@link KerberosCredential} is not <code>null</code>, validates that the administrator
-   * principal is not <code>null</code> or empty and that either the password or the keytab value
-   * is not <code>null</code> or empty. If the credential value does not validate, then a
-   * {@link KerberosAdminAuthenticationException} will be thrown.
+   * If the supplied {@link PrincipalKeyCredential} is not <code>null</code>, validates that the administrator
+   * principal and values are not <code>null</code> or empty. If the credential value does not
+   * validate, then a {@link KerberosAdminAuthenticationException} will be thrown.
    *
-   * @param administratorCredentials the relevant KerberosCredential
-   * @throws KerberosAdminAuthenticationException if the non-null KerberosCredential fails contain
-   *                                              a non-empty principal and a non-empty password or
-   *                                              keytab value.
+   * @param administratorCredential the KDC administrator credential
+   * @throws KerberosAdminAuthenticationException if the non-null Credential fails to contain
+   *                                              a non-empty principal and password values.
    */
-  public void setAdministratorCredentials(KerberosCredential administratorCredentials)
+  public void setAdministratorCredential(PrincipalKeyCredential administratorCredential)
       throws KerberosAdminAuthenticationException {
 
-    // Ensure the KerberosCredential is not null
-    if (administratorCredentials == null) {
+    // Ensure the credential is not null
+    if (administratorCredential == null) {
       throw new KerberosAdminAuthenticationException("The administrator credential must not be null");
     }
 
     // Ensure the principal is not null or empty
-    String principal = administratorCredentials.getPrincipal();
-    if ((principal == null) || principal.isEmpty()) {
+    String principal = administratorCredential.getPrincipal();
+    if (StringUtils.isEmpty(principal)) {
       throw new KerberosAdminAuthenticationException("Must specify a principal but it is null or empty");
     }
 
     // Ensure either the password or the keytab value is not null or empty
-    char[] password  = administratorCredentials.getPassword();
-    if ((password == null) || (password.length == 0)) {
-      String keytab  = administratorCredentials.getKeytab();
-
-      if ((keytab == null) || keytab.isEmpty()) {
-        throw new KerberosAdminAuthenticationException("Must specify either a password or a keytab but both are null or empty");
-      }
+    char[] password = administratorCredential.getKey();
+    if (ArrayUtils.isEmpty(password)) {
+      throw new KerberosAdminAuthenticationException("Must specify a password but it is null or empty");
     }
 
-    this.administratorCredentials = administratorCredentials;
+    this.administratorCredential = administratorCredential;
   }
 
   public String getDefaultRealm() {
@@ -696,20 +717,23 @@ public abstract class KerberosOperationHandler {
   /**
    * Executes a shell command.
    * <p/>
-   * See {@link org.apache.ambari.server.utils.ShellCommandUtil#runCommand(String[])}
+   * See {@link org.apache.ambari.server.utils.ShellCommandUtil#runCommand(String[], Map<String,String>)}
    *
    * @param command an array of String value representing the command and its arguments
+   * @param envp a map of string, string of environment variables
+   * @param interactiveHandler a handler to provide responses to queries from the command,
+   *                           or null if no queries are expected
    * @return a ShellCommandUtil.Result declaring the result of the operation
    * @throws KerberosOperationException
    */
-  protected ShellCommandUtil.Result executeCommand(String[] command)
+  protected ShellCommandUtil.Result executeCommand(String[] command, Map<String, String> envp, ShellCommandUtil.InteractiveHandler interactiveHandler)
       throws KerberosOperationException {
 
     if ((command == null) || (command.length == 0)) {
       return null;
     } else {
       try {
-        return ShellCommandUtil.runCommand(command);
+        return ShellCommandUtil.runCommand(command, envp, interactiveHandler, false);
       } catch (IOException e) {
         String message = String.format("Failed to execute the command: %s", e.getLocalizedMessage());
         LOG.error(message, e);
@@ -720,6 +744,37 @@ public abstract class KerberosOperationHandler {
         throw new KerberosOperationException(message, e);
       }
     }
+  }
+
+  /**
+   * Executes a shell command.
+   * <p/>
+   * See {@link org.apache.ambari.server.utils.ShellCommandUtil#runCommand(String[])}
+   *
+   * @param command an array of String value representing the command and its arguments
+   * @return a ShellCommandUtil.Result declaring the result of the operation
+   * @throws KerberosOperationException
+   * @see #executeCommand(String[], Map, ShellCommandUtil.InteractiveHandler)
+   */
+  protected ShellCommandUtil.Result executeCommand(String[] command)
+          throws KerberosOperationException {
+    return executeCommand(command, null);
+  }
+
+  /**
+   * Executes a shell command.
+   * <p/>
+   * See {@link org.apache.ambari.server.utils.ShellCommandUtil#runCommand(String[])}
+   *
+   * @param command an array of String value representing the command and its arguments
+   * @param interactiveHandler a handler to provide responses to queries from the command,
+   *                           or null if no queries are expected
+   * @return a ShellCommandUtil.Result declaring the result of the operation
+   * @throws KerberosOperationException
+   * @see #executeCommand(String[], Map, ShellCommandUtil.InteractiveHandler)
+   */
+  protected ShellCommandUtil.Result executeCommand(String[] command, ShellCommandUtil.InteractiveHandler interactiveHandler) throws KerberosOperationException {
+    return executeCommand(command, null, interactiveHandler);
   }
 
   /**
@@ -749,7 +804,7 @@ public abstract class KerberosOperationHandler {
   protected Set<EncryptionType> translateEncryptionType(String name) {
     Set<EncryptionType> encryptionTypes = null;
 
-    if ((name != null) && !name.isEmpty()) {
+    if (!StringUtils.isEmpty(name)) {
       encryptionTypes = ENCRYPTION_TYPE_TRANSLATION_MAP.get(name.toLowerCase());
     }
 
@@ -767,7 +822,7 @@ public abstract class KerberosOperationHandler {
   protected Set<EncryptionType> translateEncryptionTypes(String names, String delimiter) {
     Set<EncryptionType> encryptionTypes = new HashSet<EncryptionType>();
 
-    if ((names != null) && !names.isEmpty()) {
+    if (!StringUtils.isEmpty(names)) {
       for (String name : names.split((delimiter == null) ? "\\s+" : delimiter)) {
         encryptionTypes.addAll(translateEncryptionType(name.trim()));
       }
@@ -785,7 +840,7 @@ public abstract class KerberosOperationHandler {
    * @return the string with escaped characters
    */
   protected String escapeCharacters(String string, Set<Character> charactersToEscape, Character escapeCharacter) {
-    if ((string == null) || string.isEmpty() || (charactersToEscape == null) || charactersToEscape.isEmpty()) {
+    if (StringUtils.isEmpty(string) || (charactersToEscape == null) || charactersToEscape.isEmpty()) {
       return string;
     } else {
       StringBuilder builder = new StringBuilder();

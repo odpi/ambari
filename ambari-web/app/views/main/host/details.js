@@ -17,7 +17,6 @@
  */
 
 var App = require('app');
-var date = require('utils/date');
 
 App.MainHostDetailsView = Em.View.extend({
   templateName: require('templates/main/host/details'),
@@ -27,46 +26,86 @@ App.MainHostDetailsView = Em.View.extend({
    */
   isLoaded: false,
 
-  content: function(){
-    return App.router.get('mainHostDetailsController.content');
-  }.property('App.router.mainHostDetailsController.content'),
+  content: Em.computed.alias('App.router.mainHostDetailsController.content'),
 
-  clients: function () {
-    return this.get('content.hostComponents').filterProperty('isClient');
-  }.property('content.hostComponents.@each'),
+  clients: Em.computed.filterBy('content.hostComponents', 'isClient', true),
 
-  clientsWithConfigs: function() {
-    return this.get('content.hostComponents').filterProperty('isClient').filter(function(client) {
+  clientsWithConfigs: function () {
+    return this.get('content.hostComponents').filterProperty('isClient').filter(function (client) {
       return !App.get('services.noConfigTypes').contains(client.get('service.serviceName'));
     });
   }.property('content.hostComponents.@each'),
 
-  isActive: function() {
-    return this.get('controller.content.passiveState') === "OFF";
-  }.property('controller.content.passiveState'),
+  isActive: Em.computed.equal('controller.content.passiveState', 'OFF'),
 
-  maintenance: function(){
+  maintenance: function () {
     var onOff = this.get('isActive') ? "On" : "Off";
-    return [
-      {action: 'startAllComponents', liClass: (this.get('controller.content.isNotHeartBeating')?'disabled':'enabled'), cssClass: 'icon-play', 'label': this.t('hosts.host.details.startAllComponents')},
-      {action: 'stopAllComponents', liClass: (this.get('controller.content.isNotHeartBeating')?'disabled':'enabled'), cssClass: 'icon-stop', 'label': this.t('hosts.host.details.stopAllComponents')},
-      {action: 'restartAllComponents', liClass: (this.get('controller.content.isNotHeartBeating')?'disabled':'enabled'), cssClass: 'icon-repeat', 'label': this.t('hosts.host.details.restartAllComponents')},
-      {action: 'onOffPassiveModeForHost', liClass:'', cssClass: 'icon-medkit', active:this.get('isActive'), 'label': this.t('passiveState.turn' + onOff)},
-      {action: 'deleteHost', liClass:'', cssClass: 'icon-remove', 'label': this.t('hosts.host.details.deleteHost')},
-      {action: 'setRackId', liClass:'', cssClass: 'icon-gear', 'label': this.t('hosts.host.details.setRackId')}
-    ];
-  }.property('controller.content','isActive', 'controller.content.isNotHeartBeating'),
-  didInsertElement: function() {
-    var self = this;
+    var result = [];
+    if (App.isAuthorized("SERVICE.START_STOP")) {
+      result = result.concat([
+        {
+          action: 'startAllComponents',
+          liClass: this.get('controller.content.isNotHeartBeating') ? 'disabled' : 'enabled',
+          cssClass: 'icon-play',
+          label: this.t('hosts.host.details.startAllComponents')
+        },
+        {
+          action: 'stopAllComponents',
+          liClass: this.get('controller.content.isNotHeartBeating') ? 'disabled' : 'enabled',
+          cssClass: 'icon-stop',
+          label: this.t('hosts.host.details.stopAllComponents')
+        },
+        {
+          action: 'restartAllComponents',
+          liClass: this.get('controller.content.isNotHeartBeating') ? 'disabled' : 'enabled',
+          cssClass: 'icon-repeat',
+          label: this.t('hosts.host.details.restartAllComponents')
+        }
+      ]);
+    }
+    if (App.isAuthorized("HOST.TOGGLE_MAINTENANCE")) {
+      result.push({
+        action: 'setRackId',
+        liClass: '',
+        cssClass: 'icon-gear',
+        label: this.t('hosts.host.details.setRackId')
+      });
+      result.push({
+        action: 'onOffPassiveModeForHost',
+        liClass: '',
+        cssClass: 'icon-medkit',
+        active: this.get('isActive'),
+        label: this.t('passiveState.turn' + onOff)
+      });
+    }
+    if (App.isAuthorized("HOST.ADD_DELETE_HOSTS")) {
+      result.push({
+        action: 'deleteHost',
+        liClass: '',
+        cssClass: 'icon-remove',
+        label: this.t('hosts.host.details.deleteHost')
+      });
+    }
+    return result;
+  }.property('controller.content', 'isActive', 'controller.content.isNotHeartBeating'),
 
-    this.set('isLoaded', App.Host.find(this.get('content.id')).get('isLoaded'));
+  didInsertElement: function () {
+    var self = this;
+    var host = self.get('content');
+
+    this.set('isLoaded', App.Host.find(host.get('id')).get('isLoaded'));
     App.router.get('updateController').updateHost(function () {
       self.set('isLoaded', true);
       App.tooltip($("[rel='HealthTooltip']"));
-      if (!self.get('content.isLoaded')) {
+      if (!host.get('isLoaded')) {
         //if host is not existed then route to list of hosts
         App.router.transitionTo('main.hosts.index');
       }
     });
+  },
+
+  willDestroyElement: function () {
+    $("[rel='HealthTooltip']").tooltip('destroy');
   }
+
 });

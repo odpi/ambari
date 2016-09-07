@@ -27,6 +27,7 @@ import javax.xml.bind.annotation.XmlRootElement;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.codehaus.jackson.map.annotate.JsonDeserialize;
 
 @XmlRootElement(name = "metric")
 @XmlAccessorType(XmlAccessType.NONE)
@@ -41,7 +42,8 @@ public class TimelineMetric implements Comparable<TimelineMetric> {
   private long timestamp;
   private long startTime;
   private String type;
-  private Map<Long, Double> metricValues = new TreeMap<Long, Double>();
+  private String units;
+  private TreeMap<Long, Double> metricValues = new TreeMap<Long, Double>();
 
   // default
   public TimelineMetric() {
@@ -52,6 +54,7 @@ public class TimelineMetric implements Comparable<TimelineMetric> {
   public TimelineMetric(TimelineMetric metric) {
     setMetricName(metric.getMetricName());
     setType(metric.getType());
+    setUnits(metric.getUnits());
     setTimestamp(metric.getTimestamp());
     setAppId(metric.getAppId());
     setInstanceId(metric.getInstanceId());
@@ -114,7 +117,7 @@ public class TimelineMetric implements Comparable<TimelineMetric> {
     this.startTime = startTime;
   }
 
-  @XmlElement(name = "type")
+  @XmlElement(name = "type", defaultValue = "UNDEFINED")
   public String getType() {
     return type;
   }
@@ -123,12 +126,21 @@ public class TimelineMetric implements Comparable<TimelineMetric> {
     this.type = type;
   }
 
+  @XmlElement(name = "units")
+  public String getUnits() {
+    return units;
+  }
+
+  public void setUnits(String units) {
+    this.units = units;
+  }
+
   @XmlElement(name = "metrics")
-  public Map<Long, Double> getMetricValues() {
+  public TreeMap<Long, Double> getMetricValues() {
     return metricValues;
   }
 
-  public void setMetricValues(Map<Long, Double> metricValues) {
+  public void setMetricValues(TreeMap<Long, Double> metricValues) {
     this.metricValues = metricValues;
   }
 

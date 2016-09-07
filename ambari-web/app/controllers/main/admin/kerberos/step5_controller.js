@@ -15,11 +15,38 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
- var stringUtils = require('utils/string_utils');
+var stringUtils = require('utils/string_utils');
+var fileUtils = require('utils/file_utils');
 
 App.KerberosWizardStep5Controller = App.KerberosProgressPageController.extend({
   name: 'kerberosWizardStep5Controller',
+
+  /**
+   * @type {Array}
+   */
   csvData: [],
+
+  /**
+   * @type {Array}
+   */
+  kdcProperties: [
+    {
+      key: Em.I18n.t('admin.kerberos.wizard.step1.option.kdc'),
+      properties: ['kdc_type', 'kdc_hosts', 'realm', 'executable_search_paths']
+    },
+    {
+      key: Em.I18n.t('admin.kerberos.wizard.step1.option.ad'),
+      properties: ['kdc_type', 'kdc_hosts', 'realm', 'ldap_url', 'container_dn', 'executable_search_paths']
+    },
+    {
+      key: Em.I18n.t('admin.kerberos.wizard.step1.option.ipa'),
+      properties: ['kdc_type', 'kdc_hosts', 'realm', 'executable_search_paths']
+    },
+    {
+      key: Em.I18n.t('admin.kerberos.wizard.step1.option.manual'),
+      properties: ['kdc_type', 'realm', 'executable_search_paths']
+    }
+  ],
 
   submit: function() {
     App.router.send('next');
@@ -29,7 +56,7 @@ App.KerberosWizardStep5Controller = App.KerberosProgressPageController.extend({
    * get CSV data from the server
    */
   getCSVData: function (skipDownload) {
-    App.ajax.send({
+    return App.ajax.send({
       name: 'admin.kerberos.cluster.csv',
       sender: this,
       data: {
@@ -37,16 +64,19 @@ App.KerberosWizardStep5Controller = App.KerberosProgressPageController.extend({
       },
       success: 'getCSVDataSuccessCallback',
       error: 'getCSVDataSuccessCallback'
-    })
+    });
   },
 
   /**
    * get CSV data from server success callback
+   * @param data {string}
+   * @param opt {object}
+   * @param params {object}
    */
   getCSVDataSuccessCallback: function (data, opt, params) {
     this.set('csvData', this.prepareCSVData(data.split('\n')));
-    if(!Em.get(params, 'skipDownload')){
-      this.downloadCSV();
+    if (!Em.get(params, 'skipDownload')) {
+      fileUtils.downloadTextFile(stringUtils.arrayToCSV(this.get('csvData')), 'csv', 'kerberos.csv');
     }
   },
 
@@ -56,48 +86,6 @@ App.KerberosWizardStep5Controller = App.KerberosProgressPageController.extend({
     }
 
     return array;
-  },
-
-  /**
-   * download CSV file
-   */
-  downloadCSV: function () {
-    if ($.browser.msie && $.browser.version < 10) {
-      this.openInfoInNewTab();
-    } else if (typeof safari !== 'undefined') {
-      this.safariDownload();
-    } else {
-      try {
-        var blob = new Blob([stringUtils.arrayToCSV(this.get('csvData'))], {type: "text/csv;charset=utf-8;"});
-        saveAs(blob, "kerberos.csv");
-      } catch (e) {
-        this.openInfoInNewTab();
-      }
-    }
-  },
-
-  /**
-   * Hack to dowload csv data in Safari
-   */
-  safariDownload: function() {
-    var file = 'data:attachment/csv;charset=utf-8,' + encodeURI(stringUtils.arrayToCSV(this.get('csvData')));
-    var linkEl = document.createElement("a");
-    linkEl.href = file;
-    linkEl.download = 'kerberos.csv';
-
-    document.body.appendChild(linkEl);
-    linkEl.click();
-    document.body.removeChild(linkEl);
-  },
-
-  /**
-   * open content of CSV file in new window
-   */
-  openInfoInNewTab: function () {
-    var newWindow = window.open('');
-    var newDocument = newWindow.document;
-    newDocument.write(stringUtils.arrayToCSV(this.get('hostComponents')));
-    newWindow.focus();
   },
 
   /**
@@ -157,36 +145,21 @@ App.KerberosWizardStep5Controller = App.KerberosProgressPageController.extend({
     App.router.transitionTo('step5');
   },
 
-  isSubmitDisabled: function () {
-    return !["COMPLETED", "FAILED"].contains(this.get('status'));
-  }.property('status'),
+  isSubmitDisabled: Em.computed.notExistsIn('status', ['COMPLETED', 'FAILED']),
 
   confirmProperties: function () {
-    var kdc_type = App.router.kerberosWizardController.content.serviceConfigProperties.findProperty('name','kdc_type').value,
-      filterObject = [
-        {
-          key: Em.I18n.t('admin.kerberos.wizard.step1.option.kdc'),
-          properties: ['kdc_type','kdc_host','realm','executable_search_paths']
-        },
-        {
-          key: Em.I18n.t('admin.kerberos.wizard.step1.option.ad'),
-          properties: ['kdc_type','kdc_host','realm','ldap_url','container_dn','executable_search_paths']
-        },
-        {
-          key: Em.I18n.t('admin.kerberos.wizard.step1.option.manual'),
-          properties: ['kdc_type','realm','executable_search_paths']
-        }
-      ],
-      kdcTypeProperties = filterObject.filter(function(item) {
-        return item.key === kdc_type;
-      }),
-      filterBy = kdcTypeProperties.length ? kdcTypeProperties[0].properties : [],
-      returnArray = App.router.kerberosWizardController.content.serviceConfigProperties.filter(function(item) {
-        return filterBy.contains(item.name);
-      }).map(function(item) {
-        item['label'] = Em.I18n.t('admin.kerberos.wizard.step5.'+item['name']+'.label');
-        return item;
-      });
-    return returnArray;
+    var wizardController = App.router.get('kerberosWizardController');
+    var kdc_type = wizardController.get('content.kerberosOption'),
+        kdcTypeProperties = this.get('kdcProperties').filter(function (item) {
+          return item.key === kdc_type;
+        }),
+      properties = kdcTypeProperties.length ? kdcTypeProperties[0].properties : [];
+
+    return wizardController.get('content.serviceConfigProperties').filter(function (item) {
+      return properties.contains(item.name);
+    }).map(function (item) {
+      item['label'] = Em.I18n.t('admin.kerberos.wizard.step5.' + item['name'] + '.label');
+      return item;
+    });
   }.property('App.router.kerberosWizardController.content.@each.serviceConfigProperties')
 });

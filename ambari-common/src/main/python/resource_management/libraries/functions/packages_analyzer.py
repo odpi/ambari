@@ -18,6 +18,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import re
 import sys
 import logging
 import subprocess
@@ -25,11 +26,14 @@ from threading import Thread
 import threading
 from ambari_commons import OSCheck, OSConst
 from ambari_commons import shell
+from resource_management.core.logger import Logger
+from resource_management.core import shell as rmf_shell
+from resource_management.core.exceptions import Fail
 
 __all__ = ["installedPkgsByName", "allInstalledPackages", "allAvailablePackages", "nameMatch",
            "getInstalledRepos", "getInstalledPkgsByRepo", "getInstalledPkgsByNames", "getPackageDetails"]
 
-LIST_INSTALLED_PACKAGES_UBUNTU = "for i in $(dpkg -l |grep ^ii |awk -F' ' '{print $2}'); do      apt-cache showpkg \"$i\"|head -3|grep -v '^Versions'| tr -d '()' | awk '{ print $1\" \"$2 }'|sed -e 's/^Package: //;' | paste -d ' ' - -;  done"
+LIST_INSTALLED_PACKAGES_UBUNTU = "COLUMNS=9999 ; for i in $(dpkg -l |grep ^ii |awk -F' ' '{print $2}'); do      apt-cache showpkg \"$i\"|head -3|grep -v '^Versions'| tr -d '()' | awk '{ print $1\" \"$2 }'|sed -e 's/^Package: //;' | paste -d ' ' - -;  done"
 LIST_AVAILABLE_PACKAGES_UBUNTU = "packages=`for  i in $(ls -1 /var/lib/apt/lists  | grep -v \"ubuntu.com\") ; do grep ^Package: /var/lib/apt/lists/$i |  awk '{print $2}' ; done` ; for i in $packages; do      apt-cache showpkg \"$i\"|head -3|grep -v '^Versions'| tr -d '()' | awk '{ print $1\" \"$2 }'|sed -e 's/^Package: //;' | paste -d ' ' - -;  done"
 
 logger = logging.getLogger()
@@ -190,17 +194,13 @@ def getInstalledRepos(hintPackages, allPackages, ignoreRepos, repoList):
   Gets all installed repos by name based on repos that provide any package
   contained in hintPackages
   Repos starting with value in ignoreRepos will not be returned
+  hintPackages must be regexps.
   """
   allRepos = []
   for hintPackage in hintPackages:
     for item in allPackages:
-      if 0 == item[0].find(hintPackage):
-        if not item[2] in allRepos:
-          allRepos.append(item[2])
-      elif hintPackage[0] == '*':
-        if item[0].find(hintPackage[1:]) > 0:
-          if not item[2] in allRepos:
-            allRepos.append(item[2])
+      if re.match(hintPackage, item[0]) and not item[2] in allRepos:
+        allRepos.append(item[2])
 
   for repo in allRepos:
     ignore = False
@@ -273,3 +273,46 @@ def getReposToRemove(repos, ignoreList):
     if addToRemoveList:
       reposToRemove.append(repo)
   return reposToRemove
+
+def getInstalledPackageVersion(package_name):
+  if OSCheck.is_ubuntu_family():
+    code, out, err = rmf_shell.checked_call("dpkg -s {0} | grep Version | awk '{{print $2}}'".format(package_name), stderr=subprocess.PIPE)
+  else:
+    code, out, err = rmf_shell.checked_call("rpm -q --queryformat '%{{version}}-%{{release}}' {0} | sed -e 's/\.el[0-9]//g'".format(package_name), stderr=subprocess.PIPE)
+    
+  return out
+
+
+def verifyDependencies():
+  """
+  Verify that we have no dependency issues in package manager. Dependency issues could appear because of aborted or terminated
+  package installation process or invalid packages state after manual modification of packages list on the host
+   :return True if no dependency issues found, False if dependency issue present
+  :rtype bool
+  """
+  check_str = None
+  cmd = None
+
+  if OSCheck.is_redhat_family():
+    cmd = ['/usr/bin/yum', '-d', '0', '-e', '0', 'check', 'dependencies']
+    check_str = "has missing requires|Error:"
+  elif OSCheck.is_suse_family():
+    cmd = ['/usr/bin/zypper', '--quiet', '--non-interactive', 'verify', '--dry-run']
+    check_str = "\d+ new package(s)? to install"
+  elif OSCheck.is_ubuntu_family():
+    cmd = ['/usr/bin/apt-get', '-qq', 'check']
+    check_str = "has missing dependency|E:"
+
+  if check_str is None or cmd is None:
+    raise Fail("Unsupported OSFamily on the Agent Host")
+
+  code, out = rmf_shell.checked_call(cmd, sudo=True)
+
+  output_regex = re.compile(check_str)
+
+  if code or (out and output_regex.search(out)):
+    err_msg = Logger.filter_text("Failed to verify package dependencies. Execution of '%s' returned %s. %s" % (cmd, code, out))
+    Logger.error(err_msg)
+    return False
+
+  return True

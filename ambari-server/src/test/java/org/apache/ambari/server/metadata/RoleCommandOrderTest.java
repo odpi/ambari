@@ -29,10 +29,14 @@ import static org.easymock.EasyMock.verify;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import junit.framework.Assert;
 
@@ -48,6 +52,7 @@ import org.apache.ambari.server.state.ServiceComponentHost;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.cluster.ClusterImpl;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostImpl;
+import org.apache.ambari.server.utils.CollectionPresentationUtils;
 import org.codehaus.jackson.annotate.JsonAutoDetect;
 import org.codehaus.jackson.annotate.JsonMethod;
 import org.codehaus.jackson.map.ObjectMapper;
@@ -264,6 +269,64 @@ public class RoleCommandOrderTest {
     assertTrue(isZookeeperStartPresent);
   }
 
+  @Test
+  public void testMissingRestartDependenciesAdded() throws Exception {
+    RoleCommandOrder rco = injector.getInstance(RoleCommandOrder.class);
+    ClusterImpl cluster = createMock(ClusterImpl.class);
+    ServiceComponentHost sch1 = createMock(ServiceComponentHostImpl.class);
+    ServiceComponentHost sch2 = createMock(ServiceComponentHostImpl.class);
+    expect(cluster.getService("GLUSTERFS")).andReturn(null);
+
+
+    Map<String, ServiceComponentHost> hostComponents = new HashMap<>();
+    hostComponents.put("1", sch1);
+    hostComponents.put("2", sch2);
+
+    Service yarnService = createMock(Service.class);
+    ServiceComponent resourcemanagerSC = createMock(ServiceComponent.class);
+
+    expect(cluster.getService("YARN")).andReturn(yarnService).atLeastOnce();
+    expect(cluster.getService("HDFS")).andReturn(null);
+    expect(yarnService.getServiceComponent("RESOURCEMANAGER")).andReturn(resourcemanagerSC).anyTimes();
+    expect(resourcemanagerSC.getServiceComponentHosts()).andReturn(hostComponents).anyTimes();
+    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+
+    replay(cluster, yarnService, sch1, sch2, resourcemanagerSC);
+
+    rco.initialize(cluster);
+
+    verify(cluster, yarnService);
+
+    Map<RoleCommandPair, Set<RoleCommandPair>> deps = rco.getDependencies();
+    assertNotNull(deps);
+    Map<RoleCommandPair, Set<RoleCommandPair>> startRCOs = new HashMap<>();
+    Map<RoleCommandPair, Set<RoleCommandPair>> restartRCOs = new HashMap<>();
+
+    for (Map.Entry<RoleCommandPair, Set<RoleCommandPair>> dep : deps.entrySet()) {
+      if (dep.getKey().getCmd().equals(RoleCommand.START)) {
+        startRCOs.put(dep.getKey(), dep.getValue());
+      }
+      if (dep.getKey().getCmd().equals(RoleCommand.RESTART)) {
+        restartRCOs.put(dep.getKey(), dep.getValue());
+      }
+    }
+
+    assertFalse(startRCOs.isEmpty());
+    assertFalse(restartRCOs.isEmpty());
+    assertEquals(startRCOs.size(), restartRCOs.size());
+    // Verify one
+    Map.Entry<RoleCommandPair, Set<RoleCommandPair>> entry = restartRCOs.entrySet().iterator().next();
+    assertEquals(RoleCommand.RESTART, entry.getKey().getCmd());
+    for (RoleCommandPair pair : entry.getValue()) {
+      assertEquals(RoleCommand.RESTART, pair.getCmd());
+    }
+    // Verify all
+    for (Map.Entry<RoleCommandPair, Set<RoleCommandPair>> startEntry : startRCOs.entrySet()) {
+      assertTrue(restartRCOs.containsKey(
+        new RoleCommandPair(startEntry.getKey().getRole(), RoleCommand.RESTART)));
+    }
+  }
+
 
   @Test
   public void testAddDependencies() throws IOException {
@@ -281,16 +344,29 @@ public class RoleCommandOrderTest {
     mapper.setVisibility(JsonMethod.ALL, JsonAutoDetect.Visibility.ANY);
     String dump = mapper.writeValueAsString(rco.getDependencies());
 
-    String expected = "{\"RoleCommandPair{role=SECONDARY_NAMENODE, " +
-        "cmd=UPGRADE}\":[{\"role\":{\"name\":\"NAMENODE\"},\"cmd\":\"UPGRADE\"}]," +
-        "\"RoleCommandPair{role=SECONDARY_NAMENODE, cmd=START}\":[{\"role\":{\"name\":\"NAMENODE\"}," +
-    		"\"cmd\":\"START\"}],\"RoleCommandPair{role=DATANODE, cmd=STOP}\":[{\"role\":" +
-        "{\"name\":\"HBASE_MASTER\"},\"cmd\":\"STOP\"},{\"role\":{\"name\":\"RESOURCEMANAGER\"}," +
-    		"\"cmd\":\"STOP\"},{\"role\":{\"name\":\"TASKTRACKER\"},\"cmd\":\"STOP\"}," +
-        "{\"role\":{\"name\":\"NODEMANAGER\"},\"cmd\":\"STOP\"},{\"role\":{\"name\":\"HISTORYSERVER\"}," +
-    		"\"cmd\":\"STOP\"},{\"role\":{\"name\":\"JOBTRACKER\"},\"cmd\":\"STOP\"}]}";
-
-    assertEquals(expected, dump);
+    // Depends on hashing, string representation can be different
+    // We need a sophisticated comparison
+    List<String> parts = Arrays.asList(dump.substring(1, 522).split(Pattern.quote("],")));
+    assertEquals(3, parts.size());
+    assertTrue(parts.contains("\"RoleCommandPair{role=SECONDARY_NAMENODE, cmd=UPGRADE}\":[{\"role\":{\"name\":\"NAMENODE\"},\"cmd\":\"UPGRADE\"}"));
+    assertTrue(parts.contains("\"RoleCommandPair{role=SECONDARY_NAMENODE, cmd=START}\":[{\"role\":{\"name\":\"NAMENODE\"},\"cmd\":\"START\"}"));
+    boolean datanodeCommandExists = false;
+    for (String part : parts) {
+      if (part.contains("RoleCommandPair{role=DATANODE, cmd=STOP}")) {
+        datanodeCommandExists = true;
+        String[] parts2 = part.split(Pattern.quote(":["));
+        assertEquals(2, parts2.length);
+        assertEquals("\"RoleCommandPair{role=DATANODE, cmd=STOP}\"", parts2[0]);
+        List<String> components = Arrays.asList(new String[]{"\"role\":{\"name\":\"HBASE_MASTER\"},\"cmd\":\"STOP\"",
+                                                             "\"role\":{\"name\":\"RESOURCEMANAGER\"},\"cmd\":\"STOP\"",
+                                                             "\"role\":{\"name\":\"TASKTRACKER\"},\"cmd\":\"STOP\"",
+                                                             "\"role\":{\"name\":\"NODEMANAGER\"},\"cmd\":\"STOP\"",
+                                                             "\"role\":{\"name\":\"HISTORYSERVER\"},\"cmd\":\"STOP\"",
+                                                             "\"role\":{\"name\":\"JOBTRACKER\"},\"cmd\":\"STOP\""});
+        Assert.assertTrue(CollectionPresentationUtils.isStringPermutationOfCollection(parts2[1], components, "},{", 1, 1));
+      }
+    }
+    assertTrue(datanodeCommandExists);
   }
 
 

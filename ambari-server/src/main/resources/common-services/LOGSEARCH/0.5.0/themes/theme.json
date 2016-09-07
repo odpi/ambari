@@ -1,0 +1,142 @@
+{
+  "name": "default",
+  "description": "Default theme for LOGSEARCH service",
+  "configuration": {
+    "layouts": [
+      {
+        "name": "default",
+        "tabs": [
+          {
+            "name": "settings",
+            "display-name": "Settings",
+            "layout": {
+              "tab-columns": "2",
+              "tab-rows": "1",
+              "sections": [
+                {
+                  "name": "section-logsearch-server",
+                  "display-name": "Log Search Server",
+                  "row-index": "0",
+                  "column-index": "1",
+                  "row-span": "1",
+                  "column-span": "1",
+                  "section-columns": "1",
+                  "section-rows": "5",
+                  "subsections": [
+                    {
+                      "name": "subsection-logsearch-server-col1",
+                      "row-index": "0",
+                      "column-index": "0",
+                      "row-span": "1",
+                      "column-span": "1"
+                    },
+                    {
+                      "name": "subsection-logsearch-server-col2",
+                      "row-index": "0",
+                      "column-index": "1",
+                      "row-span": "1",
+                      "column-span": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "placement": {
+      "configuration-layout": "default",
+      "configs": [
+        {
+          "config" : "logsearch-properties/logsearch.logfeeder.include.default.level",
+          "subsection-name": "subsection-logsearch-server-col1"
+        },
+        {
+          "config": "logsearch-env/logsearch_app_max_memory",
+          "subsection-name": "subsection-logsearch-server-col1"
+        },
+        {
+          "config": "logsearch-properties/logsearch.collection.service.logs.numshards",
+          "subsection-name": "subsection-logsearch-server-col2"
+        },
+        {
+          "config": "logsearch-properties/logsearch.collection.service.logs.replication.factor",
+          "subsection-name": "subsection-logsearch-server-col2"
+        },
+        {
+          "config": "logsearch-properties/logsearch.collection.audit.logs.numshards",
+          "subsection-name": "subsection-logsearch-server-col2"
+        },
+        {
+          "config": "logsearch-properties/logsearch.collection.audit.logs.replication.factor",
+          "subsection-name": "subsection-logsearch-server-col2"
+        }
+      ]
+    },
+    "widgets": [
+      {
+        "config": "logsearch-env/logsearch_app_max_memory",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "GB"
+            }
+          ]
+        }
+      },
+      {
+        "config": "logsearch-properties/logsearch.logfeeder.include.default.level",
+        "widget": {
+          "type": "text-field"
+        }
+      },
+      {
+        "config": "logsearch-properties/logsearch.collection.service.logs.numshards",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "int"
+            }
+          ]
+        }
+      },
+      {
+        "config": "logsearch-properties/logsearch.collection.service.logs.replication.factor",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "int"
+            }
+          ]
+        }
+      },
+      {
+        "config": "logsearch-properties/logsearch.collection.audit.logs.numshards",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "int"
+            }
+          ]
+        }
+      },
+      {
+        "config": "logsearch-properties/logsearch.collection.audit.logs.replication.factor",
+        "widget": {
+          "type": "slider",
+          "units": [
+            {
+              "unit-name": "int"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+

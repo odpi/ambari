@@ -16,9 +16,18 @@
  * limitations under the License.
  */
 
-var App = require('app');
+/**
+ * @typedef {object} rmHaConfigDependencies
+ * @property {string|number} webAddressPort
+ * @property {string|number} httpsWebAddressPort
+ * @property {string|number} zkClientPort
+ */
 
-App.RMHighAvailabilityWizardStep3Controller = Em.Controller.extend({
+var App = require('app');
+var blueprintUtils = require('utils/blueprint');
+require('utils/configs/rm_ha_config_initializer');
+
+App.RMHighAvailabilityWizardStep3Controller = Em.Controller.extend(App.BlueprintMixin, {
   name: "rMHighAvailabilityWizardStep3Controller",
 
   selectedService: null,
@@ -29,9 +38,7 @@ App.RMHighAvailabilityWizardStep3Controller = Em.Controller.extend({
 
   isLoaded: false,
 
-  isSubmitDisabled: function () {
-    return !this.get('isLoaded');
-  }.property('isLoaded'),
+  isSubmitDisabled: Em.computed.not('isLoaded'),
 
   loadStep: function () {
     this.renderConfigs();
@@ -73,7 +80,8 @@ App.RMHighAvailabilityWizardStep3Controller = Em.Controller.extend({
 
   loadConfigTagsSuccessCallback: function (data, opt, params) {
     var urlParams = '(type=zoo.cfg&tag=' + data.Clusters.desired_configs['zoo.cfg'].tag + ')|' +
-      '(type=yarn-site&tag=' + data.Clusters.desired_configs['yarn-site'].tag + ')';
+      '(type=yarn-site&tag=' + data.Clusters.desired_configs['yarn-site'].tag + ')|' +
+      '(type=yarn-env&tag=' + data.Clusters.desired_configs['yarn-env'].tag + ')';
     App.ajax.send({
       name: 'reassign.load_configs',
       sender: this,
@@ -87,61 +95,69 @@ App.RMHighAvailabilityWizardStep3Controller = Em.Controller.extend({
   },
 
   loadConfigsSuccessCallback: function (data, opt, params) {
-    var
-      zooCfg = data && data.items ? data.items.findProperty('type', 'zoo.cfg') : null,
-      yarnSite = data && data.items ? data.items.findProperty('type', 'yarn-site') : null,
-      portValue = zooCfg && Em.get(zooCfg, 'properties.clientPort'),
-      zkPort = portValue ? portValue : '2181',
-      webAddressPort = yarnSite && yarnSite.properties ? yarnSite.properties['yarn.resourcemanager.webapp.address'] : null,
-      httpsWebAddressPort = yarnSite && yarnSite.properties ? yarnSite. properties['yarn.resourcemanager.webapp.https.address'] : null;
-
-    webAddressPort = webAddressPort && webAddressPort.match(/:[0-9]*/g) ? webAddressPort.match(/:[0-9]*/g)[0] : ":8088";
-    httpsWebAddressPort = httpsWebAddressPort && httpsWebAddressPort.match(/:[0-9]*/g) ? httpsWebAddressPort.match(/:[0-9]*/g)[0] : ":8090";
-
+    var self = this;
+    var blueprintConfigurations = Em.getWithDefault(data || {}, 'items', []).reduce(function(prev, cur) {
+      prev[cur.type] = { properties: cur.properties };
+      return prev;
+    }, {});
     params = params.serviceConfig ? params.serviceConfig : arguments[4].serviceConfig;
-
-    this.setDynamicConfigValues(params, zkPort, webAddressPort, httpsWebAddressPort);
-    this.setProperties({
-      selectedService: params,
-      isLoaded: true
+    this.setDynamicConfigValues(params, data);
+    this.loadRecommendations(blueprintConfigurations).always(function(recommendations) {
+      self.applyRecommendedConfigurations(recommendations, data, params);
+      self.setProperties({
+        selectedService: params,
+        isLoaded: true
+      });
     });
   },
 
   /**
-   * Set values dependent on host selection
-   * @param configs
-   * @param zkPort
-   * @param webAddressPort
-   * @param httpsWebAddressPort
+   * Get dependencies for new configs
+   *
+   * @param {{items: object[]}} data
+   * @returns {rmHaConfigDependencies}
+   * @private
+   * @method _prepareDependencies
    */
-  setDynamicConfigValues: function (configs, zkPort, webAddressPort, httpsWebAddressPort) {
-    var
-      configProperties = configs.configs,
-      currentRMHost = this.get('content.rmHosts.currentRM'),
-      additionalRMHost = this.get('content.rmHosts.additionalRM'),
-      zooKeeperHostsWithPort = App.HostComponent.find().filterProperty('componentName', 'ZOOKEEPER_SERVER').map(function (item) {
-        return item.get('hostName') + ':' + zkPort;
-      }).join(',');
+  _prepareDependencies: function (data) {
+    var ret = {};
+    var zooCfg = data && data.items ? data.items.findProperty('type', 'zoo.cfg') : null;
+    var yarnSite = data && data.items ? data.items.findProperty('type', 'yarn-site') : null;
+    var portValue = zooCfg && Em.get(zooCfg, 'properties.clientPort');
+    var webAddressPort = yarnSite && yarnSite.properties ? yarnSite.properties['yarn.resourcemanager.webapp.address'] : '';
+    var httpsWebAddressPort = yarnSite && yarnSite.properties ? yarnSite. properties['yarn.resourcemanager.webapp.https.address'] : '';
 
-    configProperties.findProperty('name', 'yarn.resourcemanager.hostname.rm1').set('value', currentRMHost).set('recommendedValue', currentRMHost);
-    configProperties.findProperty('name', 'yarn.resourcemanager.hostname.rm2').set('value', additionalRMHost).set('recommendedValue', additionalRMHost);
-    configProperties.findProperty('name', 'yarn.resourcemanager.zk-address').set('value', zooKeeperHostsWithPort).set('recommendedValue', zooKeeperHostsWithPort);
+    ret.webAddressPort = webAddressPort && webAddressPort.contains(':') ? webAddressPort.split(':')[1] : '8088';
+    ret.httpsWebAddressPort = httpsWebAddressPort && httpsWebAddressPort.contains(':') ? httpsWebAddressPort.split(':')[1] : '8090';
+    ret.zkClientPort = portValue ? portValue : '2181';
+    return ret;
+  },
 
-    configProperties.findProperty('name', 'yarn.resourcemanager.webapp.address.rm1')
-      .set('value', currentRMHost + webAddressPort)
-      .set('recommendedValue', currentRMHost + webAddressPort);
+  /**
+   * Set values to the new configs
+   *
+   * @param {object} configs
+   * @param {object} data
+   * @returns {object}
+   * @method setDynamicConfigValues
+   */
+  setDynamicConfigValues: function (configs, data) {
+    var topologyLocalDB = this.get('content').getProperties(['masterComponentHosts', 'slaveComponentHosts', 'hosts']);
+    var yarnUser = data.items.findProperty('type', 'yarn-env').properties.yarn_user;
+    App.RmHaConfigInitializer.setup({
+      yarnUser: yarnUser
+    });
+    var dependencies = this._prepareDependencies(data);
+    // /** add dynamic property 'hadoop.proxyuser.' + yarnUser + '.hosts' **/
+    // var proxyUserConfig = App.ServiceConfigProperty.create(App.config.createDefaultConfig('hadoop.proxyuser.' + yarnUser + '.hosts',
+    //   'core-site', false,  {category : "HDFS", isUserProperty: false, isEditable: false, isOverridable: false, serviceName: 'MISC'}));
+    // configs.configs.pushObject(proxyUserConfig);
 
-    configProperties.findProperty('name', 'yarn.resourcemanager.webapp.address.rm2')
-      .set('value', additionalRMHost + webAddressPort)
-      .set('recommendedValue', additionalRMHost + webAddressPort);
-
-    configProperties.findProperty('name', 'yarn.resourcemanager.webapp.https.address.rm1')
-      .set('value', currentRMHost + httpsWebAddressPort)
-      .set('recommendedValue', currentRMHost + httpsWebAddressPort);
-
-    configProperties.findProperty('name', 'yarn.resourcemanager.webapp.https.address.rm2')
-      .set('value', additionalRMHost + httpsWebAddressPort)
-      .set('recommendedValue', additionalRMHost + httpsWebAddressPort);
+    configs.configs.forEach(function (config) {
+      App.RmHaConfigInitializer.initialValue(config, topologyLocalDB, dependencies);
+    });
+    App.RmHaConfigInitializer.cleanup();
+    return configs;
   },
 
   /**
@@ -154,7 +170,6 @@ App.RMHighAvailabilityWizardStep3Controller = Em.Controller.extend({
       var serviceConfigProperty = App.ServiceConfigProperty.create(_serviceConfigProperty);
       componentConfig.configs.pushObject(serviceConfigProperty);
       serviceConfigProperty.set('isEditable', serviceConfigProperty.get('isReconfigurable'));
-      serviceConfigProperty.validate();
     }, this);
   },
 
@@ -164,6 +179,61 @@ App.RMHighAvailabilityWizardStep3Controller = Em.Controller.extend({
         App.router.send("next");
       });
     }
+  },
+
+  loadRecommendations: function(blueprintConfigurations) {
+    var dfd = $.Deferred();
+    var blueprint = this.getCurrentMasterSlaveBlueprint();
+    // host group where new ResourceManager will be added
+    var hostGroupName = blueprintUtils.getHostGroupByFqdn(blueprint, this.get('content.rmHosts.additionalRM'));
+    var dataToSend = {
+      recommend: 'configurations',
+      hosts: App.get('allHostNames'),
+      services: App.Service.find().mapProperty('serviceName').uniq(),
+      recommendations: {}
+    };
+    if (!!hostGroupName) {
+      blueprintUtils.addComponentToHostGroup(blueprint, 'RESOURCEMANAGER', hostGroupName);
+    }
+    blueprint.blueprint.configurations = blueprintConfigurations;
+    dataToSend.recommendations = blueprint;
+    return App.ajax.send({
+      name: 'config.recommendations',
+      sender: this,
+      data: {
+        stackVersionUrl: App.get('stackVersionURL'),
+        dataToSend: dataToSend
+      }
+    });
+  },
+
+  applyRecommendedConfigurations: function(recommendations, configurations, stepConfigs) {
+    var yarnEnv = Em.getWithDefault(configurations || {}, 'items', []).findProperty('type', 'yarn-env') || {},
+        yarnUser = Em.getWithDefault(yarnEnv, 'properties.yarn_user', false),
+        coreSite = Em.getWithDefault(recommendations, 'resources.0.recommendations.blueprint.configurations.core-site.properties', {}),
+        proxyHostName = 'hadoop.proxyuser.' + yarnUser + '.hosts',
+        recommendedHosts = coreSite[proxyHostName] || false,
+        newProp;
+
+    if (yarnUser && recommendedHosts) {
+      if (stepConfigs.get('configs').someProperty('name', proxyHostName)) {
+        stepConfigs.get('configs').findProperty('name', proxyHostName).setProperties({
+          recommendedValue: recommendedHosts,
+          value: recommendedHosts
+        });
+      } else {
+        newProp = App.config.createDefaultConfig(proxyHostName, 'core-site', false, {
+          category : "HDFS",
+          isUserProperty: false,
+          isEditable: false,
+          isOverridable: false,
+          serviceName: 'MISC',
+          value: recommendedHosts,
+          recommendedValue: recommendedHosts
+        });
+        newProp.filename = App.config.getConfigTagFromFileName(newProp.filename);
+        stepConfigs.get('configs').pushObject(App.ServiceConfigProperty.create(newProp));
+      }
+    }
   }
 });
-

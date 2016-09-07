@@ -18,6 +18,8 @@
 package org.apache.ambari.server.checks;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.apache.ambari.server.ServiceNotFoundException;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
@@ -66,33 +68,31 @@ public class SecondaryNamenodeDeletedCheckTest {
 
     secondaryNamenodeDeletedCheck.hostComponentStateDao = hostComponentStateDAO;
     Configuration config = Mockito.mock(Configuration.class);
-    Mockito.when(config.getRollingUpgradeMinStack()).thenReturn("HDP-2.2");
-    Mockito.when(config.getRollingUpgradeMaxStack()).thenReturn("");
     secondaryNamenodeDeletedCheck.config = config;
   }
 
   @Test
   public void testIsApplicable() throws Exception {
     final Cluster cluster = Mockito.mock(Cluster.class);
+    final Map<String, Service> services = new HashMap<>();
+    final Service service = Mockito.mock(Service.class);
+
+    services.put("HDFS", service);
+
     Mockito.when(cluster.getClusterId()).thenReturn(1L);
+    Mockito.when(cluster.getServices()).thenReturn(services);
     Mockito.when(clusters.getCluster("cluster")).thenReturn(cluster);
 
-    final Service service = Mockito.mock(Service.class);
-    Mockito.when(cluster.getService("HDFS")).thenReturn(service);
     Assert.assertTrue(secondaryNamenodeDeletedCheck.isApplicable(new PrereqCheckRequest("cluster")));
 
     PrereqCheckRequest req = new PrereqCheckRequest("cluster");
     req.addResult(CheckDescription.SERVICES_NAMENODE_HA, PrereqCheckStatus.FAIL);
-    Mockito.when(cluster.getService("HDFS")).thenReturn(service);
     Assert.assertFalse(secondaryNamenodeDeletedCheck.isApplicable(req));
 
     req.addResult(CheckDescription.SERVICES_NAMENODE_HA, PrereqCheckStatus.PASS);
-    Mockito.when(cluster.getService("HDFS")).thenReturn(service);
     Assert.assertTrue(secondaryNamenodeDeletedCheck.isApplicable(req));
 
-
-
-    Mockito.when(cluster.getService("HDFS")).thenThrow(new ServiceNotFoundException("no", "service"));
+    services.remove("HDFS");
     Assert.assertFalse(secondaryNamenodeDeletedCheck.isApplicable(new PrereqCheckRequest("cluster")));
   }
 
@@ -111,6 +111,8 @@ public class SecondaryNamenodeDeletedCheckTest {
     PrerequisiteCheck check = new PrerequisiteCheck(null, null);
     secondaryNamenodeDeletedCheck.perform(check, new PrereqCheckRequest("cluster"));
     Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+    Assert.assertEquals("HDFS", check.getFailedOn().toArray(new String[1])[0]);
+    Assert.assertEquals("The SNameNode component must be deleted from host: host.", check.getFailReason());
 
     Mockito.when(serviceComponent.getServiceComponentHosts()).thenReturn(Collections.<String, ServiceComponentHost> emptyMap());
     check = new PrerequisiteCheck(null, null);

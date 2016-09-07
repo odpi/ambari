@@ -19,11 +19,11 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <!-- pig-env.sh -->
   <property>
     <name>content</name>
+    <display-name>pig-env template</display-name>
     <description>This is the jinja template for pig-env.sh file</description>
     <value>
 JAVA_HOME={{java64_home}}
@@ -33,6 +33,9 @@ if [ -d "/usr/lib/tez" ]; then
   PIG_OPTS="$PIG_OPTS -Dmapreduce.framework.name=yarn"
 fi
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-  
 </configuration>

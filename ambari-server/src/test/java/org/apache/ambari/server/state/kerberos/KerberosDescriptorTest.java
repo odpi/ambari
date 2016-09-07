@@ -59,14 +59,14 @@ public class KerberosDescriptorTest {
             put("some.property", "Hello World");
           }});
 
-          put(KerberosDescriptorType.AUTH_TO_LOCAL_PROPERTY.getDescriptorPluralName(), new ArrayList<String>() {{
+          put(AbstractKerberosDescriptor.Type.AUTH_TO_LOCAL_PROPERTY.getDescriptorPluralName(), new ArrayList<String>() {{
             add("global.name.rules");
           }});
 
-          put(KerberosDescriptorType.SERVICE.getDescriptorPluralName(), new ArrayList<Object>() {{
+          put(AbstractKerberosDescriptor.Type.SERVICE.getDescriptorPluralName(), new ArrayList<Object>() {{
             add(KerberosServiceDescriptorTest.MAP_VALUE);
           }});
-          put(KerberosDescriptorType.CONFIGURATION.getDescriptorPluralName(), new ArrayList<Map<String, Object>>() {{
+          put(AbstractKerberosDescriptor.Type.CONFIGURATION.getDescriptorPluralName(), new ArrayList<Map<String, Object>>() {{
             add(new HashMap<String, Object>() {
               {
                 put("cluster-conf", new HashMap<String, String>() {
@@ -77,7 +77,7 @@ public class KerberosDescriptorTest {
               }
             });
           }});
-          put(KerberosDescriptorType.IDENTITY.getDescriptorPluralName(), new ArrayList<Object>() {{
+          put(AbstractKerberosDescriptor.Type.IDENTITY.getDescriptorPluralName(), new ArrayList<Object>() {{
             add(new HashMap<String, Object>() {
               {
                 put("name", "shared");
@@ -118,7 +118,14 @@ public class KerberosDescriptorTest {
     Set<String> authToLocalProperties = descriptor.getAuthToLocalProperties();
     Assert.assertNotNull(authToLocalProperties);
     Assert.assertEquals(1, authToLocalProperties.size());
-    Assert.assertEquals("generic.name.rules", authToLocalProperties.iterator().next());
+    Assert.assertTrue(authToLocalProperties.contains("generic.name.rules"));
+
+    authToLocalProperties = descriptor.getAllAuthToLocalProperties();
+    Assert.assertNotNull(authToLocalProperties);
+    Assert.assertEquals(3, authToLocalProperties.size());
+    Assert.assertTrue(authToLocalProperties.contains("component.name.rules1"));
+    Assert.assertTrue(authToLocalProperties.contains("generic.name.rules"));
+    Assert.assertTrue(authToLocalProperties.contains("service.name.rules1"));
 
     Map<String, KerberosServiceDescriptor> serviceDescriptors = descriptor.getServices();
     Assert.assertNotNull(serviceDescriptors);
@@ -156,24 +163,24 @@ public class KerberosDescriptorTest {
       KerberosComponentDescriptor component = service.getComponent("A_DIFFERENT_COMPONENT_NAME");
       Assert.assertNotNull(component);
 
-      List<KerberosIdentityDescriptor> resolvedIdentities = component.getIdentities(true);
+      List<KerberosIdentityDescriptor> resolvedIdentities = component.getIdentities(true, null);
       KerberosIdentityDescriptor resolvedIdentity = null;
       Assert.assertNotNull(resolvedIdentities);
       Assert.assertEquals(3, resolvedIdentities.size());
 
       for (KerberosIdentityDescriptor item : resolvedIdentities) {
-        if ("/shared".equals(item.getName())) {
+        if ("/shared".equals(item.getReference())) {
           resolvedIdentity = item;
           break;
         }
       }
       Assert.assertNotNull(resolvedIdentity);
 
-      List<KerberosIdentityDescriptor> identities = component.getIdentities(false);
+      List<KerberosIdentityDescriptor> identities = component.getIdentities(false, null);
       Assert.assertNotNull(identities);
       Assert.assertEquals(3, identities.size());
 
-      KerberosIdentityDescriptor identityReference = component.getIdentity("/shared");
+      KerberosIdentityDescriptor identityReference = component.getIdentity("shared_identity");
       Assert.assertNotNull(identityReference);
 
       KerberosIdentityDescriptor referencedIdentity = descriptor.getIdentity("shared");
@@ -402,5 +409,65 @@ public class KerberosDescriptorTest {
 
     identity = serviceDescriptor.getReferencedIdentityDescriptor("../service2_identity");
     Assert.assertNull(identity);
+  }
+
+  @Test
+  public void testGetReferencedIdentityDescriptor_Recursive() throws IOException {
+    boolean identityFound = false;
+    List<KerberosIdentityDescriptor> identities;
+
+    URL systemResourceURL = ClassLoader.getSystemResource("kerberos/test_get_referenced_identity_descriptor.json");
+    Assert.assertNotNull(systemResourceURL);
+
+    KerberosDescriptor descriptor = KERBEROS_DESCRIPTOR_FACTORY.createInstance(new File(systemResourceURL.getFile()));
+    Assert.assertNotNull(descriptor);
+
+    KerberosServiceDescriptor serviceDescriptor = descriptor.getService("SERVICE2");
+    Assert.assertNotNull(serviceDescriptor);
+
+    identities = serviceDescriptor.getIdentities(true, null);
+    Assert.assertNotNull(identities);
+
+    identityFound = false;
+    for(KerberosIdentityDescriptor identity : identities) {
+      if("service2_stack_reference".equals(identity.getName())) {
+
+        // From base identity
+        Assert.assertEquals("stack@${realm}", identity.getPrincipalDescriptor().getValue());
+
+        // Overwritten by the "local" identity
+        Assert.assertEquals("${keytab_dir}/service2_stack.keytab", identity.getKeytabDescriptor().getFile());
+        Assert.assertEquals("/stack_identity", identity.getReference());
+        Assert.assertEquals("service2/property1_principal", identity.getPrincipalDescriptor().getConfiguration());
+
+        identityFound = true;
+      }
+    }
+    Assert.assertTrue(identityFound);
+
+    KerberosComponentDescriptor componentDescriptor =  serviceDescriptor.getComponent("SERVICE2_COMPONENT1");
+    Assert.assertNotNull(componentDescriptor);
+
+    identities = componentDescriptor.getIdentities(true, null);
+    Assert.assertNotNull(identities);
+
+    identityFound = false;
+    for(KerberosIdentityDescriptor identity : identities) {
+      if("component1_service2_stack_reference".equals(identity.getName())) {
+
+        // From base identity
+        Assert.assertEquals("stack@${realm}", identity.getPrincipalDescriptor().getValue());
+
+        // Overwritten by the "referenced" identity
+        Assert.assertEquals("${keytab_dir}/service2_stack.keytab", identity.getKeytabDescriptor().getFile());
+
+        // Overwritten by the "local" identity
+        Assert.assertEquals("/SERVICE2/service2_stack_reference", identity.getReference());
+        Assert.assertEquals("component1_service2/property1_principal", identity.getPrincipalDescriptor().getConfiguration());
+
+        identityFound = true;
+      }
+    }
+    Assert.assertTrue(identityFound);
   }
 }

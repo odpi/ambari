@@ -19,7 +19,12 @@ limitations under the License.
 """
 import urllib2
 
-from resource_management import *
+from resource_management.core.logger import Logger
+from resource_management.core.exceptions import Fail
+from resource_management.core.resources.system import Execute, File
+from resource_management.core.source import StaticFile, Template
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.format import format
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
 from ambari_commons import OSConst
 import time
@@ -32,7 +37,7 @@ def webhcat_service_check():
   # AMBARI-11633 [WinTP2] Webhcat service check fails
   # Hive doesn't pass the environment variables correctly to child processes, which fails the smoke test.
   # Reducing the amount of URLs checked to the minimum required.
-  #smoke_cmd = os.path.join(params.hdp_root,"Run-SmokeTests.cmd")
+  #smoke_cmd = os.path.join(params.stack_root,"Run-SmokeTests.cmd")
   #service = "WEBHCAT"
   #Execute(format("cmd /C {smoke_cmd} {service}"), user=params.hcat_user, logoutput=True)
 
@@ -114,8 +119,9 @@ def webhcat_service_check():
   
   params.HdfsResource(None, action = "execute")
 
-  cmd = format("{tmp_dir}/templetonSmoke.sh {webhcat_server_host[0]} {smokeuser} {templeton_port} {templeton_test_script} {smokeuser_keytab}"
-               " {security_param} {kinit_path_local} {smoke_user_principal}")
+  cmd = format("{tmp_dir}/templetonSmoke.sh {webhcat_server_host[0]} {smokeuser} {templeton_port} {templeton_test_script} {has_pig} {smokeuser_keytab}"
+               " {security_param} {kinit_path_local} {smoke_user_principal}"
+               " {tmp_dir}")
 
   Execute(cmd,
           tries=3,

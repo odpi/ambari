@@ -362,6 +362,16 @@ Alert resources contain the relationships between definitions, history, and the 
 
 - [Alert History](alerts.md) The current state of an alert and all of its historical events are available for querying.
 
+#### credentials
+Credential resources are principal (or username) and password pairs that are tagged with an alias and stored either in a _temporary_ or _persisted_ storage facility.  These resources may be created, updated, and deleted; however (for security reasons) when getting credential resources, only the alias and an indicator of whether the credential is stored in the temporary or persisted store is returned.  Credentials are sub-resources of Clusters.
+
+[Credential Resources](credential-resources.md)
+
+#### permissions
+Permission resources are used to help determine authorization rights for a user.  A permission is assigned to a user by setting up a privilege relationship between a user and the permission to be projected onto some resource.  
+
+[Permission Resources](permission-resources.md)
+
 Partial Response
 ----
 

@@ -18,6 +18,7 @@
 package org.apache.ambari.server.checks;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -33,12 +34,13 @@ import com.google.inject.Singleton;
 
 /**
  * The {@link ClientRetryPropertyCheck} class is used to check that the
- * client retry properties for HDFS, HIVE, and OOZIE are set.
+ * client retry properties for HIVE and OOZIE are set, but not for HDFS.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.CLIENT_RETRY_PROPERTY)
+@UpgradeCheck(group = UpgradeCheckGroup.CLIENT_RETRY_PROPERTY, required = true)
 public class ClientRetryPropertyCheck extends AbstractCheckDescriptor {
 
+  static final String HDFS_CLIENT_RETRY_DISABLED_KEY = "hdfs.client.retry.enabled.key";
   static final String HIVE_CLIENT_RETRY_MISSING_KEY = "hive.client.retry.missing.key";
   static final String OOZIE_CLIENT_RETRY_MISSING_KEY = "oozie.client.retry.missing.key";
 
@@ -54,19 +56,7 @@ public class ClientRetryPropertyCheck extends AbstractCheckDescriptor {
    */
   @Override
   public boolean isApplicable(PrereqCheckRequest request) throws AmbariException {
-    if (!super.isApplicable(request)) {
-      return false;
-    }
-
-    final Cluster cluster = clustersProvider.get().getCluster(request.getClusterName());
-    Map<String, Service> services = cluster.getServices();
-
-    if (services.containsKey("HDFS") || services.containsKey("HIVE")
-        || services.containsKey("OOZIE")) {
-      return true;
-    }
-
-    return false;
+    return super.isApplicable(request, Arrays.asList("HDFS", "HIVE", "OOZIE"), false);
   }
 
   /**
@@ -79,15 +69,18 @@ public class ClientRetryPropertyCheck extends AbstractCheckDescriptor {
 
     List<String> errorMessages = new ArrayList<String>();
 
-    // We excluded hdfs-site property dfs.client.retry.policy.enabled because default is false, and should remain
-    // that way due to *****.
-    // check hdfs client property
+    // HDFS needs to actually prevent client retry since that causes them to try too long and not failover quickly.
+    if (services.containsKey("HDFS")) {
+      String clientRetryPolicyEnabled = getProperty(request, "hdfs-site", "dfs.client.retry.policy.enabled");
+      if (null != clientRetryPolicyEnabled && Boolean.parseBoolean(clientRetryPolicyEnabled)) {
+        errorMessages.add(getFailReason(HDFS_CLIENT_RETRY_DISABLED_KEY, prerequisiteCheck, request));
+        prerequisiteCheck.getFailedOn().add("HDFS");
+      }
+    }
 
     // check hive client properties
     if (services.containsKey("HIVE")) {
-      String hiveClientRetryCount = getProperty(request, "hive-site",
-          "hive.metastore.failure.retries");
-
+      String hiveClientRetryCount = getProperty(request, "hive-site", "hive.metastore.failure.retries");
       if (null != hiveClientRetryCount && Integer.parseInt(hiveClientRetryCount) <= 0) {
         errorMessages.add(getFailReason(HIVE_CLIENT_RETRY_MISSING_KEY, prerequisiteCheck, request));
         prerequisiteCheck.getFailedOn().add("HIVE");

@@ -24,18 +24,18 @@
 
   <http use-expressions="true"
         disable-url-rewriting="true" entry-point-ref="ambariEntryPoint">
-    <http-basic entry-point-ref="ambariEntryPoint"/>
     <intercept-url pattern="/**" access="isAuthenticated()"/>
-    <custom-filter ref="ambariAuthorizationFilter" after="BASIC_AUTH_FILTER"/>
+    <custom-filter ref="ambariUserAuthorizationFilter" before="BASIC_AUTH_FILTER"/>
+    <custom-filter ref="ambariAuthenticationFilter" position="BASIC_AUTH_FILTER"/>
+    <custom-filter ref="ambariJwtAuthenticationFilter" after="BASIC_AUTH_FILTER" />
+    <custom-filter ref="ambariAuthorizationFilter" before="FILTER_SECURITY_INTERCEPTOR"/>
   </http>
 
   <!--<ldap-server id="ldapServer" root="dc=ambari,dc=apache,dc=org"/>-->
 
-  <authentication-manager>
+  <authentication-manager alias="authenticationManager">
 
-    <authentication-provider user-service-ref="ambariLocalUserService">
-      <password-encoder ref="passwordEncoder"/>
-    </authentication-provider>
+    <authentication-provider ref="ambariLocalAuthenticationProvider"/>
 
     <authentication-provider ref="ambariLdapAuthenticationProvider"/>
 
@@ -44,5 +44,12 @@
   </authentication-manager>
 
   <beans:bean id="ambariEntryPoint" class="org.apache.ambari.server.security.AmbariEntryPoint">
+  </beans:bean>
+
+  <beans:bean id="ambariAuthenticationFilter" class="org.apache.ambari.server.security.authentication.AmbariAuthenticationFilter">
+    <beans:constructor-arg ref="authenticationManager"/>
+    <beans:constructor-arg ref="auditLogger"/>
+    <beans:constructor-arg ref="permissionHelper"/>
+    <beans:constructor-arg ref="ambariEntryPoint"/>
   </beans:bean>
 </beans:beans>

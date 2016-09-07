@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,21 +19,31 @@
 
 package org.apache.ambari.server.api.resources;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
 import org.apache.ambari.server.api.query.QueryImpl;
+import org.apache.ambari.server.controller.internal.ClusterKerberosDescriptorResourceProvider;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.utilities.ClusterControllerHelper;
 import org.apache.ambari.server.view.ViewRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating resource instances.
  */
 public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
 
+
+  /**
+   * The logger.
+   */
+  private final static Logger LOG =
+          LoggerFactory.getLogger(ResourceInstanceFactoryImpl.class);
 
   /**
    * Map of external resource definitions (added through views).
@@ -48,6 +58,19 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
     /**
      * The resource definition for the specified type.
      */
+
+    // this code changes hot name to lower case
+    try {
+      if (mapIds.containsKey(Resource.Type.Host)) {
+        String hostName = mapIds.get(Resource.Type.Host);
+        if (hostName != null) {
+          mapIds.put(Resource.Type.Host, hostName.toLowerCase());
+        }
+      }
+    } catch(Exception e) {
+      LOG.error("Lowercase host name value in resource failed with error:" + e);
+    }
+
     ResourceDefinition resourceDefinition = getResourceDefinition(type, mapIds);
 
     return new QueryImpl(mapIds, resourceDefinition, ClusterControllerHelper.getClusterController());
@@ -166,6 +189,18 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
         resourceDefinition = new StackConfigurationDependencyResourceDefinition();
         break;
 
+      case Extension:
+        resourceDefinition = new ExtensionResourceDefinition();
+        break;
+
+      case ExtensionVersion:
+        resourceDefinition = new ExtensionVersionResourceDefinition();
+        break;
+
+      case ExtensionLink:
+        resourceDefinition = new ExtensionLinkResourceDefinition();
+        break;
+
       case OperatingSystem:
         resourceDefinition = new OperatingSystemResourceDefinition();
         break;
@@ -237,6 +272,10 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
         resourceDefinition = new ViewInstanceResourceDefinition(subResourceDefinitions);
         break;
 
+      case ViewURL:
+        resourceDefinition = new ViewUrlResourceDefinition();
+        break;
+
       case Blueprint:
         resourceDefinition = new BlueprintResourceDefinition();
         break;
@@ -297,6 +336,10 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
         resourceDefinition = new PrivilegeResourceDefinition(Resource.Type.UserPrivilege);
         break;
 
+      case GroupPrivilege:
+        resourceDefinition = new PrivilegeResourceDefinition(Resource.Type.GroupPrivilege);
+        break;
+
       case ViewPermission:
         resourceDefinition = new ViewPermissionResourceDefinition();
         break;
@@ -342,6 +385,11 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
             Resource.Type.UpgradeItem, "upgrade_item", "upgrade_items", Resource.Type.Task);
         break;
 
+      case UpgradeSummary:
+        resourceDefinition = new SimpleResourceDefinition(
+            Resource.Type.UpgradeSummary, "upgrade_summary", "upgrade_summary");
+        break;
+
       case PreUpgradeCheck:
         resourceDefinition = new SimpleResourceDefinition(Resource.Type.PreUpgradeCheck, "rolling_upgrade_check", "rolling_upgrade_checks");
         break;
@@ -351,17 +399,7 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
         break;
 
       case StackArtifact:
-        resourceDefinition = new BaseResourceDefinition(Resource.Type.StackArtifact) {
-          @Override
-          public String getPluralName() {
-            return "artifacts";
-          }
-
-          @Override
-          public String getSingularName() {
-            return "artifact";
-          }
-        };
+        resourceDefinition = new SimpleResourceDefinition(Resource.Type.StackArtifact, "artifact", "artifacts");
         break;
 
       case Artifact:
@@ -370,6 +408,10 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
 
       case Theme:
         resourceDefinition = new SimpleResourceDefinition(Resource.Type.Theme, "theme", "themes");
+        break;
+
+      case QuickLink:
+        resourceDefinition = new SimpleResourceDefinition(Resource.Type.QuickLink, "quicklink", "quicklinks");
         break;
 
       case Widget:
@@ -386,6 +428,52 @@ public class ResourceInstanceFactoryImpl implements ResourceInstanceFactory {
 
       case HostKerberosIdentity:
         resourceDefinition = new HostKerberosIdentityResourceDefinition();
+        break;
+
+      case KerberosDescriptor:
+        resourceDefinition = new SimpleResourceDefinition(Resource.Type.KerberosDescriptor, "kerberos_descriptor", "kerberos_descriptors");
+        break;
+
+      case Credential:
+        resourceDefinition = new CredentialResourceDefinition();
+        break;
+
+      case RoleAuthorization:
+        resourceDefinition = new SimpleResourceDefinition(Resource.Type.RoleAuthorization, "authorization", "authorizations");
+        break;
+
+      case UserAuthorization:
+        resourceDefinition = new SimpleResourceDefinition(Resource.Type.UserAuthorization, "authorization", "authorizations");
+        break;
+
+      case Setting:
+        resourceDefinition = new SimpleResourceDefinition(Resource.Type.Setting, "setting", "settings");
+        break;
+
+      case VersionDefinition:
+        resourceDefinition = new VersionDefinitionResourceDefinition();
+        break;
+
+      case ClusterKerberosDescriptor:
+        resourceDefinition = new SimpleResourceDefinition(
+            Resource.Type.ClusterKerberosDescriptor,
+            "kerberos_descriptor",
+            "kerberos_descriptors",
+            null,
+            Collections.singletonMap(SimpleResourceDefinition.DirectiveType.READ,
+                Arrays.asList(
+                    ClusterKerberosDescriptorResourceProvider.DIRECTIVE_EVALUATE_WHEN_CLAUSE,
+                    ClusterKerberosDescriptorResourceProvider.DIRECTIVE_ADDITIONAL_SERVICES
+                ))
+        );
+        break;
+
+      case LoggingQuery:
+        resourceDefinition = new LoggingResourceDefinition();
+        break;
+
+      case RemoteCluster:
+        resourceDefinition = new RemoteClusterResourceDefinition();
         break;
 
       default:

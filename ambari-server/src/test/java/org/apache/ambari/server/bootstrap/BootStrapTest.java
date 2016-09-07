@@ -24,9 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
-import junit.framework.Assert;
-import junit.framework.TestCase;
-
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.bootstrap.BootStrapStatus.BSStat;
 import org.apache.ambari.server.configuration.Configuration;
@@ -38,6 +35,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import junit.framework.Assert;
+import junit.framework.TestCase;
 
 /**
  * Test BootStrap Implementation.
@@ -46,11 +45,13 @@ public class BootStrapTest extends TestCase {
   private static Log LOG = LogFactory.getLog(BootStrapTest.class);
   public TemporaryFolder temp = new TemporaryFolder();
 
+  @Override
   @Before
   public void setUp() throws IOException {
     temp.create();
   }
 
+  @Override
   @After
   public void tearDown() throws IOException {
     temp.delete();
@@ -71,12 +72,12 @@ public class BootStrapTest extends TestCase {
       sharedResourcesDir = ClassLoader.getSystemClassLoader().getResource("").getPath();
     }
 
-    properties.setProperty(Configuration.BOOTSTRAP_DIR, bootdir);
-    properties.setProperty(Configuration.BOOTSTRAP_SCRIPT, prepareEchoCommand(bootdir));
-    properties.setProperty(Configuration.SRVR_KSTR_DIR_KEY, "target" + File.separator + "classes");
-    properties.setProperty(Configuration.METADETA_DIR_PATH, metadetadir);
-    properties.setProperty(Configuration.SERVER_VERSION_FILE, serverVersionFilePath);
-    properties.setProperty(Configuration.SHARED_RESOURCES_DIR_KEY, sharedResourcesDir);
+    properties.setProperty(Configuration.BOOTSTRAP_DIRECTORY.getKey(), bootdir);
+    properties.setProperty(Configuration.BOOTSTRAP_SCRIPT.getKey(), prepareEchoCommand(bootdir));
+    properties.setProperty(Configuration.SRVR_KSTR_DIR.getKey(), "target" + File.separator + "classes");
+    properties.setProperty(Configuration.METADATA_DIR_PATH.getKey(), metadetadir);
+    properties.setProperty(Configuration.SERVER_VERSION_FILE.getKey(), serverVersionFilePath);
+    properties.setProperty(Configuration.SHARED_RESOURCES_DIR.getKey(), sharedResourcesDir);
 
     Configuration conf = new Configuration(properties);
     AmbariMetaInfo ambariMetaInfo = new AmbariMetaInfo(conf);
@@ -97,11 +98,13 @@ public class BootStrapTest extends TestCase {
     BootStrapStatus status = impl.getStatus(response.getRequestId());
     LOG.info("Status " + status.getStatus());
     int num = 0;
-    while ((status.getStatus() == BSStat.RUNNING) && (num < 500)) {
+    while ((status.getStatus() == BSStat.RUNNING) && (num < 50)) {
       status = impl.getStatus(response.getRequestId());
-      Thread.sleep(100);
+      Thread.sleep(1000);
       num++;
     }
+    // to give a time for bootstrap thread to finish
+    Thread.sleep(5000);
     LOG.info("Status: log " + status.getLog() + " status=" + status.getStatus()
     );
     /* Note its an echo command so it should echo host1,host2 */
@@ -146,12 +149,12 @@ public class BootStrapTest extends TestCase {
       serverKSTRDir = new File(new File(ClassLoader.getSystemClassLoader().getResource("").getPath()).getParent(), "classes").getPath();
     }
 
-    properties.setProperty(Configuration.BOOTSTRAP_DIR, bootdir);
-    properties.setProperty(Configuration.BOOTSTRAP_SCRIPT, prepareEchoCommand(bootdir));
-    properties.setProperty(Configuration.SRVR_KSTR_DIR_KEY, serverKSTRDir);
-    properties.setProperty(Configuration.METADETA_DIR_PATH, metadetadir);
-    properties.setProperty(Configuration.SERVER_VERSION_FILE, serverVersionFilePath);
-    properties.setProperty(Configuration.SHARED_RESOURCES_DIR_KEY, sharedResourcesDir);
+    properties.setProperty(Configuration.BOOTSTRAP_DIRECTORY.getKey(), bootdir);
+    properties.setProperty(Configuration.BOOTSTRAP_SCRIPT.getKey(), prepareEchoCommand(bootdir));
+    properties.setProperty(Configuration.SRVR_KSTR_DIR.getKey(), serverKSTRDir);
+    properties.setProperty(Configuration.METADATA_DIR_PATH.getKey(), metadetadir);
+    properties.setProperty(Configuration.SERVER_VERSION_FILE.getKey(), serverVersionFilePath);
+    properties.setProperty(Configuration.SHARED_RESOURCES_DIR.getKey(), sharedResourcesDir);
     Configuration conf = new Configuration(properties);
     AmbariMetaInfo ambariMetaInfo = new AmbariMetaInfo(conf);
     BootStrapImpl impl = new BootStrapImpl(conf, ambariMetaInfo);

@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,8 +19,12 @@
 package org.apache.ambari.server.controller.spi;
 
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
  * The resource object represents a requested resource.  The resource
@@ -32,7 +36,7 @@ public interface Resource {
    *
    * @return the resource type
    */
-  public Type getType();
+  Type getType();
 
   /**
    * Obtain the properties contained by this group in a map structure.
@@ -42,7 +46,7 @@ public interface Resource {
    *
    * @return resource properties map
    */
-  public Map<String, Map<String, Object>> getPropertiesMap();
+  Map<String, Map<String, Object>> getPropertiesMap();
 
   /**
    * Set a property value for the given property id on this resource.
@@ -50,14 +54,14 @@ public interface Resource {
    * @param id    the property id
    * @param value the value
    */
-  public void setProperty(String id, Object value);
+  void setProperty(String id, Object value);
 
   /**
    * Add an empty category to this resource.
    *
    * @param id the category id
    */
-  public void addCategory(String id);
+  void addCategory(String id);
 
   /**
    * Get a property value for the given property id from this resource.
@@ -65,7 +69,7 @@ public interface Resource {
    * @param id the property id
    * @return the property value
    */
-  public Object getPropertyValue(String id);
+  Object getPropertyValue(String id);
 
 
   // ----- Enum : InternalType -----------------------------------------------
@@ -73,9 +77,10 @@ public interface Resource {
   /**
    * Enum of internal types.
    */
-  public enum InternalType {
+  enum InternalType {
     Cluster,
     Service,
+    Setting,
     Host,
     Component,
     HostComponent,
@@ -91,6 +96,9 @@ public interface Resource {
     Member,
     Stack,
     StackVersion,
+    ExtensionLink,
+    Extension,
+    ExtensionVersion,
     OperatingSystem,
     Repository,
     StackService,
@@ -108,6 +116,7 @@ public interface Resource {
     RootServiceComponent,
     RootServiceHostComponent,
     View,
+    ViewURL,
     ViewVersion,
     ViewInstance,
     Blueprint,
@@ -129,6 +138,7 @@ public interface Resource {
     StackLevelConfiguration,
     LdapSyncEvent,
     UserPrivilege,
+    GroupPrivilege,
     RepositoryVersion,
     CompatibleRepositoryVersion,
     ClusterStackVersion,
@@ -136,6 +146,7 @@ public interface Resource {
     Upgrade,
     UpgradeGroup,
     UpgradeItem,
+    UpgradeSummary,
     PreUpgradeCheck,
     Stage,
     StackArtifact,
@@ -144,7 +155,16 @@ public interface Resource {
     WidgetLayout,
     ActiveWidgetLayout,
     Theme,
-    HostKerberosIdentity;
+    QuickLink,
+    HostKerberosIdentity,
+    Credential,
+    KerberosDescriptor,
+    RoleAuthorization,
+    UserAuthorization,
+    VersionDefinition,
+    ClusterKerberosDescriptor,
+    LoggingQuery,
+    RemoteCluster;
 
     /**
      * Get the {@link Type} that corresponds to this InternalType.
@@ -164,12 +184,12 @@ public interface Resource {
   /**
    * Resource types.  Allows for the addition of external types.
    */
-  public final class Type implements Comparable<Type>{
+  final class Type implements Comparable<Type>{
 
     /**
      * Map of all registered types.
      */
-    private static Map<String, Type> types = new LinkedHashMap<String, Type>();
+    private static Map<String, Type> types = new ConcurrentHashMap<String, Type>();
 
     /**
      * Ordinal number counter for registering external types.
@@ -181,6 +201,7 @@ public interface Resource {
      */
     public static final Type Cluster = InternalType.Cluster.getType();
     public static final Type Service = InternalType.Service.getType();
+    public static final Type Setting = InternalType.Setting.getType();
     public static final Type Host = InternalType.Host.getType();
     public static final Type Component = InternalType.Component.getType();
     public static final Type HostComponent = InternalType.HostComponent.getType();
@@ -196,6 +217,9 @@ public interface Resource {
     public static final Type Member = InternalType.Member.getType();
     public static final Type Stack = InternalType.Stack.getType();
     public static final Type StackVersion = InternalType.StackVersion.getType();
+    public static final Type ExtensionLink = InternalType.ExtensionLink.getType();
+    public static final Type Extension = InternalType.Extension.getType();
+    public static final Type ExtensionVersion = InternalType.ExtensionVersion.getType();
     public static final Type OperatingSystem = InternalType.OperatingSystem.getType();
     public static final Type Repository = InternalType.Repository.getType();
     public static final Type StackService = InternalType.StackService.getType();
@@ -213,6 +237,7 @@ public interface Resource {
     public static final Type RootServiceComponent = InternalType.RootServiceComponent.getType();
     public static final Type RootServiceHostComponent = InternalType.RootServiceHostComponent.getType();
     public static final Type View = InternalType.View.getType();
+    public static final Type ViewURL = InternalType.ViewURL.getType();
     public static final Type ViewVersion = InternalType.ViewVersion.getType();
     public static final Type ViewInstance = InternalType.ViewInstance.getType();
     public static final Type Blueprint = InternalType.Blueprint.getType();
@@ -234,6 +259,7 @@ public interface Resource {
     public static final Type StackLevelConfiguration = InternalType.StackLevelConfiguration.getType();
     public static final Type LdapSyncEvent = InternalType.LdapSyncEvent.getType();
     public static final Type UserPrivilege = InternalType.UserPrivilege.getType();
+    public static final Type GroupPrivilege = InternalType.GroupPrivilege.getType();
     public static final Type RepositoryVersion = InternalType.RepositoryVersion.getType();
     public static final Type CompatibleRepositoryVersion = InternalType.CompatibleRepositoryVersion.getType();
     public static final Type ClusterStackVersion = InternalType.ClusterStackVersion.getType();
@@ -241,15 +267,25 @@ public interface Resource {
     public static final Type Upgrade = InternalType.Upgrade.getType();
     public static final Type UpgradeGroup = InternalType.UpgradeGroup.getType();
     public static final Type UpgradeItem = InternalType.UpgradeItem.getType();
+    public static final Type UpgradeSummary = InternalType.UpgradeSummary.getType();
     public static final Type PreUpgradeCheck = InternalType.PreUpgradeCheck.getType();
     public static final Type Stage = InternalType.Stage.getType();
     public static final Type StackArtifact = InternalType.StackArtifact.getType();
     public static final Type Artifact = InternalType.Artifact.getType();
     public static final Type Theme = InternalType.Theme.getType();
+    public static final Type QuickLink = InternalType.QuickLink.getType();
     public static final Type Widget = InternalType.Widget.getType();
     public static final Type WidgetLayout = InternalType.WidgetLayout.getType();
     public static final Type ActiveWidgetLayout = InternalType.ActiveWidgetLayout.getType();
     public static final Type HostKerberosIdentity = InternalType.HostKerberosIdentity.getType();
+    public static final Type Credential = InternalType.Credential.getType();
+    public static final Type KerberosDescriptor = InternalType.KerberosDescriptor.getType();
+    public static final Type RoleAuthorization = InternalType.RoleAuthorization.getType();
+    public static final Type UserAuthorization = InternalType.UserAuthorization.getType();
+    public static final Type VersionDefinition = InternalType.VersionDefinition.getType();
+    public static final Type ClusterKerberosDescriptor = InternalType.ClusterKerberosDescriptor.getType();
+    public static final Type LoggingQuery = InternalType.LoggingQuery.getType();
+    public static final Type RemoteCluster = InternalType.RemoteCluster.getType();
 
     /**
      * The type name.
@@ -410,7 +446,7 @@ public interface Resource {
     }
 
     // register the type by name
-    private static synchronized void setType(String name, Type type) {
+    private static void setType(String name, Type type) {
       types.put(name, type);
     }
 

@@ -48,19 +48,16 @@ App.StageLabelView = Em.View.extend({
 
   showHostPopup: function (command) {
     var controller = this.get("controller");
-    App.router.get('applicationController').dataLoading().done(function (initValue) {
+    App.router.get('userSettingsController').dataLoading('show_bg').done(function (initValue) {
       var popupView = App.HostPopup.initPopup(command.get('label'), controller, false, command.get('requestId'));
       popupView.set('isNotShowBgChecked', !initValue);
     })
   },
 
-  isStarted: function () {
-    return  (this.get('command') && this.get('command.isStarted'));
-  }.property('command.isStarted'),
+  isStarted: Em.computed.alias('command.isStarted'),
 
-  showLink: function () {
-    return (this.get('command') && this.get('command.showLink'));
-  }.property('command.showLink')
+  showLink: Em.computed.alias('command.showLink')
+
 });
 
 App.StageSuccessView = Em.View.extend({

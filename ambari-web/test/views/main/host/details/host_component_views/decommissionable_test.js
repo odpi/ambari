@@ -21,6 +21,7 @@ require('models/host_component');
 require('views/main/host/details/host_component_view');
 require('mixins');
 require('mixins/main/host/details/host_components/decommissionable');
+var testHelpers = require('test/helpers');
 
 var hostComponentView;
 
@@ -28,13 +29,15 @@ describe('App.Decommissionable', function() {
 
   beforeEach(function() {
     sinon.stub(App.router, 'get', function (k) {
-      if (k === 'mainHostDetailsController.content') return Em.Object.create({
-        hostComponents: [
-          {
-            componentName: 'component'
-          }
-        ]
-      });
+      if (k === 'mainHostDetailsController.content') {
+        return Em.Object.create({
+          hostComponents: [
+            {
+              componentName: 'component'
+            }
+          ]
+        });
+      }
       return Em.get(App.router, k);
     });
   });
@@ -220,4 +223,31 @@ describe('App.Decommissionable', function() {
 
   });
 
+  describe("#getDesiredAdminState()", function() {
+
+    it("content is null", function() {
+      hostComponentView = Em.View.create(App.Decommissionable, {
+        content: null
+      });
+      hostComponentView.getDesiredAdminState();
+      var args = testHelpers.findAjaxRequest('name', 'host.host_component.slave_desired_admin_state');
+      expect(args).not.exists;
+    });
+    it("content is correct", function() {
+      hostComponentView = Em.View.create(App.Decommissionable, {
+        content: Em.Object.create({
+          hostName: 'host1',
+          componentName: 'C1'
+        })
+      });
+      hostComponentView.getDesiredAdminState();
+      var args = testHelpers.findAjaxRequest('name', 'host.host_component.slave_desired_admin_state');
+      expect(args[0]).exists;
+      expect(args[0].sender).to.be.eql(hostComponentView);
+      expect(args[0].data).to.be.eql({
+        hostName: 'host1',
+        componentName: 'C1'
+      });
+    });
+  });
 });

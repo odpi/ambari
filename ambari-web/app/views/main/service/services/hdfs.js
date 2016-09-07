@@ -16,8 +16,21 @@
  */
 
 var App = require('app');
-var date = require('utils/date');
+var date = require('utils/date/date');
 var numberUtils = require('utils/number_utils');
+
+function diskPart(i18nKey, totalKey, usedKey) {
+  return Em.computed(totalKey, usedKey, function () {
+    var text = Em.I18n.t(i18nKey);
+    var total = this.get(totalKey);
+    var used = this.get(usedKey);
+    var percent = total > 0 ? ((used * 100) / total).toFixed(2) : 0;
+    if (percent == "NaN" || percent < 0) {
+      percent = Em.I18n.t('services.service.summary.notAvailable') + " ";
+    }
+    return text.format(numberUtils.bytesToSize(used, 1, 'parseFloat'), numberUtils.bytesToSize(total, 1, 'parseFloat'), percent);
+  });
+}
 
 App.MainDashboardServiceHdfsView = App.MainDashboardServiceView.extend({
   templateName: require('templates/main/service/services/hdfs'),
@@ -27,12 +40,11 @@ App.MainDashboardServiceHdfsView = App.MainDashboardServiceView.extend({
     color: '#0066B3',
     stroke: '#0066B3',
     palette: new Rickshaw.Color.Palette({
-      scheme: [ 'rgba(0,102,179,0)', 'rgba(0,102,179,1)'].reverse()
+      scheme: ['rgba(0,102,179,1)', 'rgba(0,102,179,0)']
     }),
     data: function () {
-      var total = this.get('service.capacityTotal') + 0;
-      var remaining = (this.get('service.capacityRemaining') + 0);
-      var used = total - remaining;
+      var remaining = Number(this.get('service.capacityRemaining'));
+      var used = Number(this.get('service.capacityTotal')) - remaining;
       return [ used, remaining ];
     }.property('service.capacityUsed', 'service.capacityTotal')
   }),
@@ -71,44 +83,28 @@ App.MainDashboardServiceHdfsView = App.MainDashboardServiceView.extend({
     $("[rel='tooltip']").tooltip('destroy');
   },
 
-  dataNodesDead: function () {
-    return this.get('service.dataNodesInstalled');
-  }.property('service.dataNodesInstalled'),
-
-  showJournalNodes: function () {
-    return this.get('service.journalNodes.length') > 0;
-  }.property('service.journalNodes.length'),
+  dataNodesDead: Em.computed.alias('service.dataNodesInstalled'),
 
   journalNodesLive: function () {
     return this.get('service.journalNodes').filterProperty("workStatus", "STARTED").get("length");
   }.property("service.journalNodes.@each.workStatus"),
 
-  journalNodesTotal: function () {
-    return this.get('service.journalNodes').get("length");
-  }.property("service.journalNodes.length"),
+  journalNodesTotal: Em.computed.alias('service.journalNodes.length'),
 
-  dfsTotalBlocks: function(){
-    return this.formatUnavailable(this.get('service.dfsTotalBlocks'));
-  }.property('service.dfsTotalBlocks'),
-  dfsTotalFiles: function(){
-    return this.formatUnavailable(this.get('service.dfsTotalFiles'));
-  }.property('service.dfsTotalFiles'),
-  dfsCorruptBlocks: function(){
-    return this.formatUnavailable(this.get('service.dfsCorruptBlocks'));
-  }.property('service.dfsCorruptBlocks'),
-  dfsMissingBlocks: function(){
-    return this.formatUnavailable(this.get('service.dfsMissingBlocks'));
-  }.property('service.dfsMissingBlocks'),
-  dfsUnderReplicatedBlocks: function(){
-    return this.formatUnavailable(this.get('service.dfsUnderReplicatedBlocks'));
-  }.property('service.dfsUnderReplicatedBlocks'),
+  dfsTotalBlocks: Em.computed.formatUnavailable('service.dfsTotalBlocks'),
 
-  blockErrorsMessage: function() {
-    return Em.I18n.t('dashboard.services.hdfs.blockErrors').format(this.get('dfsCorruptBlocks'), this.get('dfsMissingBlocks'), this.get('dfsUnderReplicatedBlocks'));
-  }.property('dfsCorruptBlocks','dfsMissingBlocks','dfsUnderReplicatedBlocks'),
+  dfsTotalFiles: Em.computed.formatUnavailable('service.dfsTotalFiles'),
+
+  dfsCorruptBlocks: Em.computed.formatUnavailable('service.dfsCorruptBlocks'),
+
+  dfsMissingBlocks: Em.computed.formatUnavailable('service.dfsMissingBlocks'),
+
+  dfsUnderReplicatedBlocks: Em.computed.formatUnavailable('service.dfsUnderReplicatedBlocks'),
+
+  blockErrorsMessage: Em.computed.i18nFormat('dashboard.services.hdfs.blockErrors', 'dfsCorruptBlocks', 'dfsMissingBlocks', 'dfsUnderReplicatedBlocks'),
 
   nodeUptime: function () {
-    var uptime = this.get('service').get('nameNodeStartTime');
+    var uptime = this.get('service.nameNodeStartTime');
     if (uptime && uptime > 0){
       var diff = App.dateTime() - uptime;
       if (diff < 0) {
@@ -121,65 +117,31 @@ App.MainDashboardServiceHdfsView = App.MainDashboardServiceView.extend({
   }.property("service.nameNodeStartTime"),
 
   nodeWebUrl: function () {
-    return "http://" + (App.singleNodeInstall ? App.singleNodeAlias :  this.get('service').get('nameNode').get('publicHostName')) + ":50070";
+    return "http://" + (App.singleNodeInstall ? App.singleNodeAlias :  this.get('service.nameNode.publicHostName')) + ":50070";
   }.property('service.nameNode'),
 
-  nodeHeap: function () {
-    var memUsed = this.get('service').get('jvmMemoryHeapUsed');
-    var memMax = this.get('service').get('jvmMemoryHeapMax');
-    var percent = memMax > 0 ? ((100 * memUsed) / memMax) : 0;
-    return this.t('dashboard.services.hdfs.nodes.heapUsed').format(
-      numberUtils.bytesToSize(memUsed, 1, 'parseFloat'),
-      numberUtils.bytesToSize(memMax, 1, 'parseFloat'),
-      percent.toFixed(1));
-  }.property('service.jvmMemoryHeapUsed', 'service.jvmMemoryHeapMax'),
+  nodeHeap: App.MainDashboardServiceView.formattedHeap('dashboard.services.hdfs.nodes.heapUsed', 'service.jvmMemoryHeapUsed', 'service.jvmMemoryHeapMax'),
 
-  dfsUsedDisk: function () {
-    var text = this.t("dashboard.services.hdfs.capacityUsed");
-    var total = this.get('service.capacityTotal');
-    var dfsUsed = this.get('service.capacityUsed');
-    var percent = total > 0 ? ((dfsUsed * 100) / total).toFixed(2) : 0;
-    if (percent == "NaN" || percent < 0) {
-      percent = Em.I18n.t('services.service.summary.notAvailable') + " ";
-    }
-    return text.format(numberUtils.bytesToSize(dfsUsed, 1, 'parseFloat'), numberUtils.bytesToSize(total, 1, 'parseFloat'), percent);
-  }.property('service.capacityUsed', 'service.capacityTotal'),
-  nonDfsUsedDisk: function () {
-    var text = this.t("dashboard.services.hdfs.capacityUsed");
+  dfsUsedDisk: diskPart('dashboard.services.hdfs.capacityUsed', 'service.capacityTotal', 'service.capacityUsed'),
+
+  nonDfsUsed: function () {
     var total = this.get('service.capacityTotal');
     var remaining = this.get('service.capacityRemaining');
     var dfsUsed = this.get('service.capacityUsed');
-    var nonDfsUsed = total !== null && remaining !== null && dfsUsed !== null ? total - remaining - dfsUsed : null;
-    var percent = total > 0 ? ((nonDfsUsed * 100) / total).toFixed(2) : 0;
-    if (percent == "NaN" || percent < 0) {
-      percent = Em.I18n.t('services.service.summary.notAvailable') + " ";
-    }
-    return text.format(numberUtils.bytesToSize(nonDfsUsed, 1, 'parseFloat'), numberUtils.bytesToSize(total, 1, 'parseFloat'), percent);
-  }.property('service.capacityUsed', 'service.capacityRemaining', 'service.capacityTotal'),
-  remainingDisk: function () {
-    var text = this.t("dashboard.services.hdfs.capacityUsed");
-    var total = this.get('service.capacityTotal');
-    var remaining = this.get('service.capacityRemaining');
-    var percent = total > 0 ? ((remaining * 100) / total).toFixed(2) : 0;
-    if (percent == "NaN" || percent < 0) {
-      percent = Em.I18n.t('services.service.summary.notAvailable') + " ";
-    }
-    return text.format(numberUtils.bytesToSize(remaining, 1, 'parseFloat'), numberUtils.bytesToSize(total, 1, 'parseFloat'), percent);
-  }.property('service.capacityRemaining', 'service.capacityTotal'),
+    return (Em.isNone(total) || Em.isNone(remaining) || Em.isNone(dfsUsed)) ? null : total - remaining - dfsUsed;
+  }.property('service.capacityTotal', 'service.capacityRemaining', 'service.capacityUsed'),
 
-  dataNodeComponent: function () {
-    return Em.Object.create({
-      componentName: 'DATANODE'
-    });
-    //return this.get('service.dataNodes').objectAt(0);
-  }.property(),
+  nonDfsUsedDisk: diskPart('dashboard.services.hdfs.capacityUsed', 'service.capacityTotal', 'nonDfsUsed'),
 
-  nfsGatewayComponent: function () {
-    return Em.Object.create({
-      componentName: 'NFS_GATEWAY'
-    });
-    //return this.get('service.dataNodes').objectAt(0);
-  }.property(),
+  remainingDisk: diskPart('dashboard.services.hdfs.capacityUsed', 'service.capacityTotal', 'service.capacityRemaining'),
+
+  dataNodeComponent: Em.Object.create({
+    componentName: 'DATANODE'
+  }),
+
+  nfsGatewayComponent: Em.Object.create({
+    componentName: 'NFS_GATEWAY'
+  }),
 
   /**
    * Define if NFS_GATEWAY is present in the installed stack
@@ -188,21 +150,28 @@ App.MainDashboardServiceHdfsView = App.MainDashboardServiceView.extend({
   isNfsInStack: function () {
     return App.StackServiceComponent.find().someProperty('componentName', 'NFS_GATEWAY');
   }.property(),
-  
-  journalNodeComponent: function () {
-    return this.get('service.journalNodes').objectAt(0);
-  }.property(),
 
+  journalNodeComponent: Em.Object.create({
+    componentName: 'JOURNALNODE'
+  }),
+
+  /**
+   * @type {string}
+   */
   safeModeStatus: function () {
     var safeMode = this.get('service.safeModeStatus');
-    if (safeMode == null) {
+    if (Em.isNone(safeMode)) {
       return Em.I18n.t("services.service.summary.notAvailable");
-    } else if (safeMode.length == 0) {
+    } else if (safeMode.length === 0) {
       return Em.I18n.t("services.service.summary.safeModeStatus.notInSafeMode");
     } else {
       return Em.I18n.t("services.service.summary.safeModeStatus.inSafeMode");
     }
   }.property('service.safeModeStatus'),
+
+  /**
+   * @type {string}
+   */
   upgradeStatus: function () {
     var upgradeStatus = this.get('service.upgradeStatus');
     var healthStatus = this.get('service.healthStatus');
@@ -215,10 +184,19 @@ App.MainDashboardServiceHdfsView = App.MainDashboardServiceView.extend({
       return Em.I18n.t("services.service.summary.notAvailable");
     }
   }.property('service.upgradeStatus', 'service.healthStatus'),
-  isUpgradeStatusWarning: function () {
-    var upgradeStatus = this.get('service.upgradeStatus');
-    var healthStatus = this.get('service.healthStatus');
-    return upgradeStatus == 'false' && healthStatus == 'green';
-  }.property('service.upgradeStatus', 'service.healthStatus')
 
+  /**
+   * @type {boolean}
+   */
+  isUpgradeStatusWarning: function () {
+    return this.get('service.upgradeStatus') == 'false' && this.get('service.healthStatus') == 'green';
+  }.property('service.upgradeStatus', 'service.healthStatus'),
+
+  isDataNodeCreated: function () {
+    return this.isServiceComponentCreated('DATANODE');
+  }.property('App.router.clusterController.isComponentsStateLoaded'),
+
+  isJournalNodeCreated: function () {
+    return this.isServiceComponentCreated('JOURNALNODE');
+  }.property('App.router.clusterController.isComponentsStateLoaded')
 });

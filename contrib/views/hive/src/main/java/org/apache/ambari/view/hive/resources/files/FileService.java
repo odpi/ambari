@@ -45,6 +45,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.HashMap;
+import org.apache.ambari.view.commons.hdfs.UserService;
 
 /**
  * File access resource
@@ -75,6 +76,7 @@ public class FileService extends BaseService {
   @Path("{filePath:.*}")
   @Produces(MediaType.APPLICATION_JSON)
   public Response getFilePage(@PathParam("filePath") String filePath, @QueryParam("page") Long page) throws IOException, InterruptedException {
+
     LOG.debug("Reading file " + filePath);
     try {
       FileResource file = new FileResource();
@@ -97,6 +99,8 @@ public class FileService extends BaseService {
         String content = getJsonPathContentByUrl(filePath);
         fillFakeFileObject(filePath, file, content);
       } else  {
+
+        filePath = sanitizeFilePath(filePath);
         FilePaginator paginator = new FilePaginator(filePath, getSharedObjectsFactory().getHdfsApi());
 
         fillRealFileObject(filePath, page, file, paginator);
@@ -152,6 +156,7 @@ public class FileService extends BaseService {
   @Path("{filePath:.*}")
   public Response deleteFile(@PathParam("filePath") String filePath) throws IOException, InterruptedException {
     try {
+      filePath = sanitizeFilePath(filePath);
       LOG.debug("Deleting file " + filePath);
       if (getSharedObjectsFactory().getHdfsApi().delete(filePath, false)) {
         return Response.status(204).build();
@@ -173,6 +178,7 @@ public class FileService extends BaseService {
   public Response updateFile(FileResourceRequest request,
                              @PathParam("filePath") String filePath) throws IOException, InterruptedException {
     try {
+      filePath = sanitizeFilePath(filePath);
       LOG.debug("Rewriting file " + filePath);
       FSDataOutputStream output = getSharedObjectsFactory().getHdfsApi().create(filePath, true);
       output.writeBytes(request.file.getFileContent());
@@ -230,9 +236,31 @@ public class FileService extends BaseService {
   }
 
   /**
+   * Checks connection to User HomeDirectory
+   * @param context View Context
+   */
+  public static void userhomeSmokeTest(ViewContext context) {
+    try {
+      UserService  userservice = new UserService(context);
+      userservice.homeDir();
+    } catch (WebApplicationException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new ServiceFormattedException(ex.getMessage(), ex);
+    }
+  }
+
+  /**
    * Wrapper object for json mapping
    */
   public static class FileResourceRequest {
     public FileResource file;
+  }
+
+  private String sanitizeFilePath(String filePath){
+    if (!filePath.startsWith("/") && !filePath.startsWith(".")) {
+      filePath = "/" + filePath;  // some servers strip double slashes in URL
+    }
+    return filePath;
   }
 }

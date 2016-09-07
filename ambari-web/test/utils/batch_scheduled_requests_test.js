@@ -20,6 +20,8 @@ require('utils/helper');
 require('views/common/rolling_restart_view');
 var batchUtils = require('utils/batch_scheduled_requests');
 var modelSetup = require('test/init_model_test');
+var testHelpers = require('test/helpers');
+
 describe('batch_scheduled_requests', function() {
 
   beforeEach(function(){
@@ -99,8 +101,9 @@ describe('batch_scheduled_requests', function() {
       sinon.spy(batchUtils, 'showRollingRestartPopup');
       sinon.spy(batchUtils, 'showWarningRollingRestartPopup');
       sinon.stub(App, 'get', function(k) {
-        if ('components.rollinRestartAllowed' === k)
+        if ('components.rollinRestartAllowed' === k) {
           return ['DATANODE', 'TASKTRACKER', 'NODEMANAGER', 'HBASE_REGIONSERVER', 'SUPERVISOR'];
+        }
         return Em.get(App, k);
       });
     });
@@ -130,73 +133,23 @@ describe('batch_scheduled_requests', function() {
 
   });
 
-  describe('#restartHostComponents', function() {
+  describe('#restartHostComponents', function () {
 
-    beforeEach(function() {
-      sinon.spy($, 'ajax');
-      sinon.stub(App, 'get', function(k) {
-        if ('testMode' === k) return true;
-        return Em.get(App, k);
-      });
+    beforeEach(function () {
+      sinon.stub(App.HostComponent, 'find').returns([Em.Object.create({componentName: 'RESOURCEMANAGER', hostName: '1'})]);
+    });
+    afterEach(function () {
+      App.HostComponent.find.restore();
     });
 
-    afterEach(function() {
-      $.ajax.restore();
-      App.get.restore();
+    it('should make batch request to refresh YARN queues', function () {
+      batchUtils.restartHostComponents([Em.Object.create({componentName: 'HIVE_SERVER_INTERACTIVE'})]);
+      expect(testHelpers.findAjaxRequest('name', 'common.batch.request_schedules')).to.exists;
     });
 
-    var tests = Em.A([
-      {
-        hostComponentList: Em.A([
-          Em.Object.create({
-            componentName: 'NAMENODE',
-            hostName: 'h1'
-          }),
-          Em.Object.create({
-            componentName: 'NAMENODE',
-            hostName: 'h2'
-          })
-        ]),
-        e: {
-          ajaxCalledOnce: true,
-          resource_filters: [{"service_name": "HDFS", "component_name":"NAMENODE","hosts":"h1,h2"}]
-        },
-        m: '1 component on 2 hosts'
-      },
-      {
-        hostComponentList: Em.A([
-          Em.Object.create({
-            componentName: 'NAMENODE',
-            hostName: 'h1'
-          }),
-          Em.Object.create({
-            componentName: 'NAMENODE',
-            hostName: 'h2'
-          }),
-          Em.Object.create({
-            componentName: 'HBASE_MASTER',
-            hostName: 'h2'
-          })
-        ]),
-        e: {
-          ajaxCalledOnce: true,
-          resource_filters: [{"service_name": "HDFS", "component_name":"NAMENODE","hosts":"h1,h2"},{"service_name": "HBASE", "component_name":"HBASE_MASTER","hosts":"h2"}]
-        },
-        m: '1 component on 2 hosts, 1 on 1 host'
-      }
-    ]);
-
-    tests.forEach(function(test) {
-      it(test.m, function() {
-        batchUtils.restartHostComponents(test.hostComponentList);
-        expect($.ajax.calledOnce).to.equal(test.e.ajaxCalledOnce);
-        expect( JSON.parse($.ajax.args[0][0].data)['Requests/resource_filters']).to.eql(test.e.resource_filters);
-      });
-    });
-
-    it('Empty data', function() {
-      batchUtils.restartHostComponents([]);
-      expect($.ajax.called).to.equal(false);
+    it('should make single request without refresh YARN queues', function () {
+      batchUtils.restartHostComponents([Em.Object.create({componentName: 'NAMENODE'})]);
+      expect(testHelpers.findAjaxRequest('name', 'restart.hostComponents')).to.exists;
     });
 
   });

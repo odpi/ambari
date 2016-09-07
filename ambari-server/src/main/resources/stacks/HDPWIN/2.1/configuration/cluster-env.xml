@@ -19,7 +19,6 @@
  * limitations under the License.
  */
 -->
-
 <configuration>
   <property>
     <name>hadoop.user.name</name>
@@ -28,9 +27,12 @@
     <property-type>USER</property-type>
     <description>User to run Hadoop services under</description>
     <value-attributes>
+      <type>user</type>
+      <visible>false</visible>
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property require-input="true">
     <name>hadoop.user.password</name>
@@ -39,19 +41,23 @@
     <property-type>PASSWORD</property-type>
     <description>Password for hadoop user</description>
     <value-attributes>
+      <type>password</type>
       <overridable>false</overridable>
       <editable-only-at-install>true</editable-only-at-install>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>security_enabled</name>
     <value>false</value>
     <description>Hadoop Security</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>kerberos_domain</name>
     <value>EXAMPLE.COM</value>
     <description>Kerberos realm.</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>ignore_groupsusers_create</name>
@@ -60,24 +66,42 @@
     <value>false</value>
     <description>Whether to ignore failures on users and group creation</description>
     <value-attributes>
+      <visible>false</visible>
+      <type>boolean</type>
       <overridable>false</overridable>
     </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>smokeuser</name>
+    <display-name>Smoke User</display-name>
     <value>ambari-qa</value>
     <property-type>USER</property-type>
     <description>User executing service checks</description>
+    <value-attributes>
+      <type>user</type>
+      <visible>false</visible>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>smokeuser_keytab</name>
     <value>/etc/security/keytabs/smokeuser.headless.keytab</value>
     <description>Path to smoke test user keytab file</description>
+    <on-ambari-upgrade add="true"/>
   </property>
   <property>
     <name>user_group</name>
+    <display-name>Hadoop Group</display-name>
     <value>hadoop</value>
     <property-type>GROUP</property-type>
     <description>Hadoop user group.</description>
+    <value-attributes>
+      <type>user</type>
+      <visible>false</visible>
+      <overridable>false</overridable>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
 </configuration>

@@ -41,6 +41,9 @@ App.MainChartsHeatmapController = Em.Controller.extend(App.WidgetSectionMixin, {
 
   loadRacksUrlParams: 'fields=Hosts/rack_info,Hosts/host_name,Hosts/public_host_name,Hosts/os_type,Hosts/ip,host_components,metrics/disk,metrics/cpu/cpu_system,metrics/cpu/cpu_user,metrics/memory/mem_total,metrics/memory/mem_free&minimal_response=true',
 
+  /**
+   * @type {string}
+   */
   loadHeatmapsUrlParams: function() {
     var serviceName = this.get('content.serviceName');
     if (serviceName) {
@@ -58,13 +61,7 @@ App.MainChartsHeatmapController = Em.Controller.extend(App.WidgetSectionMixin, {
   /**
    * Heatmap widget currently shown on the page
    */
-  activeWidget: function() {
-    if (this.get('widgets') && this.get('widgets').length) {
-      return this.get('widgets')[0];
-    } else {
-      return false;
-    }
-  }.property('widgets.@each'),
+  activeWidget: Em.computed.alias('widgets.firstObject'),
 
 
   /**
@@ -92,23 +89,24 @@ App.MainChartsHeatmapController = Em.Controller.extend(App.WidgetSectionMixin, {
    * @param {Array} allHeatmaps
    * @return {Array}
    */
-  categorizeByServiceName: function(allHeatmaps) {
+  categorizeByServiceName: function (allHeatmaps) {
     var categories = [];
-    allHeatmaps.forEach(function(_heatmap){
-    var serviceNames = JSON.parse(_heatmap.metrics).mapProperty('service_name').uniq();
-      serviceNames.forEach(function(_serviceName){
-        var category = categories.findProperty('serviceName',_serviceName);
+
+    allHeatmaps.forEach(function (_heatmap) {
+      var serviceNames = JSON.parse(_heatmap.metrics).mapProperty('service_name').uniq();
+      serviceNames.forEach(function (_serviceName) {
+        var category = categories.findProperty('serviceName', _serviceName);
         if (!category) {
           categories.pushObject(Em.Object.create({
             serviceName: _serviceName,
-            displayName: _serviceName === 'STACK' ? 'Host' : App.StackService.find().findProperty('serviceName',_serviceName).get('displayName'),
+            displayName: _serviceName === 'STACK' ? 'Host' : App.format.role(_serviceName, true),
             heatmaps: [_heatmap]
           }));
         } else {
           category.get('heatmaps').pushObject(_heatmap);
         }
-      },this);
-    },this);
+      }, this);
+    }, this);
     return categories;
   },
 
@@ -180,8 +178,13 @@ App.MainChartsHeatmapController = Em.Controller.extend(App.WidgetSectionMixin, {
     this.set('racks', racks);
   },
 
+  /**
+   * @param {Array} hosts
+   * @returns {Object} rackMap
+   */
   indexByRackId: function (hosts) {
     var rackMap = {};
+
     hosts.forEach(function (host) {
       var rackId = host.rack;
       if(!rackMap[rackId]) {
@@ -198,6 +201,11 @@ App.MainChartsHeatmapController = Em.Controller.extend(App.WidgetSectionMixin, {
     return rackMap;
   },
 
+  /**
+   *
+   * @param {Object} rackMap
+   * @returns {Array} racks
+   */
   toList: function (rackMap) {
     var racks = [];
     var i = 0;
@@ -251,9 +259,7 @@ App.MainChartsHeatmapController = Em.Controller.extend(App.WidgetSectionMixin, {
     });
   },
 
-  hostToSlotMap: function () {
-    return this.get('selectedMetric.hostToSlotMap');
-  }.property('selectedMetric.hostToSlotMap'),
+  hostToSlotMap: Em.computed.alias('selectedMetric.hostToSlotMap'),
 
   /**
    * return class name for to be used for containing each rack.

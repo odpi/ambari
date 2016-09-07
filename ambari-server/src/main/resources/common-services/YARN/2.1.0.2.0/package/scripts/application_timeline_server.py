@@ -19,14 +19,18 @@ Ambari Agent
 
 """
 
-from resource_management import *
-from resource_management.libraries.functions import conf_select
-from resource_management.libraries.functions import hdp_select
-from resource_management.libraries.functions.version import compare_versions, format_hdp_stack_version
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions import conf_select, stack_select
+from resource_management.libraries.functions.constants import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.libraries.functions import check_process_status
 from resource_management.libraries.functions.security_commons import build_expectations, \
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties,\
   FILE_TYPE_XML
 from resource_management.libraries.functions.format import format
+from resource_management.core.logger import Logger
+from resource_management.core.resources.system import Execute
+
 from yarn import yarn
 from service import service
 from ambari_commons import OSConst
@@ -37,13 +41,13 @@ class ApplicationTimelineServer(Script):
   def install(self, env):
     self.install_packages(env)
 
-  def start(self, env, rolling_restart=False):
+  def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     self.configure(env) # FOR SECURITY
     service('timelineserver', action='start')
 
-  def stop(self, env, rolling_restart=False):
+  def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     service('timelineserver', action='stop')
@@ -62,24 +66,22 @@ class ApplicationTimelineServerWindows(ApplicationTimelineServer):
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class ApplicationTimelineServerDefault(ApplicationTimelineServer):
-  def get_stack_to_component(self):
-    return {"HDP": "hadoop-yarn-timelineserver"}
+  def get_component_name(self):
+    return "hadoop-yarn-timelineserver"
 
-  def pre_rolling_restart(self, env):
-    Logger.info("Executing Rolling Upgrade pre-restart")
+  def pre_upgrade_restart(self, env, upgrade_type=None):
+    Logger.info("Executing Stack Upgrade pre-restart")
     import params
     env.set_params(params)
 
-    if params.version and compare_versions(format_hdp_stack_version(params.version), '2.2.0.0') >= 0:
+    if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version):
       conf_select.select(params.stack_name, "hadoop", params.version)
-      hdp_select.select("hadoop-yarn-timelineserver", params.version)
+      stack_select.select("hadoop-yarn-timelineserver", params.version)
 
   def status(self, env):
     import status_params
     env.set_params(status_params)
-    Execute(format("mv {yarn_historyserver_pid_file_old} {yarn_historyserver_pid_file}"),
-            only_if = format("test -e {yarn_historyserver_pid_file_old}", user=status_params.yarn_user))
-    functions.check_process_status(status_params.yarn_historyserver_pid_file)
+    check_process_status(status_params.yarn_historyserver_pid_file)
 
   def security_status(self, env):
     import status_params
@@ -142,6 +144,19 @@ class ApplicationTimelineServerDefault(ApplicationTimelineServer):
     else:
       self.put_structured_out({"securityState": "UNSECURED"})
 
+  def get_log_folder(self):
+    import params
+    return params.yarn_log_dir
+  
+  def get_user(self):
+    import params
+    return params.yarn_user
+
+  def get_pid_files(self):
+    import status_params
+    Execute(format("mv {status_params.yarn_historyserver_pid_file_old} {status_params.yarn_historyserver_pid_file}"),
+            only_if = format("test -e {status_params.yarn_historyserver_pid_file_old}", user=status_params.yarn_user))
+    return [status_params.yarn_historyserver_pid_file]
 
 if __name__ == "__main__":
   ApplicationTimelineServer().execute()

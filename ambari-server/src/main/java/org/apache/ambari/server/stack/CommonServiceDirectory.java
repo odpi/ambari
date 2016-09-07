@@ -45,15 +45,30 @@ public class CommonServiceDirectory extends ServiceDirectory {
 
   @Override
   /**
-   * Parse common service directory
+   * Obtain the advisor name.
+   *
+   * @return advisor name
+   */
+  public String getAdvisorName(String serviceName) {
+    if (getAdvisorFile() == null || serviceName == null)
+      return null;
+
+    File serviceVersionDir = new File(getAbsolutePath());
+    String serviceVersion = serviceVersionDir.getName().replaceAll("\\.", "");
+
+    String advisorName = serviceName + serviceVersion + "ServiceAdvisor";
+    return advisorName;
+  }
+
+  @Override
+  /**
+   * Calculate the common service directories
    * packageDir Format: common-services/<serviceName>/<serviceVersion>/package
    * Example:
    *  directory: "/var/lib/ambari-server/resources/common-services/HDFS/1.0"
    *  packageDir: "common-services/HDFS/1.0/package"
-   *
-   * @throws AmbariException
    */
-  protected void parsePath() throws AmbariException {
+  protected void calculateDirectories() {
     File serviceVersionDir = new File(getAbsolutePath());
     File serviceDir = serviceVersionDir.getParentFile();
 
@@ -68,6 +83,15 @@ public class CommonServiceDirectory extends ServiceDirectory {
       LOG.debug(String.format("Service package folder %s for common service %s does not exist.",
           absPackageDir, serviceId ));
     }
-    parseMetaInfoFile();
+
+    File absUpgradesDir = new File(getAbsolutePath() + File.separator + UPGRADES_FOLDER_NAME);
+    if(absUpgradesDir.isDirectory()) {
+      upgradesDir = absUpgradesDir;
+      LOG.debug(String.format("Service upgrades folder for common service %s has been resolved to %s",
+          serviceId, upgradesDir));
+    } else {
+      LOG.debug(String.format("Service upgrades folder %s for common service %s does not exist.",
+          absUpgradesDir, serviceId ));
+    }
   }
 }

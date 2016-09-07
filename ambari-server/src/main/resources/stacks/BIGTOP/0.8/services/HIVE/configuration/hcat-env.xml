@@ -19,8 +19,7 @@
  * limitations under the License.
  */
 -->
-
-<configuration>
+<configuration supports_adding_forbidden="true">
   <!-- hcat-env.sh -->
   <property>
     <name>content</name>
@@ -52,6 +51,9 @@
       USER={{hcat_user}}
       METASTORE_PORT={{hive_metastore_port}}
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-  
 </configuration>

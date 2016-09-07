@@ -33,6 +33,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
    * @type {Ember.Select}
    */
   hostSelectView: Em.Select.extend({
+    elementId: 'hosts-check-select',
 
     selectionBinding: "parentView.category",
 
@@ -108,18 +109,14 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
    * Same to <code>bodyController.warningsByHost</code>
    * @type {Ember.Enumerable}
    */
-  warningsByHost: function () {
-    return this.get('bodyController.warningsByHost');
-  }.property('bodyController.warningsByHost'),
+  warningsByHost: Em.computed.alias('bodyController.warningsByHost'),
 
   /**
    * List of all warnings
    * Same to <code>bodyController.warnings</code>
    * @type {Ember.Enumerable}
    */
-  warnings: function () {
-    return this.get('bodyController.warnings');
-  }.property('bodyController.warnings'),
+  warnings: Em.computed.alias('bodyController.warnings'),
 
   /**
    * Selected category
@@ -135,7 +132,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
     var warningsByHost = this.get('warningsByHost');
     if (Em.isNone(warningsByHost)) return [];
     var category = warningsByHost.findProperty('name', this.get('category'));
-    return Em.isNone(category) ? []: category.warnings;
+    return Em.isNone(category) ? [] : category.warnings || [];
   }.property('warningsByHost', 'category'),
 
   /**
@@ -155,7 +152,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.thp'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.thp.message'),
         type: Em.I18n.t('common.issues'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.thp'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.thp')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.enabled'),
         category: 'thp'
       }),
@@ -164,7 +161,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.jdk'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.jdk.message'),
         type: Em.I18n.t('common.issues'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.jdk'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.jdk')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.exists'),
         category: 'jdk'
       }),
@@ -173,7 +170,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.disk'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.disk.message'),
         type: Em.I18n.t('common.issues'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.disk'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.disk')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.exists'),
         category: 'disk'
       }),
@@ -182,7 +179,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.repositories'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.repositories.message'),
         type: Em.I18n.t('common.issues'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.repositories'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.repositories')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.invalid'),
         category: 'repositories'
       }),
@@ -191,7 +188,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.firewall'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.firewall.message'),
         type: Em.I18n.t('common.issues'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.firewall'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.firewall')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.running'),
         category: 'firewall'
       }),
@@ -200,7 +197,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.process'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.processes.message'),
         type: Em.I18n.t('common.process'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.processes'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.processes')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.running'),
         category: 'process'
       }),
@@ -209,7 +206,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.package'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.packages.message'),
         type: Em.I18n.t('common.package'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.packages'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.packages')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.installed'),
         category: 'package'
       }),
@@ -218,7 +215,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.fileAndFolder'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.fileFolders.message'),
         type: Em.I18n.t('common.path'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.filesAndFolders'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.filesAndFolders')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.exists'),
         category: 'fileFolders'
       }),
@@ -227,7 +224,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.service'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.services.message'),
         type: Em.I18n.t('common.service'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.services'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.services')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.notRunning'),
         category: 'service'
       }),
@@ -236,7 +233,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.user'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.users.message'),
         type: Em.I18n.t('common.user'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.users'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.users')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.exists'),
         category: 'user'
       }),
@@ -245,7 +242,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.misc'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.misc.message'),
         type: Em.I18n.t('installer.step3.hostWarningsPopup.misc.umask'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.empty.misc'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.empty.misc')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.exists'),
         category: 'misc'
       }),
@@ -254,7 +251,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.alternatives'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.alternatives.message'),
         type: Em.I18n.t('installer.step3.hostWarningsPopup.alternatives.umask'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.alternatives.empty'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.alternatives.empty')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.exists'),
         category: 'alternatives'
       }),
@@ -262,7 +259,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         warnings: categoryWarnings.filterProperty('category', 'reverseLookup'),
         title: Em.I18n.t('installer.step3.hostWarningsPopup.reverseLookup'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.reverseLookup.message'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.reverseLookup.empty'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.reverseLookup.empty')),
         category: 'reverseLookup'
       }),
       Em.Object.create({
@@ -270,7 +267,7 @@ App.WizardStep3HostWarningPopupBody = Em.View.extend({
         title: Em.I18n.t('installer.step3.hostWarningsPopup.resolution.validation.name'),
         message: Em.I18n.t('installer.step3.hostWarningsPopup.resolution.validation.message'),
         type: Em.I18n.t('common.issues'),
-        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.resolution.validation.empty'),
+        emptyName: Em.I18n.t('installer.step3.hostWarningsPopup.emptyMessage').format(Em.I18n.t('installer.step3.hostWarningsPopup.resolution.validation.empty')),
         action: Em.I18n.t('installer.step3.hostWarningsPopup.action.failed'),
         category: 'hostNameResolution'
       })

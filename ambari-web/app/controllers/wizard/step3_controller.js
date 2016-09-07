@@ -71,6 +71,8 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
 
   registrationStartedAt: null,
 
+  hostCheckResult: null,
+
   requestId: 0,
 
   /**
@@ -78,9 +80,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * Based on <code>installOptions.manualInstall</code>
    * @type {number}
    */
-  registrationTimeoutSecs: function () {
-    return this.get('content.installOptions.manualInstall') ? 15 : 120;
-  }.property('content.installOptions.manualInstall'),
+  registrationTimeoutSecs: Em.computed.ifThenElse('content.installOptions.manualInstall', 15, 120),
 
   /**
    * Bootstrap calls are stopped
@@ -105,7 +105,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @type {bool}
    */
   isRetryDisabled: function() {
-    return (this.get('isBackDisabled')) ? this.get('isBackDisabled') : !this.get('bootHosts').filterProperty('bootStatus', 'FAILED').length;
+    return this.get('isBackDisabled') ? this.get('isBackDisabled') : !this.get('bootHosts').filterProperty('bootStatus', 'FAILED').length;
   }.property('bootHosts.@each.bootStatus', 'isBackDisabled'),
 
   /**
@@ -113,16 +113,14 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @return {bool}
    */
   isBackDisabled: function () {
-    return (this.get('isRegistrationInProgress') || !this.get('isWarningsLoaded')) && !this.get('isBootstrapFailed');
+    return (this.get('isRegistrationInProgress') || !this.get('isWarningsLoaded')) && !this.get('isBootstrapFailed') || App.get('router.btnClickInProgress');
   }.property('isRegistrationInProgress', 'isWarningsLoaded', 'isBootstrapFailed'),
 
   /**
    * Controller is using in Add Host Wizard
    * @return {bool}
    */
-  isAddHostWizard: function () {
-    return this.get('content.controllerName') === 'addHostController';
-  }.property('content.controllerName'),
+  isAddHostWizard: Em.computed.equal('content.controllerName', 'addHostController'),
 
   /**
    * @type {bool}
@@ -191,17 +189,13 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * Are hosts warnings loaded
    * @type {bool}
    */
-  isWarningsLoaded: function () {
-    return this.get('isJDKWarningsLoaded') && this.get('isHostsWarningsLoaded');
-  }.property('isJDKWarningsLoaded', 'isHostsWarningsLoaded'),
+  isWarningsLoaded: Em.computed.and('isJDKWarningsLoaded', 'isHostsWarningsLoaded'),
 
   /**
    * Check are hosts have any warnings
    * @type {bool}
    */
-  isHostHaveWarnings: function () {
-    return this.get('warnings.length') > 0;
-  }.property('warnings'),
+  isHostHaveWarnings: Em.computed.gt('warnings.length', 0),
 
   /**
    * Should warnings-box be visible
@@ -210,6 +204,10 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   isWarningsBoxVisible: function () {
     return (App.get('testMode')) ? true : !this.get('isRegistrationInProgress');
   }.property('isRegistrationInProgress'),
+
+  isNextButtonDisabled: Em.computed.or('App.router.btnClickInProgress', 'isSubmitDisabled'),
+
+  isBackButtonDisabled: Em.computed.or('App.router.btnClickInProgress', 'isBackDisabled'),
 
   /**
    * Progress value for "update hosts status" process
@@ -236,7 +234,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       } else {
         this.set('bootHosts', this.get('hosts'));
         if (App.get('testMode')) {
-          this.startHostcheck();
+          this.startHostcheck(this.get('hosts'));
           this.get('bootHosts').setEach('cpu', '2');
           this.get('bootHosts').setEach('memory', '2000000');
           this.set('isSubmitDisabled', false);
@@ -276,6 +274,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
         'sshKey': this.get('content.installOptions.sshKey'),
         'hosts': this.getBootstrapHosts(),
         'user': this.get('content.installOptions.sshUser'),
+        'sshPort': this.get('content.installOptions.sshPort'),
         'userRunAs': App.get('supports.customizeAgentUserAccount') ? this.get('content.installOptions.agentUser') : 'root'
     });
     App.router.get(this.get('content.controllerName')).launchBootstrap(bootStrapData, function (requestId) {
@@ -308,7 +307,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method loadStep
    */
   loadStep: function () {
-    console.log("TRACE: Loading step3: Confirm Hosts");
     var wizardController = this.get('wizardController');
     var previousStep = wizardController && wizardController.get('previousStep');
     var currentStep = wizardController && wizardController.get('currentStep');
@@ -404,9 +402,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    */
   removeSelectedHosts: function () {
     var selectedHosts = this.get('hosts').filterProperty('isChecked', true);
-    selectedHosts.forEach(function (_hostInfo) {
-      console.log('Removing:  ' + _hostInfo.name);
-    });
     return this.removeHosts(selectedHosts);
   },
 
@@ -459,6 +454,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
         'sshKey': this.get('content.installOptions.sshKey'),
         'hosts': hosts.mapProperty('name'),
         'user': this.get('content.installOptions.sshUser'),
+        'sshPort': this.get('content.installOptions.sshPort'),
         'userRunAs': App.get('supports.customizeAgentUserAccount') ? this.get('content.installOptions.agentUser') : 'root'
       });
     this.set('numPolls', 0);
@@ -542,6 +538,16 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   }.observes('isBackDisabled'),
 
   /**
+   * Close reload popup on exit from Confirm Hosts step
+   * @method closeReloadPopupOnExit
+   */
+  closeReloadPopupOnExit: function () {
+    if (this.get('stopBootstrap')) {
+      this.closeReloadPopup();
+    }
+  }.observes('stopBootstrap'),
+
+  /**
    * Do bootstrap calls
    * @method doBootstrap
    * @return {$.ajax|null}
@@ -558,8 +564,8 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       data: {
         bootRequestId: this.get('content.installOptions.bootRequestId'),
         numPolls: this.get('numPolls'),
-        errorLogMessage: 'Bootstrap failed',
         callback: this.doBootstrap,
+        timeout: 3000,
         shouldUseDefaultHandler: true
       },
       success: 'doBootstrapSuccessCallback',
@@ -577,7 +583,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     var pollingInterval = 3000;
     this.reloadSuccessCallback();
     if (Em.isNone(data.hostsStatus)) {
-      console.log('Invalid response, setting timeout');
       window.setTimeout(function () {
         self.doBootstrap()
       }, pollingInterval);
@@ -587,7 +592,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       if (!(data.hostsStatus instanceof Array)) {
         data.hostsStatus = [ data.hostsStatus ];
       }
-      console.log("TRACE: In success function for the GET bootstrap call");
       var keepPolling = this.parseHostInfo(data.hostsStatus);
 
       // Single host : if the only hostname is invalid (data.status == 'ERROR')
@@ -631,7 +635,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   startRegistration: function () {
     if (Em.isNone(this.get('registrationStartedAt'))) {
       this.set('registrationStartedAt', App.dateTime());
-      console.log('registration started at ' + this.get('registrationStartedAt'));
       this.isHostsRegistered();
     }
   },
@@ -651,8 +654,8 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       success: 'isHostsRegisteredSuccessCallback',
       error: 'reloadErrorCallback',
       data: {
-        errorLogMessage: 'Error: Getting registered host information from the server',
         callback: this.isHostsRegistered,
+        timeout: 3000,
         shouldUseDefaultHandler: true
       }
     });
@@ -664,12 +667,10 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method isHostsRegisteredSuccessCallback
    */
   isHostsRegisteredSuccessCallback: function (data) {
-    console.log('registration attempt...');
     var hosts = this.get('bootHosts');
     var jsonData = data;
     this.reloadSuccessCallback();
     if (!jsonData) {
-      console.warn("Error: jsonData is null");
       return;
     }
 
@@ -715,7 +716,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     }, this);
 
     if (stopPolling) {
-      this.startHostcheck();
+      this.startHostcheck(hosts);
     }
     else {
       if (hosts.someProperty('bootStatus', 'RUNNING') || App.dateTime() - this.get('registrationStartedAt') < this.get('registrationTimeoutSecs') * 1000) {
@@ -727,12 +728,11 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       }
       else {
         // registration timed out.  mark all REGISTERING hosts to FAILED
-        console.log('registration timed out');
         hosts.filterProperty('bootStatus', 'REGISTERING').forEach(function (_host) {
           _host.set('bootStatus', 'FAILED');
           _host.set('bootLog', (_host.get('bootLog') != null ? _host.get('bootLog') : '') + Em.I18n.t('installer.step3.hosts.bootLog.failed'));
         });
-        this.startHostcheck();
+        this.startHostcheck(hosts);
       }
     }
   },
@@ -855,7 +855,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     }
   },
   doCheckJDKerrorCallback: function () {
-    console.log('INFO: Doing JDK check for host failed');
     this.set('isJDKWarningsLoaded', true);
   },
   parseJDKCheckResults: function (data) {
@@ -925,10 +924,14 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   },
 
 
-  startHostcheck: function() {
-    this.set('isWarningsLoaded', false);
-    this.getHostNameResolution();
-    this.checkHostJDK();
+  startHostcheck: function(hosts) {
+    if (!hosts.everyProperty('bootStatus', 'FAILED')) {
+      this.set('isWarningsLoaded', false);
+      this.getHostNameResolution();
+      this.checkHostJDK();
+    } else {
+      this.stopHostCheck();
+    }
   },
 
   getHostNameResolution: function () {
@@ -1065,9 +1068,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method getHostCheckTasksSuccess
    */
   getHostCheckTasksSuccess: function (data) {
-    console.log('checking attempt...');
     if (!data) {
-      console.warn("Error: jsonData is null");
       return;
     }
     if (["FAILED", "COMPLETED", "TIMEDOUT"].contains(data.Requests.request_status)) {
@@ -1081,6 +1082,12 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
             installedPackages: installed_packages ? installed_packages : []
           };
         }));
+
+        this.set("hostCheckResult", data); //store the data so that it can be used later on in the getHostInfo handling logic.
+        /**
+         * Still need to get host info for checks that the host check does not perform currently
+         * Such as the OS type check and the disk space check
+         * */
         this.getHostInfo();
       } else if (data.Requests.inputs.indexOf("host_resolution_check") != -1) {
         this.parseHostNameResolution(data);
@@ -1091,6 +1098,286 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     }
   },
 
+  parseHostCheckWarnings: function (data) {
+    data = App.get('testMode') ? data : this.filterHostsData(data);
+    var warnings = [];
+    var warning;
+    var hosts = [];
+    var warningCategories = {
+      fileFoldersWarnings: {},
+      packagesWarnings: {},
+      processesWarnings: {},
+      servicesWarnings: {},
+      usersWarnings: {},
+      alternativeWarnings: {}
+    };
+
+    var hostsPackagesData = this.get('hostsPackagesData');
+    data.tasks.sortPropertyLight('Tasks.host_name').forEach(function (_task) {
+      var hostName = _task.Tasks.host_name;
+      var host = {
+        name: hostName,
+        warnings: []
+      };
+
+      if (!_task.Tasks.structured_out || !_task.Tasks.structured_out.last_agent_env_check) {
+        return;
+      }
+
+      var lastAgentEnvCheck = _task.Tasks.structured_out.last_agent_env_check;
+
+      //parse all directories and files warnings for host
+      var stackFoldersAndFiles = lastAgentEnvCheck.stackFoldersAndFiles || [];
+      stackFoldersAndFiles.forEach(function (path) {
+        warning = warningCategories.fileFoldersWarnings[path.name];
+        if (warning) {
+          warning.hosts.push(hostName);
+          warning.hostsLong.push(hostName);
+          warning.onSingleHost = false;
+        } else {
+          warningCategories.fileFoldersWarnings[path.name] = warning = {
+            name: path.name,
+            hosts: [hostName],
+            hostsLong: [hostName],
+            category: 'fileFolders',
+            onSingleHost: true
+          };
+        }
+        host.warnings.push(warning);
+      }, this);
+
+      //parse all package warnings for host
+      var _hostPackagesData = hostsPackagesData.findProperty('hostName', hostName);
+
+      if (_hostPackagesData) {
+        _hostPackagesData.installedPackages.forEach(function (_package) {
+          warning = warningCategories.packagesWarnings[_package.name];
+          if (warning) {
+            warning.hosts.push(hostName);
+            warning.hostsLong.push(hostName);
+            warning.version = _package.version;
+            warning.onSingleHost = false;
+          } else {
+            warningCategories.packagesWarnings[_package.name] = warning = {
+              name: _package.name,
+              version: _package.version,
+              hosts: [hostName],
+              hostsLong: [hostName],
+              category: 'packages',
+              onSingleHost: true
+            };
+          }
+          host.warnings.push(warning);
+        }, this);
+      }
+
+      //parse all process warnings for host
+      var hostHealth = lastAgentEnvCheck.hostHealth;
+
+      var liveServices = null;
+      var javaProcs = null;
+
+      if(hostHealth) {
+        if(hostHealth.activeJavaProcs)
+          javaProcs = hostHealth.activeJavaProcs;
+        if(hostHealth.liveServices)
+          liveServices = hostHealth.liveServices;
+      }
+
+      if (javaProcs) {
+        javaProcs.forEach(function (process) {
+          warning = warningCategories.processesWarnings[process.pid];
+          if (warning) {
+            warning.hosts.push(hostName);
+            warning.hostsLong.push(hostName);
+            warning.onSingleHost = false;
+          } else {
+            warningCategories.processesWarnings[process.pid] = warning = {
+              name: (process.command.substr(0, 35) + '...'),
+              hosts: [hostName],
+              hostsLong: [hostName],
+              category: 'processes',
+              user: process.user,
+              pid: process.pid,
+              command: '<table><tr><td style="word-break: break-all;">' +
+                ((process.command.length < 500) ? process.command : process.command.substr(0, 230) + '...' +
+                  '<p style="text-align: center">................</p>' +
+                  '...' + process.command.substr(-230)) + '</td></tr></table>',
+              onSingleHost: true
+            };
+          }
+          host.warnings.push(warning);
+        }, this);
+      }
+
+      //parse all service warnings for host
+      if (liveServices) {
+        liveServices.forEach(function (service) {
+          if (service.status === 'Unhealthy') {
+            warning = warningCategories.servicesWarnings[service.name];
+            if (warning) {
+              warning.hosts.push(hostName);
+              warning.hostsLong.push(hostName);
+              warning.onSingleHost = false;
+            } else {
+              warningCategories.servicesWarnings[service.name] = warning = {
+                name: service.name,
+                hosts: [hostName],
+                hostsLong: [hostName],
+                category: 'services',
+                onSingleHost: true
+              };
+            }
+            host.warnings.push(warning);
+          }
+        }, this);
+      }
+      //parse all user warnings for host
+      var existingUsers = lastAgentEnvCheck.existingUsers;
+      if (existingUsers) {
+        existingUsers.forEach(function (user) {
+          warning = warningCategories.usersWarnings[user.name];
+          if (warning) {
+            warning.hosts.push(hostName);
+            warning.hostsLong.push(hostName);
+            warning.onSingleHost = false;
+          } else {
+            warningCategories.usersWarnings[user.name] = warning = {
+              name: user.name,
+              hosts: [hostName],
+              hostsLong: [hostName],
+              category: 'users',
+              onSingleHost: true
+            };
+          }
+          host.warnings.push(warning);
+        }, this);
+      }
+
+      //parse misc warnings for host
+      var umask = lastAgentEnvCheck.umask;
+      if (umask && umask > 23) {
+        warning = warnings.filterProperty('category', 'misc').findProperty('name', umask);
+        if (warning) {
+          warning.hosts.push(hostName);
+          warning.hostsLong.push(hostName);
+          warning.onSingleHost = false;
+        } else {
+          warning = {
+            name: umask,
+            hosts: [hostName],
+            hostsLong: [hostName],
+            category: 'misc',
+            onSingleHost: true
+          };
+          warnings.push(warning);
+        }
+        host.warnings.push(warning);
+      }
+
+      var firewallRunning = lastAgentEnvCheck.firewallRunning;
+      if (firewallRunning !== null && firewallRunning) {
+        var name = lastAgentEnvCheck.firewallName + " Running";
+        warning = warnings.filterProperty('category', 'firewall').findProperty('name', name);
+        if (warning) {
+          warning.hosts.push(hostName);
+          warning.hostsLong.push(hostName);
+          warning.onSingleHost = false;
+        } else {
+          warning = {
+            name: name,
+            hosts: [hostName],
+            hostsLong: [hostName],
+            category: 'firewall',
+            onSingleHost: true
+          };
+          warnings.push(warning);
+        }
+        host.warnings.push(warning);
+      }
+
+      if (lastAgentEnvCheck.alternatives) {
+        lastAgentEnvCheck.alternatives.forEach(function (alternative) {
+          warning = warningCategories.alternativeWarnings[alternative.name];
+          if (warning) {
+            warning.hosts.push(hostName);
+            warning.hostsLong.push(hostName);
+            warning.onSingleHost = false;
+          } else {
+            warningCategories.alternativeWarnings[alternative.name] = warning = {
+              name: alternative.name,
+              target: alternative.target,
+              hosts: [hostName],
+              hostsLong: [hostName],
+              category: 'alternatives',
+              onSingleHost: true
+            };
+          }
+          host.warnings.push(warning);
+        }, this);
+      }
+
+      if (lastAgentEnvCheck.reverseLookup === false) {
+        var name = Em.I18n.t('installer.step3.hostWarningsPopup.reverseLookup.name');
+        warning = warnings.filterProperty('category', 'reverseLookup').findProperty('name', name);
+        if (warning) {
+          warning.hosts.push(hostName);
+          warning.hostsLong.push(hostName);
+          warning.onSingleHost = false;
+        } else {
+          warning = {
+            name: name,
+            hosts: [hostName],
+            hostsLong: [hostName],
+            category: 'reverseLookup',
+            onSingleHost: true
+          };
+          warnings.push(warning);
+        }
+        host.warnings.push(warning);
+      }
+      hosts.push(host);
+    }, this);
+
+    for (var categoryId in warningCategories) {
+      var category = warningCategories[categoryId];
+      for (var warningId in category) {
+        warnings.push(category[warningId]);
+      }
+    }
+
+    hosts.unshift({
+      name: 'All Hosts',
+      warnings: warnings
+    });
+    this.set('warnings', warnings);
+    this.set('warningsByHost', hosts);
+  },
+
+  /**
+   * Filter data for warnings parse
+   * is data from host in bootStrap
+   * @param {object} data
+   * @return {Object}
+   * @method filterBootHosts
+   */
+  filterHostsData: function (data) {
+    var bootHostNames = {};
+    this.get('bootHosts').forEach(function (bootHost) {
+      bootHostNames[bootHost.get('name')] = true;
+    });
+    var filteredData = {
+      href: data.href,
+      tasks: []
+    };
+    data.tasks.forEach(function (_task) {
+      if (bootHostNames[_task.Tasks.host_name]) {
+        filteredData.tasks.push(_task);
+      }
+    });
+    return filteredData;
+  },
+
   /**
    * parse warnings for host names resolution only
    * @param {object} data
@@ -1098,14 +1385,13 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    */
   parseHostNameResolution: function (data) {
     if (!data) {
-      console.warn("Error: jsonData is null");
       return;
     }
     data.tasks.forEach(function (task) {
       var name = Em.I18n.t('installer.step3.hostWarningsPopup.resolution.validation.error');
       var hostInfo = this.get("hostCheckWarnings").findProperty('name', name);
       if (["FAILED", "COMPLETED", "TIMEDOUT"].contains(task.Tasks.status)) {
-        if (task.Tasks.status == "COMPLETED" && Em.get(task, "Tasks.structured_out.host_resolution_check.failed_count") != 0) {
+        if (task.Tasks.status === "COMPLETED" && !!Em.get(task, "Tasks.structured_out.host_resolution_check.failed_count")) {
           var targetHostName = Em.get(task, "Tasks.host_name");
           var relatedHostNames = Em.get(task, "Tasks.structured_out.host_resolution_check.failures")
             ? Em.get(task, "Tasks.structured_out.host_resolution_check.failures").mapProperty('host') : [];
@@ -1143,7 +1429,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method getHostCheckTasksError
    */
   getHostCheckTasksError: function() {
-    console.warn("failed to cheek hostName resolution");
     this.set('stopChecking', true);
   },
 
@@ -1160,7 +1445,13 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       thpWarnings = [], thpContext = [], thpHostsNames = [];
 
     // parse host checks warning
-    this.parseWarnings(jsonData);
+    var hostCheckResult = this.get("hostCheckResult");
+    if(hostCheckResult){
+      this.parseHostCheckWarnings(hostCheckResult);
+      this.set("hostCheckResult", null);
+    } else {
+      this.parseWarnings(jsonData);
+    }
     this.set('isHostsWarningsLoaded', true);
     hosts.forEach(function (_host) {
       var host = (App.get('testMode')) ? jsonData.items[0] : jsonData.items.findProperty('Hosts.host_name', _host.name);
@@ -1280,7 +1571,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method getHostInfoErrorCallback
    */
   getHostInfoErrorCallback: function () {
-    console.log('INFO: Getting host information(cpu_count and total_mem) from the server failed');
     this.set('isHostsWarningsLoaded', true);
     this.registerErrPopup(Em.I18n.t('installer.step3.hostInformation.popup.header'), Em.I18n.t('installer.step3.hostInformation.popup.body'));
   },
@@ -1302,7 +1592,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    */
   checkTHP: function (hostName, transparentHugePage) {
     if (transparentHugePage == "always") {
-      console.log('WARNING: Transparent Huge Page enabled on host: '+ hostName);
       return Em.I18n.t('installer.step3.hostWarningsPopup.thp.context').format(hostName);
     } else {
       return '';
@@ -1332,8 +1621,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       if (isValid) {
         return '';
       } else {
-        console.log('WARNING: Getting host os type does NOT match the user selected os group in step1. ' +
-          'Host Name: ' + hostName + '. Host os type:' + osFamily + '. Selected group:' + selectedOS.uniq());
         return Em.I18n.t('installer.step3.hostWarningsPopup.repositories.context').format(hostName, osFamily, selectedOS.uniq());
       }
     } else {
@@ -1371,34 +1658,37 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       }
     });
     if (warningString) {
-      console.log('WARNING: Getting host free disk space. ' + 'Host Name: ' + hostName);
       return Em.I18n.t('installer.step3.hostWarningsPopup.disk.context1').format(hostName) + ' ' + warningString;
     } else {
       return '';
     }
   },
 
+  _submitProceed: function () {
+    this.set('confirmedHosts', this.get('bootHosts'));
+    App.get('router').send('next');
+  },
+
   /**
    * Submit-click handler
-   * @return {App.ModalPopup|null}
+   * Disable 'Next' button while it is already under process. (using Router's property 'nextBtnClickInProgress')
+   * @return {App.ModalPopup?}
    * @method submit
    */
   submit: function () {
     var self = this;
 
+    if(App.get('router.nextBtnClickInProgress')) {
+      return;
+    }
     if (this.get('isHostHaveWarnings')) {
       return App.showConfirmationPopup(
         function () {
-          self.set('confirmedHosts', self.get('bootHosts'));
-          App.router.send('next');
+          self._submitProceed();
         },
         Em.I18n.t('installer.step3.hostWarningsPopup.hostHasWarnings'));
     }
-    else {
-      this.set('confirmedHosts', this.get('bootHosts'));
-      App.router.send('next');
-    }
-    return null;
+    this._submitProceed();
   },
 
   /**
@@ -1462,7 +1752,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   rerunChecksErrorCallback: function () {
     this.set('checksUpdateProgress', 100);
     this.set('checksUpdateStatus', 'FAILED');
-    console.log('INFO: Getting host information(last_agent_env) from the server failed');
   },
 
   /**
@@ -1517,7 +1806,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       if (!_host.Hosts.last_agent_env) {
         // in some unusual circumstances when last_agent_env is not available from the _host,
         // skip the _host and proceed to process the rest of the hosts.
-        console.log("last_agent_env is missing for " + _host.Hosts.host_name + ".  Skipping _host check.");
         return;
       }
 
@@ -1627,14 +1915,14 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       //todo: to be removed after check in new API
       if (_host.Hosts.last_agent_env.existingUsers) {
         _host.Hosts.last_agent_env.existingUsers.forEach(function (user) {
-          warning = warningCategories.usersWarnings[user.userName];
+          warning = warningCategories.usersWarnings[user.name];
           if (warning) {
             warning.hosts.push(_host.Hosts.host_name);
             warning.hostsLong.push(_host.Hosts.host_name);
             warning.onSingleHost = false;
           } else {
-            warningCategories.usersWarnings[user.userName] = warning = {
-              name: user.userName,
+            warningCategories.usersWarnings[user.name] = warning = {
+              name: user.name,
               hosts: [_host.Hosts.host_name],
               hostsLong: [_host.Hosts.host_name],
               category: 'users',

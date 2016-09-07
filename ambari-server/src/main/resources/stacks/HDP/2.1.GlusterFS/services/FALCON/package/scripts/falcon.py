@@ -37,9 +37,9 @@ def falcon(type, action = None):
     File(params.falcon_conf_dir + '/falcon-env.sh',
          content=Template('falcon-env.sh.j2')
     )
-    File(params.falcon_conf_dir + '/client.properties',
-         content=Template('client.properties.j2'),
-         mode=0644
+    PropertiesFile(params.falcon_conf_dir + '/client.properties',
+                   properties=params.falcon_client_properties,
+                   mode=0644
     )
     PropertiesFile(params.falcon_conf_dir + '/runtime.properties',
                    properties=params.falcon_runtime_properties,
@@ -65,12 +65,12 @@ def falcon(type, action = None):
       params.HdfsDirectory(None, action="create")
       Directory(params.falcon_local_dir,
                 owner=params.falcon_user,
-                recursive=True
+                create_parents = True
       )
       if params.falcon_embeddedmq_enabled == True:
         Directory(params.falcon_embeddedmq_data,
                   owner=params.falcon_user,
-                  recursive=True
+                  create_parents = True
         )
 
     if action == 'start':

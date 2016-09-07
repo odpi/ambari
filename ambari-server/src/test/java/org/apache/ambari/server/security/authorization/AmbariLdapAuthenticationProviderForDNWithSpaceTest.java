@@ -21,6 +21,8 @@ import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.persist.PersistService;
+
+import org.apache.ambari.server.audit.AuditLoggerModule;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.dao.UserDAO;
@@ -31,11 +33,9 @@ import org.apache.directory.server.core.annotations.ApplyLdifFiles;
 import org.apache.directory.server.core.annotations.ContextEntry;
 import org.apache.directory.server.core.annotations.CreateDS;
 import org.apache.directory.server.core.annotations.CreatePartition;
-import org.apache.directory.server.core.integ.AbstractLdapTestUnit;
 import org.apache.directory.server.core.integ.FrameworkRunner;
 import org.junit.*;
 import org.junit.runner.RunWith;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 
@@ -70,11 +70,13 @@ public class AmbariLdapAuthenticationProviderForDNWithSpaceTest extends AmbariLd
   @Inject
   private UserDAO userDAO;
   @Inject
+  private Users users;
+  @Inject
   Configuration configuration;
 
   @Before
   public void setUp() {
-    injector = Guice.createInjector(new AuthorizationTestModuleForLdapDNWithSpace());
+    injector = Guice.createInjector(new AuditLoggerModule(), new AuthorizationTestModuleForLdapDNWithSpace());
     injector.injectMembers(this);
     injector.getInstance(GuiceJpaInitializer.class);
     configuration.setClientSecurityType(ClientSecurityType.LDAP);
@@ -85,7 +87,7 @@ public class AmbariLdapAuthenticationProviderForDNWithSpaceTest extends AmbariLd
     injector.getInstance(PersistService.class).stop();
   }
 
-  @Test(expected = BadCredentialsException.class)
+  @Test(expected = InvalidUsernamePasswordCombinationException.class)
   public void testBadCredential() throws Exception {
     Authentication authentication = new UsernamePasswordAuthenticationToken("notFound", "wrong");
     authenticationProvider.authenticate(authentication);
@@ -94,6 +96,7 @@ public class AmbariLdapAuthenticationProviderForDNWithSpaceTest extends AmbariLd
   @Test
   public void testAuthenticate() throws Exception {
     assertNull("User alread exists in DB", userDAO.findLdapUserByName("the allowedUser"));
+    users.createUser("the allowedUser", "password", UserType.LDAP, true, false);
     Authentication authentication = new UsernamePasswordAuthenticationToken("the allowedUser", "password");
     Authentication result = authenticationProvider.authenticate(authentication);
     assertTrue(result.isAuthenticated());

@@ -17,16 +17,17 @@ limitations under the License.
 
 """
 
-from resource_management import *
-from resource_management.libraries.functions import conf_select
-from resource_management.libraries.functions import hdp_select
-from resource_management.libraries.functions.version import compare_versions, \
-  format_hdp_stack_version
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions import conf_select, stack_select
+from resource_management.libraries.functions.constants import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
 from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.security_commons import build_expectations, \
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties, \
   FILE_TYPE_XML
-
+from resource_management.core.logger import Logger
+from resource_management.core.resources.system import Directory
 from utils import service
 from hdfs import hdfs
 import journalnode_upgrade
@@ -36,25 +37,25 @@ from ambari_commons import OSConst
 class JournalNode(Script):
   def install(self, env):
     import params
-    self.install_packages(env, params.exclude_packages)
     env.set_params(params)
+    self.install_packages(env)  
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class JournalNodeDefault(JournalNode):
 
-  def get_stack_to_component(self):
-    return {"HDP": "hadoop-hdfs-journalnode"}
+  def get_component_name(self):
+    return "hadoop-hdfs-journalnode"
 
-  def pre_rolling_restart(self, env):
-    Logger.info("Executing Rolling Upgrade pre-restart")
+  def pre_upgrade_restart(self, env, upgrade_type=None):
+    Logger.info("Executing Stack Upgrade pre-restart")
     import params
     env.set_params(params)
 
-    if params.version and compare_versions(format_hdp_stack_version(params.version), '2.2.0.0') >= 0:
+    if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version):
       conf_select.select(params.stack_name, "hadoop", params.version)
-      hdp_select.select("hadoop-hdfs-journalnode", params.version)
+      stack_select.select("hadoop-hdfs-journalnode", params.version)
 
-  def start(self, env, rolling_restart=False):
+  def start(self, env, upgrade_type=None):
     import params
 
     env.set_params(params)
@@ -65,13 +66,16 @@ class JournalNodeDefault(JournalNode):
       create_log_dir=True
     )
 
-  def post_rolling_restart(self, env):
-    Logger.info("Executing Rolling Upgrade post-restart")
+  def post_upgrade_restart(self, env, upgrade_type=None):
+    if upgrade_type == "nonrolling":
+      return
+
+    Logger.info("Executing Stack Upgrade post-restart")
     import params
     env.set_params(params)
     journalnode_upgrade.post_upgrade_check()
 
-  def stop(self, env, rolling_restart=False):
+  def stop(self, env, upgrade_type=None):
     import params
 
     env.set_params(params)
@@ -85,7 +89,7 @@ class JournalNodeDefault(JournalNode):
     import params
 
     Directory(params.jn_edits_dir,
-              recursive=True,
+              create_parents = True,
               cd_access="a",
               owner=params.hdfs_user,
               group=params.user_group
@@ -156,12 +160,24 @@ class JournalNodeDefault(JournalNode):
         self.put_structured_out({"securityState": "UNSECURED"})
     else:
       self.put_structured_out({"securityState": "UNSECURED"})
+      
+  def get_log_folder(self):
+    import params
+    return params.hdfs_log_dir
+  
+  def get_user(self):
+    import params
+    return params.hdfs_user
+
+  def get_pid_files(self):
+    import status_params
+    return [status_params.journalnode_pid_file]
 
 @OsFamilyImpl(os_family=OSConst.WINSRV_FAMILY)
 class JournalNodeWindows(JournalNode):
   def install(self, env):
     import install_params
-    self.install_packages(env, install_params.exclude_packages)
+    self.install_packages(env)
 
   def start(self, env):
     import params

@@ -39,7 +39,13 @@ import javax.persistence.Table;
 @Entity
 @Table(name = "stage")
 @IdClass(org.apache.ambari.server.orm.entities.StageEntityPK.class)
-@NamedQueries({ @NamedQuery(name = "StageEntity.findByCommandStatuses", query = "SELECT stage from StageEntity stage WHERE EXISTS (SELECT roleCommand.stageId from HostRoleCommandEntity roleCommand WHERE roleCommand.status IN :statuses AND roleCommand.stageId = stage.stageId AND roleCommand.requestId = stage.requestId ) ORDER by stage.requestId, stage.stageId") })
+@NamedQueries({
+    @NamedQuery(
+        name = "StageEntity.findByCommandStatuses",
+        query = "SELECT stage from StageEntity stage WHERE EXISTS (SELECT roleCommand.stageId from HostRoleCommandEntity roleCommand WHERE roleCommand.status IN :statuses AND roleCommand.stageId = stage.stageId AND roleCommand.requestId = stage.requestId ) ORDER by stage.requestId, stage.stageId"),
+    @NamedQuery(
+        name = "StageEntity.findIdsByRequestId",
+        query = "SELECT stage.stageId FROM StageEntity stage WHERE stage.requestId = :requestId ORDER BY stage.stageId ASC") })
 public class StageEntity {
 
   @Column(name = "cluster_id", updatable = false, nullable = false)
@@ -56,6 +62,9 @@ public class StageEntity {
 
   @Column(name = "skippable", nullable = false)
   private Integer skippable = Integer.valueOf(0);
+
+  @Column(name = "supports_auto_skip_failure", nullable = false)
+  private Integer supportsAutoSkipOnFailure = Integer.valueOf(0);
 
   @Column(name = "log_info")
   @Basic
@@ -244,5 +253,28 @@ public class StageEntity {
    */
   public void setSkippable(boolean skippable) {
     this.skippable = skippable ? 1 : 0;
+  }
+
+  /**
+   * Determine whether this stage supports automatically skipping failures of
+   * its commands.
+   *
+   * @return {@code true} if this stage supports automatically skipping failures
+   *         of its commands.
+   */
+  public boolean isAutoSkipOnFailureSupported() {
+    return supportsAutoSkipOnFailure != 0;
+  }
+
+  /**
+   * Sets whether this stage supports automatically skipping failures of its
+   * commands.
+   *
+   * @param supportsAutoSkipOnFailure
+   *          {@code true} if this stage supports automatically skipping
+   *          failures of its commands.
+   */
+  public void setAutoSkipFailureSupported(boolean supportsAutoSkipOnFailure) {
+    this.supportsAutoSkipOnFailure = supportsAutoSkipOnFailure ? 1 : 0;
   }
 }

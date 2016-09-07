@@ -56,8 +56,13 @@ class CustomServiceOrchestrator():
   IPV4_ADDRESSES_KEY = "all_ipv4_ips"
 
   AMBARI_SERVER_HOST = "ambari_server_host"
-  DONT_DEBUG_FAILURES_FOR_COMMANDS = [COMMAND_NAME_SECURITY_STATUS, COMMAND_NAME_STATUS]
-  REFLECTIVELY_RUN_COMMANDS = [COMMAND_NAME_SECURITY_STATUS, COMMAND_NAME_STATUS] # -- commands which run a lot and often (this increases their speed)
+  AMBARI_SERVER_PORT = "ambari_server_port"
+  AMBARI_SERVER_USE_SSL = "ambari_server_use_ssl"
+
+  FREQUENT_COMMANDS = [COMMAND_NAME_SECURITY_STATUS, COMMAND_NAME_STATUS]
+  DONT_DEBUG_FAILURES_FOR_COMMANDS = FREQUENT_COMMANDS
+  REFLECTIVELY_RUN_COMMANDS = FREQUENT_COMMANDS # -- commands which run a lot and often (this increases their speed)
+  DONT_BACKUP_LOGS_FOR_COMMANDS = FREQUENT_COMMANDS
 
   def __init__(self, config, controller):
     self.config = config
@@ -185,13 +190,21 @@ class CustomServiceOrchestrator():
         raise AgentException("Background commands are supported without hooks only")
 
       python_executor = self.get_py_executor(forced_command_name)
+      backup_log_files = not command_name in self.DONT_BACKUP_LOGS_FOR_COMMANDS
+      log_out_files = self.config.get("logging","log_out_files", default="0") != "0"
+      
       for py_file, current_base_dir in filtered_py_file_list:
         log_info_on_failure = not command_name in self.DONT_DEBUG_FAILURES_FOR_COMMANDS
         script_params = [command_name, json_path, current_base_dir, tmpstrucoutfile, logger_level, self.exec_tmp_dir]
+        
+        if log_out_files:
+          script_params.append("-o")
+        
         ret = python_executor.run_file(py_file, script_params,
                                tmpoutfile, tmperrfile, timeout,
                                tmpstrucoutfile, self.map_task_to_process,
-                               task_id, override_output_files, handle = handle, log_info_on_failure=log_info_on_failure)
+                               task_id, override_output_files, backup_log_files = backup_log_files,
+                               handle = handle, log_info_on_failure=log_info_on_failure)
         # Next run_file() invocations should always append to current output
         override_output_files = False
         if ret['exitcode'] != 0:
@@ -231,7 +244,10 @@ class CustomServiceOrchestrator():
         logger.debug('Pop with taskId %s' % task_id)
         pid = self.commands_in_progress.pop(task_id)
         if not isinstance(pid, int):
-          return '\nCommand aborted. ' + pid
+          if pid:
+            return '\nCommand aborted. ' + pid
+          else:
+            return ''
     return None
 
   def requestComponentStatus(self, command):
@@ -315,6 +331,7 @@ class CustomServiceOrchestrator():
     command['public_hostname'] = public_fqdn
     # Add cache dir to make it visible for commands
     command["hostLevelParams"]["agentCacheDir"] = self.config.get('agent', 'cache_dir')
+    command["agentConfigParams"] = {"agent": {"parallel_execution": self.config.get_parallel_exec_option()}}
     # Now, dump the json file
     command_type = command['commandType']
     from ActionQueue import ActionQueue  # To avoid cyclic dependency
@@ -348,6 +365,8 @@ class CustomServiceOrchestrator():
     ipv4_addresses = info.pop(self.IPV4_ADDRESSES_KEY)
 
     ambariServerHost = info.pop(self.AMBARI_SERVER_HOST)
+    ambariServerPort = info.pop(self.AMBARI_SERVER_PORT)
+    ambariServerUseSsl = info.pop(self.AMBARI_SERVER_USE_SSL)
 
     decompressedMap = {}
 
@@ -373,8 +392,10 @@ class CustomServiceOrchestrator():
     decompressedMap[self.RACKS_KEY] = racks
     #Add ips list to result
     decompressedMap[self.IPV4_ADDRESSES_KEY] = ipv4_addresses
-    #Add ambari-server host to result
+    #Add ambari-server properties to result
     decompressedMap[self.AMBARI_SERVER_HOST] = ambariServerHost
+    decompressedMap[self.AMBARI_SERVER_PORT] = ambariServerPort
+    decompressedMap[self.AMBARI_SERVER_USE_SSL] = ambariServerUseSsl
 
     return decompressedMap
 

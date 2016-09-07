@@ -22,10 +22,7 @@ require('views/common/configs/services_config');
 
 describe('App.ServiceConfigContainerView', function () {
 
-  var view,
-    selectedService = {
-      configCategories: []
-    };
+  var view;
 
   beforeEach(function () {
     view = App.ServiceConfigContainerView.create({
@@ -48,7 +45,8 @@ describe('App.ServiceConfigContainerView', function () {
         selectedService: {
           configCategories: [],
           configs: []
-        }
+        },
+        isRecommendedLoaded: true
       }));
       expect(view.get('childViews')).to.have.length(1);
     });
@@ -59,7 +57,8 @@ describe('App.ServiceConfigContainerView', function () {
         selectedService: {
           configCategories: [],
           configs: []
-        }
+        },
+        isRecommendedLoaded: true
       }));
       expect(view.get('childViews.firstObject.controller.name')).to.equal('controller');
     });
@@ -69,7 +68,8 @@ describe('App.ServiceConfigContainerView', function () {
         selectedService: {
           configCategories: [Em.Object.create(), Em.Object.create()],
           configs: []
-        }
+        },
+        isRecommendedLoaded: true
       }));
       expect(view.get('childViews.firstObject.serviceConfigsByCategoryView.childViews')).to.have.length(2);
     });

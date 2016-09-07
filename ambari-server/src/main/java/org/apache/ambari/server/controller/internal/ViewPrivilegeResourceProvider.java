@@ -18,6 +18,7 @@
 package org.apache.ambari.server.controller.internal;
 
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -30,10 +31,11 @@ import org.apache.ambari.server.orm.entities.GroupEntity;
 import org.apache.ambari.server.orm.entities.PermissionEntity;
 import org.apache.ambari.server.orm.entities.PrivilegeEntity;
 import org.apache.ambari.server.orm.entities.ResourceEntity;
-import org.apache.ambari.server.orm.entities.ResourceTypeEntity;
 import org.apache.ambari.server.orm.entities.UserEntity;
 import org.apache.ambari.server.orm.entities.ViewEntity;
 import org.apache.ambari.server.orm.entities.ViewInstanceEntity;
+import org.apache.ambari.server.security.authorization.ResourceType;
+import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.view.ViewRegistry;
 
 /**
@@ -58,6 +60,7 @@ public class ViewPrivilegeResourceProvider extends PrivilegeResourceProvider<Vie
     propertyIds.add(PRIVILEGE_INSTANCE_NAME_PROPERTY_ID);
     propertyIds.add(PRIVILEGE_ID_PROPERTY_ID);
     propertyIds.add(PERMISSION_NAME_PROPERTY_ID);
+    propertyIds.add(PERMISSION_LABEL_PROPERTY_ID);
     propertyIds.add(PRINCIPAL_NAME_PROPERTY_ID);
     propertyIds.add(PRINCIPAL_TYPE_PROPERTY_ID);
   }
@@ -74,7 +77,7 @@ public class ViewPrivilegeResourceProvider extends PrivilegeResourceProvider<Vie
   }
 
   /**
-   * The built-in VIEW.USE permission.
+   * The built-in VIEW.USER permission.
    */
   private final PermissionEntity viewUsePermission;
 
@@ -86,7 +89,13 @@ public class ViewPrivilegeResourceProvider extends PrivilegeResourceProvider<Vie
    */
   public ViewPrivilegeResourceProvider() {
     super(propertyIds, keyPropertyIds, Resource.Type.ViewPrivilege);
-    viewUsePermission = permissionDAO.findById(PermissionEntity.VIEW_USE_PERMISSION);
+    viewUsePermission = permissionDAO.findById(PermissionEntity.VIEW_USER_PERMISSION);
+
+    EnumSet<RoleAuthorization> requiredAuthorizations = EnumSet.of(RoleAuthorization.AMBARI_MANAGE_VIEWS);
+    setRequiredCreateAuthorizations(requiredAuthorizations);
+    setRequiredDeleteAuthorizations(requiredAuthorizations);
+    setRequiredGetAuthorizations(requiredAuthorizations);
+    setRequiredUpdateAuthorizations(requiredAuthorizations);
   }
 
 
@@ -175,7 +184,7 @@ public class ViewPrivilegeResourceProvider extends PrivilegeResourceProvider<Vie
   @Override
   protected boolean checkResourceTypes(PrivilegeEntity entity) throws AmbariException {
     return super.checkResourceTypes(entity) ||
-        entity.getPermission().getResourceType().getId().equals(ResourceTypeEntity.VIEW_RESOURCE_TYPE);
+        entity.getPermission().getResourceType().getId().equals(ResourceType.VIEW.getId());
   }
 
   @Override
@@ -202,7 +211,7 @@ public class ViewPrivilegeResourceProvider extends PrivilegeResourceProvider<Vie
 
   @Override
   protected PermissionEntity getPermission(String permissionName, ResourceEntity resourceEntity) throws AmbariException {
-    return (permissionName.equals(PermissionEntity.VIEW_USE_PERMISSION_NAME)) ?
+    return (permissionName.equals(PermissionEntity.VIEW_USER_PERMISSION_NAME)) ?
         viewUsePermission : super.getPermission(permissionName, resourceEntity);
   }
 }

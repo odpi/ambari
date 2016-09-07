@@ -30,6 +30,18 @@ App.cache = {
   'currentConfigVersions': {}
 };
 
+App.cache.clear = function () {
+  var clear = App.cache.clear;
+  App.cache = {
+    'previousHostStatuses': {},
+    'previousComponentStatuses': {},
+    'previousComponentPassiveStates': {},
+    'services': [],
+    'currentConfigVersions': {}
+  };
+  App.cache.clear = clear;
+};
+
 App.ServerDataMapper = Em.Object.extend({
   jsonKey: false,
   map: function (json) {
@@ -133,7 +145,6 @@ App.QuickDataMapper = App.ServerDataMapper.extend({
     item.deleteRecord();
     App.store.commit();
     item.get('stateManager').transitionTo('loading');
-    console.log('Record with id:' + item.get('id') + ' was deleted from model');
   },
   /**
    * check mutable fields whether they have been changed and if positive

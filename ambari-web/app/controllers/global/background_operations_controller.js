@@ -158,7 +158,7 @@ App.BackgroundOperationsController = Em.Controller.extend({
     if (request.get('isRunning')) {
       request.set('progress', App.HostPopup.getProgress(data.tasks));
       request.set('status', App.HostPopup.getStatus(data.tasks)[0]);
-      request.set('isRunning', (request.get('progress') !== 100));
+      request.set('isRunning', request.get('progress') !== 100);
     }
     request.set('previousTaskStatusMap', currentTaskStatusMap);
     request.set('hostsMap', hostsMap);
@@ -207,11 +207,12 @@ App.BackgroundOperationsController = Em.Controller.extend({
     var currentRequestIds = [];
     var countIssued = this.get('operationsCount');
     var countGot = data.itemTotal;
+    var restoreUpgradeState = false;
 
     data.items.forEach(function (request) {
       if (this.isUpgradeRequest(request)) {
         if (!App.get('upgradeIsRunning') && !App.get('testMode')) {
-          App.router.get('clusterController').restoreUpgradeState();
+          restoreUpgradeState = true;
         }
         return;
       }
@@ -222,11 +223,13 @@ App.BackgroundOperationsController = Em.Controller.extend({
       currentRequestIds.push(request.Requests.id);
 
       if (rq) {
-        rq.set('progress', Math.floor(request.Requests.progress_percent));
-        rq.set('status', request.Requests.request_status);
-        rq.set('isRunning', isRunning);
-        rq.set('startTime', request.Requests.start_time);
-        rq.set('endTime', request.Requests.end_time);
+        rq.setProperties({
+          progress: Math.floor(request.Requests.progress_percent),
+          status: request.Requests.request_status,
+          isRunning: isRunning,
+          startTime: App.dateTimeWithTimeZone(request.Requests.start_time),
+          endTime: request.Requests.end_time > 0 ? App.dateTimeWithTimeZone(request.Requests.end_time) : request.Requests.end_time
+        });
       } else {
         rq = Em.Object.create({
           id: request.Requests.id,
@@ -237,8 +240,8 @@ App.BackgroundOperationsController = Em.Controller.extend({
           isRunning: isRunning,
           hostsMap: {},
           tasks: [],
-          startTime: request.Requests.start_time,
-          endTime: request.Requests.end_time,
+          startTime: App.dateTimeWithTimeZone(request.Requests.start_time),
+          endTime: request.Requests.end_time > 0 ? App.dateTimeWithTimeZone(request.Requests.end_time) : request.Requests.end_time,
           dependentService: requestParams.dependentService,
           sourceRequestScheduleId: request.Requests.request_schedule && request.Requests.request_schedule.schedule_id,
           previousTaskStatusMap: {},
@@ -246,28 +249,38 @@ App.BackgroundOperationsController = Em.Controller.extend({
         });
         this.get("services").unshift(rq);
         //To sort DESC by request id
-        this.set("services", this.get("services").sort( function(a,b) { return b.get('id') - a.get('id'); }));
+        this.set("services", this.get("services").sortProperty('id').reverse());
       }
       runningServices += ~~isRunning;
     }, this);
+    if (restoreUpgradeState) {
+      App.router.get('clusterController').restoreUpgradeState();
+    }
     this.removeOldRequests(currentRequestIds);
     this.set("allOperationsCount", runningServices);
     this.set('isShowMoreAvailable', countGot >= countIssued);
-    this.set('serviceTimestamp', App.dateTime());
+    this.set('serviceTimestamp', App.dateTimeWithTimeZone());
   },
+
   isShowMoreAvailable: null,
+
   /**
    * remove old requests
    * as API returns 10, or  20 , or 30 ...etc latest request, the requests that absent in response should be removed
    * @param currentRequestIds
    */
   removeOldRequests: function (currentRequestIds) {
-    this.get('services').forEach(function (service, index, services) {
-      if (!currentRequestIds.contains(service.id)) {
-        services.splice(index, 1);
+    var services = this.get('services');
+
+    for (var i = 0, l = services.length; i < l; i++) {
+      if (!currentRequestIds.contains(services[i].id)) {
+        services.splice(i, 1);
+        i--;
+        l--;
       }
-    });
+    }
   },
+
   /**
    * identify whether request is running by task counters
    * @param request
@@ -294,7 +307,7 @@ App.BackgroundOperationsController = Em.Controller.extend({
     return false
   },
   /**
-   * assign schedule_id of request to null if it's Recommision operation
+   * assign schedule_id of request to null if it's Recommission operation
    * @param request
    * @param requestParams
    */
@@ -325,11 +338,11 @@ App.BackgroundOperationsController = Em.Controller.extend({
           if (service === 'ALL_SERVICES') {
             parsedRequestContext = Em.I18n.t("requestInfo." + contextCommand.toLowerCase()).format(Em.I18n.t('common.allServices'));
           } else {
-            parsedRequestContext = Em.I18n.t("requestInfo." + contextCommand.toLowerCase()).format(App.format.role(service));
+            parsedRequestContext = Em.I18n.t("requestInfo." + contextCommand.toLowerCase()).format(App.format.role(service, true));
           }
           break;
         case "ROLLING-RESTART":
-          parsedRequestContext = Em.I18n.t("rollingrestart.rest.context").format(App.format.role(service), contextSplits[3], contextSplits[4]);
+          parsedRequestContext = Em.I18n.t("rollingrestart.rest.context").format(App.format.role(service, true), contextSplits[3], contextSplits[4]);
           break;
         }
       } else {
@@ -353,7 +366,7 @@ App.BackgroundOperationsController = Em.Controller.extend({
   showPopup: function(){
     // load the checkbox on footer first, then show popup.
     var self = this;
-    App.router.get('applicationController').dataLoading().done(function (initValue) {
+    App.router.get('userSettingsController').dataLoading('show_bg').done(function (initValue) {
       App.updater.immediateRun('requestMostRecent');
       if(self.get('popupView') && App.HostPopup.get('isBackgroundOperations')){
         self.set ('popupView.isNotShowBgChecked', !initValue);
@@ -361,7 +374,7 @@ App.BackgroundOperationsController = Em.Controller.extend({
         $(self.get('popupView.element')).appendTo('#wrapper');
       } else {
         self.set('popupView', App.HostPopup.initPopup("", self, true));
-        self.set ('popupView.isNotShowBgChecked', !initValue);
+        self.set('popupView.isNotShowBgChecked', !initValue);
       }
     });
   },

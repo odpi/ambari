@@ -16,21 +16,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
-
-from resource_management import *
-from resource_management.libraries.functions.dfs_datanode_helper import handle_dfs_data_dir
+import os
+from resource_management.core.resources.system import Directory, Execute, File
+from resource_management.libraries.functions.check_process_status import check_process_status
+from resource_management.libraries.functions.mounted_dirs_helper import handle_mounted_dirs
 from utils import service
 from ambari_commons.os_family_impl import OsFamilyImpl, OsFamilyFuncImpl
 from ambari_commons import OSConst
 
 
-def create_dirs(data_dir, params):
+def create_dirs(data_dir):
   """
   :param data_dir: The directory to create
   :param params: parameters
   """
+  import params
   Directory(data_dir,
-            recursive=True,
+            create_parents = True,
             cd_access="a",
             mode=0755,
             owner=params.hdfs_user,
@@ -43,12 +45,21 @@ def datanode(action=None):
   if action == "configure":
     import params
     Directory(params.dfs_domain_socket_dir,
-              recursive=True,
+              create_parents = True,
               mode=0751,
               owner=params.hdfs_user,
               group=params.user_group)
 
-    handle_dfs_data_dir(create_dirs, params)
+    # handle_mounted_dirs ensures that we don't create dfs data dirs which are temporary unavailable (unmounted), and intended to reside on a different mount.
+    data_dir_to_mount_file_content = handle_mounted_dirs(create_dirs, params.dfs_data_dirs, params.data_dir_mount_file, params)
+    # create a history file used by handle_mounted_dirs
+    File(params.data_dir_mount_file,
+         owner=params.hdfs_user,
+         group=params.user_group,
+         mode=0644,
+         content=data_dir_to_mount_file_content
+    )
+
   elif action == "start" or action == "stop":
     import params
     service(

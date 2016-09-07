@@ -17,11 +17,20 @@
  */
 package org.apache.ambari.server.upgrade;
 
+import javax.persistence.EntityManager;
+import javax.xml.bind.JAXBException;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+
+import java.io.File;
+import java.io.FilenameFilter;
+import java.io.IOException;
+import java.io.StringReader;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.AbstractMap;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -30,29 +39,57 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-
-import javax.persistence.EntityManager;
+import java.util.Stack;
+import java.util.StringTokenizer;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.configuration.Configuration.DatabaseType;
 import org.apache.ambari.server.controller.AmbariManagementController;
-import org.apache.ambari.server.controller.ConfigurationRequest;
 import org.apache.ambari.server.orm.DBAccessor;
+import org.apache.ambari.server.orm.dao.AlertDefinitionDAO;
+import org.apache.ambari.server.orm.dao.ArtifactDAO;
 import org.apache.ambari.server.orm.dao.MetainfoDAO;
+import org.apache.ambari.server.orm.entities.AlertDefinitionEntity;
+import org.apache.ambari.server.orm.dao.PermissionDAO;
+import org.apache.ambari.server.orm.dao.ResourceTypeDAO;
+import org.apache.ambari.server.orm.dao.RoleAuthorizationDAO;
+import org.apache.ambari.server.orm.entities.ArtifactEntity;
 import org.apache.ambari.server.orm.entities.MetainfoEntity;
+import org.apache.ambari.server.orm.entities.PermissionEntity;
+import org.apache.ambari.server.orm.entities.RoleAuthorizationEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.ConfigHelper;
 import org.apache.ambari.server.state.PropertyInfo;
+import org.apache.ambari.server.state.PropertyUpgradeBehavior;
 import org.apache.ambari.server.state.ServiceInfo;
+import org.apache.ambari.server.state.StackId;
+import org.apache.ambari.server.state.alert.SourceType;
+import org.apache.ambari.server.state.kerberos.AbstractKerberosDescriptorContainer;
+import org.apache.ambari.server.state.kerberos.KerberosDescriptor;
+import org.apache.ambari.server.state.kerberos.KerberosDescriptorFactory;
+import org.apache.ambari.server.state.kerberos.KerberosIdentityDescriptor;
+import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptor;
 import org.apache.ambari.server.utils.VersionUtils;
+import org.apache.ambari.server.view.ViewArchiveUtility;
+import org.apache.ambari.server.view.configuration.ViewConfig;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.w3c.dom.Document;
+import org.xml.sax.InputSource;
 
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
@@ -65,12 +102,12 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   protected Configuration configuration;
   @Inject
   protected StackUpgradeUtil stackUpgradeUtil;
+  @Inject
+  protected ViewArchiveUtility archiveUtility;
 
   protected Injector injector;
 
   // map and list with constants, for filtration like in stack advisor
-  protected Map<String,List<String>> hiveAuthPropertyValueDependencies = new HashMap<String, List<String>>();
-  protected List<String> allHiveAuthPropertyValueDependecies = new ArrayList<String>();
 
   /**
    * Override variable in child's if table name was changed
@@ -85,31 +122,37 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
   private static final String CONFIGURATION_TYPE_HIVE_SITE = "hive-site";
   private static final String CONFIGURATION_TYPE_HDFS_SITE = "hdfs-site";
+  public static final String CONFIGURATION_TYPE_RANGER_HBASE_PLUGIN_PROPERTIES = "ranger-hbase-plugin-properties";
+  public static final String CONFIGURATION_TYPE_RANGER_KNOX_PLUGIN_PROPERTIES = "ranger-knox-plugin-properties";
+  public static final String CONFIGURATION_TYPE_RANGER_HIVE_PLUGIN_PROPERTIES = "ranger-hive-plugin-properties";
 
   private static final String PROPERTY_DFS_NAMESERVICES = "dfs.nameservices";
   private static final String PROPERTY_HIVE_SERVER2_AUTHENTICATION = "hive.server2.authentication";
+  public static final String PROPERTY_RANGER_HBASE_PLUGIN_ENABLED = "ranger-hbase-plugin-enabled";
+  public static final String PROPERTY_RANGER_KNOX_PLUGIN_ENABLED = "ranger-knox-plugin-enabled";
+  public static final String PROPERTY_RANGER_HIVE_PLUGIN_ENABLED = "ranger-hive-plugin-enabled";
+
+  public static final String YARN_SCHEDULER_CAPACITY_ROOT_QUEUE = "yarn.scheduler.capacity.root";
+  public static final String YARN_SCHEDULER_CAPACITY_ROOT_QUEUES = "yarn.scheduler.capacity.root.queues";
+  public static final String QUEUES = "queues";
+
+  public static final String ALERT_URL_PROPERTY_CONNECTION_TIMEOUT = "connection_timeout";
 
   private static final Logger LOG = LoggerFactory.getLogger
     (AbstractUpgradeCatalog.class);
   private static final Map<String, UpgradeCatalog> upgradeCatalogMap =
     new HashMap<String, UpgradeCatalog>();
 
+  protected String ambariUpgradeConfigUpdatesFileName;
+
   @Inject
   public AbstractUpgradeCatalog(Injector injector) {
     this.injector = injector;
     injector.injectMembers(this);
     registerCatalog(this);
+  }
 
-    hiveAuthPropertyValueDependencies.put("ldap", Arrays.asList("hive.server2.authentication.ldap.url",
-            "hive.server2.authentication.ldap.baseDN"));
-    hiveAuthPropertyValueDependencies.put("kerberos", Arrays.asList("hive.server2.authentication.kerberos.keytab",
-            "hive.server2.authentication.kerberos.principal"));
-    hiveAuthPropertyValueDependencies.put("pam", Arrays.asList("hive.server2.authentication.pam.services"));
-    hiveAuthPropertyValueDependencies.put("custom", Arrays.asList("hive.server2.custom.authentication.class"));
-
-    for (List<String> dependencies : hiveAuthPropertyValueDependencies.values()) {
-      allHiveAuthPropertyValueDependecies.addAll(dependencies);
-    }
+  protected AbstractUpgradeCatalog() {
   }
 
   /**
@@ -177,6 +220,35 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
     return upgradeCatalogMap.get(version);
   }
 
+  protected static Document convertStringToDocument(String xmlStr) {
+    DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+    DocumentBuilder builder;
+    Document doc = null;
+
+    try
+    {
+      builder = factory.newDocumentBuilder();
+      doc = builder.parse( new InputSource( new StringReader( xmlStr ) ) );
+    } catch (Exception e) {
+      LOG.error("Error during convertation from String \"" + xmlStr + "\" to Xml!", e);
+    }
+    return doc;
+  }
+
+  protected static boolean isConfigEnabled(Cluster cluster, String configType, String propertyName) {
+    boolean isRangerPluginEnabled = false;
+    if (cluster != null) {
+      Config rangerPluginProperties = cluster.getDesiredConfigByType(configType);
+      if (rangerPluginProperties != null) {
+        String rangerPluginEnabled = rangerPluginProperties.getProperties().get(propertyName);
+        if (StringUtils.isNotEmpty(rangerPluginEnabled)) {
+          isRangerPluginEnabled =  "yes".equalsIgnoreCase(rangerPluginEnabled);
+        }
+      }
+    }
+    return isRangerPluginEnabled;
+  }
+
   protected static class VersionComparator implements Comparator<UpgradeCatalog> {
 
     @Override
@@ -188,7 +260,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
       }
 
       return VersionUtils.compareVersions(upgradeCatalog1.getTargetVersion(),
-        upgradeCatalog2.getTargetVersion(), 3);
+        upgradeCatalog2.getTargetVersion(), 4);
     }
   }
 
@@ -218,6 +290,40 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
     return rows;
   }
 
+  /*
+  * This method will check all Web and Metric alerts one by one.
+  * Parameter connection_timeout will be added to every alert which
+  * doesn't contain it.
+  * */
+  public void addConnectionTimeoutParamForWebAndMetricAlerts() {
+    LOG.info("Updating alert definitions.");
+    AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
+    AlertDefinitionDAO alertDefinitionDAO = injector.getInstance(AlertDefinitionDAO.class);
+    Clusters clusters = ambariManagementController.getClusters();
+    JsonParser jsonParser = new JsonParser();
+
+    for (final Cluster cluster : getCheckedClusterMap(clusters).values()) {
+      long clusterID = cluster.getClusterId();
+      List<AlertDefinitionEntity> alertDefinitionList = alertDefinitionDAO.findAll(clusterID);
+
+      for (AlertDefinitionEntity alertDefinitionEntity : alertDefinitionList) {
+        SourceType sourceType = alertDefinitionEntity.getSourceType();
+        if (sourceType == SourceType.METRIC || sourceType == SourceType.WEB) {
+          String source = alertDefinitionEntity.getSource();
+          JsonObject rootJson = jsonParser.parse(source).getAsJsonObject();
+
+          JsonObject uriJson = rootJson.get("uri").getAsJsonObject();
+          if (!uriJson.has(ALERT_URL_PROPERTY_CONNECTION_TIMEOUT)) {
+            uriJson.addProperty(ALERT_URL_PROPERTY_CONNECTION_TIMEOUT, 5.0);
+            alertDefinitionEntity.setSource(rootJson.toString());
+            alertDefinitionDAO.merge(alertDefinitionEntity);
+          }
+        }
+      }
+    }
+  }
+
+
   protected Provider<EntityManager> getEntityManagerProvider() {
     return injector.getProvider(EntityManager.class);
   }
@@ -231,6 +337,11 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
       try {
         func.run();
         entityManager.getTransaction().commit();
+        // This is required because some of the  entities actively managed by
+        // the persistence context will remain unaware of the actual changes
+        // occurring at the database level. Some UpgradeCatalogs perform
+        // update / delete using CriteriaBuilder directly.
+        entityManager.getEntityManagerFactory().getCache().evictAll();
       } catch (Exception e) {
         LOG.error("Error in transaction ", e);
         if (entityManager.getTransaction().isActive()) {
@@ -269,60 +380,62 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
     if (clusterMap != null && !clusterMap.isEmpty()) {
       for (Cluster cluster : clusterMap.values()) {
-        Map<String, Set<String>> newProperties = new HashMap<String, Set<String>>();
+        Map<String, Set<String>> toAddProperties = new HashMap<String, Set<String>>();
+        Map<String, Set<String>> toUpdateProperties = new HashMap<String, Set<String>>();
+        Map<String, Set<String>> toRemoveProperties = new HashMap<String, Set<String>>();
+
 
         Set<PropertyInfo> stackProperties = configHelper.getStackProperties(cluster);
         for(String serviceName: cluster.getServices().keySet()) {
           Set<PropertyInfo> properties = configHelper.getServiceProperties(cluster, serviceName);
 
-          if(properties == null) {
+          if (properties == null) {
             continue;
           }
           properties.addAll(stackProperties);
 
-          for(PropertyInfo property:properties) {
+          for (PropertyInfo property : properties) {
             String configType = ConfigHelper.fileNameToConfigType(property.getFilename());
             Config clusterConfigs = cluster.getDesiredConfigByType(configType);
-            if(clusterConfigs == null || !clusterConfigs.getProperties().containsKey(property.getName())) {
-              if (!checkAccordingToStackAdvisor(property, cluster) || property.getValue() == null) {
-                continue;
-              }
+            PropertyUpgradeBehavior upgradeBehavior = property.getPropertyAmbariUpgradeBehavior();
 
-              LOG.info("Config " + property.getName() + " from " + configType + " from xml configurations" +
-                  " is not found on the cluster. Adding it...");
-
-              if(!newProperties.containsKey(configType)) {
-                newProperties.put(configType, new HashSet<String>());
+            if (property.isDeleted()) {
+              // Do nothing
+            } else if (upgradeBehavior.isDelete()) {
+              if (!toRemoveProperties.containsKey(configType)) {
+                toRemoveProperties.put(configType, new HashSet<String>());
               }
-              newProperties.get(configType).add(property.getName());
+              toRemoveProperties.get(configType).add(property.getName());
+            } else if (upgradeBehavior.isUpdate()) {
+              if (!toUpdateProperties.containsKey(configType)) {
+                toUpdateProperties.put(configType, new HashSet<String>());
+              }
+              toUpdateProperties.get(configType).add(property.getName());
+            } else if (upgradeBehavior.isAdd()) {
+              if (!toAddProperties.containsKey(configType)) {
+                toAddProperties.put(configType, new HashSet<String>());
+              }
+              toAddProperties.get(configType).add(property.getName());
             }
           }
         }
 
+        for (Entry<String, Set<String>> newProperty : toAddProperties.entrySet()) {
+          String newPropertyKey = newProperty.getKey();
+          updateConfigurationPropertiesWithValuesFromXml(newPropertyKey, newProperty.getValue(), false, true);
+        }
 
+        for (Entry<String, Set<String>> newProperty : toUpdateProperties.entrySet()) {
+          String newPropertyKey = newProperty.getKey();
+          updateConfigurationPropertiesWithValuesFromXml(newPropertyKey, newProperty.getValue(), true, false);
+        }
 
-        for (Entry<String, Set<String>> newProperty : newProperties.entrySet()) {
-          updateConfigurationPropertiesWithValuesFromXml(newProperty.getKey(), newProperty.getValue(), false, true);
+        for (Entry<String, Set<String>> toRemove : toRemoveProperties.entrySet()) {
+          String newPropertyKey = toRemove.getKey();
+          updateConfigurationPropertiesWithValuesFromXml(newPropertyKey, Collections.<String>emptySet(), toRemove.getValue(), false, true);
         }
       }
     }
-  }
-
-  protected boolean checkAccordingToStackAdvisor(PropertyInfo property, Cluster cluster) {
-    if (allHiveAuthPropertyValueDependecies.contains(property.getName())) {
-      Config hiveSite = cluster.getDesiredConfigByType(CONFIGURATION_TYPE_HIVE_SITE);
-      if (hiveSite != null) {
-        String hiveAuthValue = hiveSite.getProperties().get(PROPERTY_HIVE_SERVER2_AUTHENTICATION);
-        if (hiveAuthValue != null) {
-          List<String> dependencies = hiveAuthPropertyValueDependencies.get(hiveAuthValue.toLowerCase());
-          if (dependencies != null) {
-            return dependencies.contains(property.getName());
-          }
-        }
-      }
-      return false;
-    }
-    return true;
   }
 
   protected boolean isNNHAEnabled(Cluster cluster) {
@@ -341,6 +454,20 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   }
 
   /**
+   * This method returns Map of clusters.
+   * Map can be empty or with some objects, but never be null.
+   */
+  protected Map<String, Cluster> getCheckedClusterMap(Clusters clusters) {
+    if (clusters != null) {
+      Map<String, Cluster> clusterMap = clusters.getClusters();
+      if (clusterMap != null) {
+        return clusterMap;
+      }
+    }
+    return new HashMap<>();
+  }
+
+  /**
    * Create a new cluster scoped configuration with the new properties added
    * with the values from the coresponding xml files.
    *
@@ -351,6 +478,15 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
    */
   protected void updateConfigurationPropertiesWithValuesFromXml(String configType,
       Set<String> propertyNames, boolean updateIfExists, boolean createNewConfigType) throws AmbariException {
+    updateConfigurationPropertiesWithValuesFromXml(configType, propertyNames, null, updateIfExists, createNewConfigType);
+
+  }
+
+  protected void updateConfigurationPropertiesWithValuesFromXml(String configType,
+                                                                Set<String> propertyNames,
+                                                                Set<String> toRemove,
+                                                                boolean updateIfExists,
+                                                                boolean createNewConfigType) throws AmbariException {
     ConfigHelper configHelper = injector.getInstance(ConfigHelper.class);
     AmbariManagementController controller = injector.getInstance(AmbariManagementController.class);
 
@@ -384,7 +520,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
         }
 
         updateConfigurationPropertiesForCluster(cluster, configType,
-            properties, updateIfExists, createNewConfigType);
+            properties, toRemove, updateIfExists, createNewConfigType);
       }
     }
   }
@@ -422,32 +558,47 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
           oldConfigProperties = oldConfig.getProperties();
         }
 
+        Multimap<ConfigUpdateType, Entry<String, String>> propertiesToLog = ArrayListMultimap.create();
+        String serviceName = cluster.getServiceByConfigType(configType);
+
         Map<String, String> mergedProperties =
-          mergeProperties(oldConfigProperties, properties, updateIfExists);
+          mergeProperties(oldConfigProperties, properties, updateIfExists, propertiesToLog);
 
         if (removePropertiesList != null) {
-          mergedProperties = removeProperties(mergedProperties, removePropertiesList);
+          mergedProperties = removeProperties(mergedProperties, removePropertiesList, propertiesToLog);
+        }
+
+        if (propertiesToLog.size() > 0) {
+          try {
+            configuration.wrtiteToAmbariUpgradeConfigUpdatesFile(propertiesToLog, configType, serviceName, ambariUpgradeConfigUpdatesFileName);
+          } catch(Exception e) {
+            LOG.error("Write to config updates file failed:", e);
+          }
         }
 
         if (!Maps.difference(oldConfigProperties, mergedProperties).areEqual()) {
           LOG.info("Applying configuration with tag '{}' to " +
             "cluster '{}'", newTag, cluster.getClusterName());
 
-          ConfigurationRequest cr = new ConfigurationRequest();
-          cr.setClusterName(cluster.getClusterName());
-          cr.setVersionTag(newTag);
-          cr.setType(configType);
-          cr.setProperties(mergedProperties);
+          Map<String, Map<String, String>> propertiesAttributes = null;
           if (oldConfig != null) {
-            cr.setPropertiesAttributes(oldConfig.getPropertiesAttributes());
+            propertiesAttributes = oldConfig.getPropertiesAttributes();
           }
-          controller.createConfiguration(cr);
 
-          Config baseConfig = cluster.getConfig(cr.getType(), cr.getVersionTag());
+          // the contract of creating a configuration requires non-null
+          // collections for attributes
+          if (null == propertiesAttributes) {
+            propertiesAttributes = Collections.emptyMap();
+          }
+
+          controller.createConfig(cluster, configType, mergedProperties, newTag, propertiesAttributes);
+
+          Config baseConfig = cluster.getConfig(configType, newTag);
           if (baseConfig != null) {
             String authName = AUTHENTICATED_USER_NAME;
 
-            if (cluster.addDesiredConfig(authName, Collections.singleton(baseConfig)) != null) {
+            String configVersionNote = String.format("Updated %s during Ambari Upgrade from %s to %s.", configType, getSourceVersion(), getTargetVersion());
+            if (cluster.addDesiredConfig(authName, Collections.singleton(baseConfig), configVersionNote) != null) {
               String oldConfigString = (oldConfig != null) ? " from='" + oldConfig.getTag() + "'" : "";
               LOG.info("cluster '" + cluster.getClusterName() + "' "
                 + "changed by: '" + authName + "'; "
@@ -508,26 +659,265 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
   private Map<String, String> mergeProperties(Map<String, String> originalProperties,
                                Map<String, String> newProperties,
-                               boolean updateIfExists) {
+                               boolean updateIfExists, Multimap<AbstractUpgradeCatalog.ConfigUpdateType, Entry<String, String>> propertiesToLog) {
 
     Map<String, String> properties = new HashMap<String, String>(originalProperties);
     for (Map.Entry<String, String> entry : newProperties.entrySet()) {
-      if (!properties.containsKey(entry.getKey()) || updateIfExists) {
+      if (!properties.containsKey(entry.getKey())) {
         properties.put(entry.getKey(), entry.getValue());
+        propertiesToLog.put(ConfigUpdateType.ADDED, entry);
+      }
+      if (updateIfExists)  {
+        properties.put(entry.getKey(), entry.getValue());
+        propertiesToLog.put(ConfigUpdateType.UPDATED, entry);
       }
     }
     return properties;
   }
 
-  private Map<String, String> removeProperties(Map<String, String> originalProperties, Set<String> removeList){
+  private Map<String, String> removeProperties(Map<String, String> originalProperties,
+                                               Set<String> removeList, Multimap<AbstractUpgradeCatalog.ConfigUpdateType, Entry<String, String>> propertiesToLog){
     Map<String, String> properties = new HashMap<String, String>();
     properties.putAll(originalProperties);
     for (String removeProperty: removeList){
       if (originalProperties.containsKey(removeProperty)){
         properties.remove(removeProperty);
+        propertiesToLog.put(ConfigUpdateType.REMOVED, new AbstractMap.SimpleEntry<String, String>(removeProperty, ""));
       }
     }
     return properties;
+  }
+
+  public enum ConfigUpdateType {
+    ADDED("Added"),
+    UPDATED("Updated"),
+    REMOVED("Removed");
+
+
+    private final String description;
+
+
+    private ConfigUpdateType(String description) {
+      this.description = description;
+    }
+
+    public String getDescription() {
+      return description;
+    }
+  }
+
+  /**
+   * Iterates through a collection of AbstractKerberosDescriptorContainers to find and update
+   * identity descriptor references.
+   *
+   * @param descriptorMap    a String to AbstractKerberosDescriptorContainer map to iterate trough
+   * @param referenceName    the reference name to change
+   * @param newReferenceName the new reference name
+   */
+  protected void updateKerberosDescriptorIdentityReferences(Map<String, ? extends AbstractKerberosDescriptorContainer> descriptorMap,
+                                                          String referenceName,
+                                                          String newReferenceName) {
+    if (descriptorMap != null) {
+      for (AbstractKerberosDescriptorContainer kerberosServiceDescriptor : descriptorMap.values()) {
+        updateKerberosDescriptorIdentityReferences(kerberosServiceDescriptor, referenceName, newReferenceName);
+
+        if (kerberosServiceDescriptor instanceof KerberosServiceDescriptor) {
+          updateKerberosDescriptorIdentityReferences(((KerberosServiceDescriptor) kerberosServiceDescriptor).getComponents(),
+              referenceName, newReferenceName);
+        }
+      }
+    }
+  }
+
+  /**
+   * Given an AbstractKerberosDescriptorContainer, iterates through its contained identity descriptors
+   * to find ones matching the reference name to change.
+   * <p/>
+   * If found, the reference name is updated to the new name.
+   *
+   * @param descriptorContainer the AbstractKerberosDescriptorContainer to update
+   * @param referenceName       the reference name to change
+   * @param newReferenceName    the new reference name
+   */
+  protected void updateKerberosDescriptorIdentityReferences(AbstractKerberosDescriptorContainer descriptorContainer,
+                                                          String referenceName,
+                                                          String newReferenceName) {
+    if (descriptorContainer != null) {
+      KerberosIdentityDescriptor identity = descriptorContainer.getIdentity(referenceName);
+      if (identity != null) {
+        identity.setName(newReferenceName);
+      }
+    }
+  }
+
+  /**
+   * Update the stored Kerberos Descriptor artifacts to conform to the new structure.
+   * <p/>
+   * Finds the relevant artifact entities and iterates through them to process each independently.
+   */
+  protected void updateKerberosDescriptorArtifacts() throws AmbariException {
+    ArtifactDAO artifactDAO = injector.getInstance(ArtifactDAO.class);
+    List<ArtifactEntity> artifactEntities = artifactDAO.findByName("kerberos_descriptor");
+
+    if (artifactEntities != null) {
+      for (ArtifactEntity artifactEntity : artifactEntities) {
+        updateKerberosDescriptorArtifact(artifactDAO, artifactEntity);
+      }
+    }
+  }
+
+  /**
+   * Retrieve the composite Kerberos Descriptor.
+   * <p>
+   * The composite Kerberos Descriptor is the cluster's stack-specific Kerberos Descriptor overlaid
+   * with changes specified by the user via the cluster's Kerberos Descriptor artifact.
+   *
+   * @param cluster the relevant cluster
+   * @return the composite Kerberos Descriptor
+   * @throws AmbariException
+   */
+  protected KerberosDescriptor getKerberosDescriptor(Cluster cluster) throws AmbariException {
+    // Get the Stack-defined Kerberos Descriptor (aka default Kerberos Descriptor)
+    AmbariMetaInfo ambariMetaInfo = injector.getInstance(AmbariMetaInfo.class);
+    StackId stackId = cluster.getCurrentStackVersion();
+    KerberosDescriptor defaultDescriptor = ambariMetaInfo.getKerberosDescriptor(stackId.getStackName(), stackId.getStackVersion());
+
+    // Get the User-set Kerberos Descriptor
+    ArtifactDAO artifactDAO = injector.getInstance(ArtifactDAO.class);
+    KerberosDescriptor artifactDescriptor = null;
+    ArtifactEntity artifactEntity = artifactDAO.findByNameAndForeignKeys("kerberos_descriptor",
+        new TreeMap<String, String>(Collections.singletonMap("cluster", String.valueOf(cluster.getClusterId()))));
+    if (artifactEntity != null) {
+      Map<String, Object> data = artifactEntity.getArtifactData();
+
+      if (data != null) {
+        artifactDescriptor = new KerberosDescriptorFactory().createInstance(data);
+      }
+    }
+
+    // Calculate and return the composite Kerberos Descriptor
+    if (defaultDescriptor == null) {
+      return artifactDescriptor;
+    } else if (artifactDescriptor == null) {
+      return defaultDescriptor;
+    } else {
+      defaultDescriptor.update(artifactDescriptor);
+      return defaultDescriptor;
+    }
+  }
+
+  /**
+   * Add a new role authorization and optionally add it to 1 or more roles.
+   * <p>
+   * The collection of roles to add the new role authorization to may be null or empty, indicating
+   * that no roles are to be altered. If set, though, each role entry in the collection must be a
+   * colon-delimited string like:  <code>ROLE:RESOURCE TYPE</code>. Examples:
+   * <ul>
+   * <li>"AMBARI.ADMINISTRATOR:AMBARI"</li>
+   * <li>"CLUSTER.ADMINISTRATOR:CLUSTER"</li>
+   * <li>"SERVICE.OPERATOR:CLUSTER"</li>
+   * </ul>
+   *
+   * @param roleAuthorizationID   the ID of the new authorization
+   * @param roleAuthorizationName the (descriptive) name of the new authorization
+   * @param applicableRoles       an optional collection of role specification to add the new authorization to
+   * @throws SQLException
+   */
+  protected void addRoleAuthorization(String roleAuthorizationID, String roleAuthorizationName, Collection<String> applicableRoles) throws SQLException {
+    if (!StringUtils.isEmpty(roleAuthorizationID)) {
+      RoleAuthorizationDAO roleAuthorizationDAO = injector.getInstance(RoleAuthorizationDAO.class);
+      RoleAuthorizationEntity roleAuthorization = roleAuthorizationDAO.findById(roleAuthorizationID);
+
+      if (roleAuthorization == null) {
+        roleAuthorization = new RoleAuthorizationEntity();
+        roleAuthorization.setAuthorizationId(roleAuthorizationID);
+        roleAuthorization.setAuthorizationName(roleAuthorizationName);
+        roleAuthorizationDAO.create(roleAuthorization);
+      }
+
+      if ((applicableRoles != null) && (!applicableRoles.isEmpty())) {
+        for (String role : applicableRoles) {
+          String[] parts = role.split("\\:");
+          addAuthorizationToRole(parts[0], parts[1], roleAuthorization);
+        }
+      }
+    }
+  }
+
+  /**
+   * Add a new authorization to the set of authorizations for a role
+   *
+   * @param roleName            the name of the role
+   * @param resourceType        the resource type of the role (AMBARI, CLUSTER, VIEW, etc...)
+   * @param roleAuthorizationID the ID of the authorization
+   * @see #addAuthorizationToRole(String, String, RoleAuthorizationEntity)
+   */
+  protected void addAuthorizationToRole(String roleName, String resourceType, String roleAuthorizationID) {
+    if (!StringUtils.isEmpty(roleAuthorizationID)) {
+      RoleAuthorizationDAO roleAuthorizationDAO = injector.getInstance(RoleAuthorizationDAO.class);
+      RoleAuthorizationEntity roleAuthorization = roleAuthorizationDAO.findById(roleAuthorizationID);
+
+      if (roleAuthorization != null) {
+        addAuthorizationToRole(roleName, resourceType, roleAuthorization);
+      }
+    }
+  }
+
+  /**
+   * Add a new authorization to the set of authorizations for a role
+   *
+   * @param roleName          the name of the role
+   * @param resourceType      the resource type of the role (AMBARI, CLUSTER, VIEW, etc...)
+   * @param roleAuthorization the authorization to add
+   */
+  protected void addAuthorizationToRole(String roleName, String resourceType, RoleAuthorizationEntity roleAuthorization) {
+    if ((roleAuthorization != null) && !StringUtils.isEmpty(roleName) && !StringUtils.isEmpty(resourceType)) {
+      PermissionDAO permissionDAO = injector.getInstance(PermissionDAO.class);
+      ResourceTypeDAO resourceTypeDAO = injector.getInstance(ResourceTypeDAO.class);
+
+      PermissionEntity role = permissionDAO.findPermissionByNameAndType(roleName, resourceTypeDAO.findByName(resourceType));
+      if (role != null) {
+        role.getAuthorizations().add(roleAuthorization);
+        permissionDAO.merge(role);
+      }
+    }
+  }
+
+  /**
+   * Add a new authorization to the set of authorizations for a role
+   *
+   * @param role                the role to add the authorization to
+   * @param roleAuthorizationID the authorization to add
+   */
+  protected void addAuthorizationToRole(PermissionEntity role, String roleAuthorizationID) {
+    if ((role != null) && !StringUtils.isEmpty(roleAuthorizationID)) {
+      RoleAuthorizationDAO roleAuthorizationDAO = injector.getInstance(RoleAuthorizationDAO.class);
+      RoleAuthorizationEntity roleAuthorization = roleAuthorizationDAO.findById(roleAuthorizationID);
+
+      if (roleAuthorization != null) {
+        PermissionDAO permissionDAO = injector.getInstance(PermissionDAO.class);
+        role.getAuthorizations().add(roleAuthorization);
+        permissionDAO.merge(role);
+      }
+    }
+  }
+
+  /**
+   * Update the specified Kerberos Descriptor artifact to conform to the new structure.
+   * <p/>
+   * On ambari version update some of identities can be moved between scopes(e.g. from service to component), so
+   * old identity need to be moved to proper place and all references for moved identity need to be updated.
+   * <p/>
+   * By default descriptor remains unchanged and this method must be overridden in child UpgradeCatalog to meet new
+   * ambari version changes in kerberos descriptors.
+   * <p/>
+   * The supplied ArtifactEntity is updated in place a merged back into the database.
+   *
+   * @param artifactDAO    the ArtifactDAO to use to store the updated ArtifactEntity
+   * @param artifactEntity the ArtifactEntity to update
+   */
+  protected void updateKerberosDescriptorArtifact(ArtifactDAO artifactDAO, ArtifactEntity artifactEntity) throws AmbariException {
+    // NOOP
   }
 
   @Override
@@ -547,8 +937,101 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   }
 
   @Override
+  public void setConfigUpdatesFileName(String ambariUpgradeConfigUpdatesFileName) {
+    this.ambariUpgradeConfigUpdatesFileName = ambariUpgradeConfigUpdatesFileName;
+  }
+
+  @Override
   public void upgradeData() throws AmbariException, SQLException {
     executeDMLUpdates();
+    updateTezHistoryUrlBase();
+  }
+
+  /**
+   * Version of the Tez view changes with every new version on Ambari. Hence the 'tez.tez-ui.history-url.base' in tez-site.xml
+   * has to be changed every time ambari update happens. This will read the latest tez-view jar file and find out the
+   * view version by reading the view.xml file inside it and update the 'tez.tez-ui.history-url.base' property in tez-site.xml
+   * with the proper value of the updated tez view version.
+   */
+  private void updateTezHistoryUrlBase() throws AmbariException {
+    AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
+    Clusters clusters = ambariManagementController.getClusters();
+
+    if (clusters != null) {
+      Map<String, Cluster> clusterMap = clusters.getClusters();
+      if (clusterMap != null && !clusterMap.isEmpty()) {
+        for (final Cluster cluster : clusterMap.values()) {
+          Set<String> installedServices = cluster.getServices().keySet();
+          if (installedServices.contains("TEZ")) {
+            Config tezSite = cluster.getDesiredConfigByType("tez-site");
+            if (tezSite != null) {
+              String currentTezHistoryUrlBase = tezSite.getProperties().get("tez.tez-ui.history-url.base");
+              if (!StringUtils.isEmpty(currentTezHistoryUrlBase)) {
+                LOG.info("Current Tez History URL base: {} ", currentTezHistoryUrlBase);
+                String newTezHistoryUrlBase = getUpdatedTezHistoryUrlBase(currentTezHistoryUrlBase);
+                LOG.info("New Tez History URL base: {} ", newTezHistoryUrlBase);
+                updateConfigurationProperties("tez-site", Collections.singletonMap("tez.tez-ui.history-url.base", newTezHistoryUrlBase), true, false);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Transforms the existing tez history url base to the new url considering the latest tez view version.
+   * @param currentTezHistoryUrlBase Existing value of the tez history url base
+   * @return the updated tez history url base
+   * @throws AmbariException if currentTezHistoryUrlBase is malformed or is not compatible with the Tez View url REGEX
+     */
+  protected String getUpdatedTezHistoryUrlBase(String currentTezHistoryUrlBase) throws AmbariException{
+    String pattern = "(.*\\/TEZ\\/)(.*)(\\/.*)";
+    Pattern regex = Pattern.compile(pattern);
+    Matcher matcher = regex.matcher(currentTezHistoryUrlBase);
+    String prefix;
+    String suffix;
+    String oldVersion;
+    if (matcher.find()) {
+      prefix = matcher.group(1);
+      oldVersion = matcher.group(2);
+      suffix = matcher.group(3);
+    } else {
+      throw new AmbariException("Cannot prepare the new value for property: 'tez.tez-ui.history-url.base' using the old value: '" + currentTezHistoryUrlBase + "'");
+    }
+
+    String latestTezViewVersion = getLatestTezViewVersion(oldVersion);
+
+    return prefix + latestTezViewVersion + suffix;
+  }
+
+  /**
+   * Given the old configured version, this method tries to get the new version of tez view by reading the tez-view jar.
+   * Assumption - only a single tez-view jar will be present in the views directory.
+   * @param oldVersion It is returned if there is a failure in finding the new version
+   * @return newVersion of the tez view. Returns oldVersion if there error encountered if finding the new version number.
+   */
+  protected String getLatestTezViewVersion(String oldVersion) {
+    File viewsDirectory = configuration.getViewsDir();
+    File[] files = viewsDirectory.listFiles(new FilenameFilter() {
+      @Override
+      public boolean accept(File dir, String name) {
+        return name.startsWith("tez-view");
+      }
+    });
+
+    if(files == null || files.length == 0) {
+      LOG.error("Could not file tez-view jar file in '{}'. Returning the old version", viewsDirectory.getAbsolutePath());
+      return oldVersion;
+    }
+    File tezViewFile = files[0];
+    try {
+      ViewConfig viewConfigFromArchive = archiveUtility.getViewConfigFromArchive(tezViewFile);
+      return viewConfigFromArchive.getVersion();
+    } catch (JAXBException | IOException e) {
+      LOG.error("Failed to read the tez view version from: {}. Returning the old version", tezViewFile);
+      return oldVersion;
+    }
   }
 
   @Override
@@ -585,4 +1068,74 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   public void onPostUpgrade() throws AmbariException, SQLException {
     // NOOP
   }
+
+  /**
+   * Validate queueNameProperty exists for configType in cluster and corresponds to one of validLeafQueues
+   * @param cluster cluster to operate with
+   * @param validLeafQueues Set of YARN capacity-scheduler leaf queues
+   * @param queueNameProperty queue name property to check and update
+   * @param configType config type name
+   * @return
+   */
+  protected boolean isQueueNameValid(Cluster cluster, Set<String> validLeafQueues, String queueNameProperty, String configType) {
+    Config site = cluster.getDesiredConfigByType(configType);
+    Map<String, String> properties = site.getProperties();
+    boolean result = properties.containsKey(queueNameProperty) && validLeafQueues.contains(properties.get(queueNameProperty));
+    if (!result){
+      LOG.info("Queue name " + queueNameProperty + " in " + configType + " not defined or not corresponds to valid capacity-scheduler queue");
+    }
+    return result;
+  }
+
+
+  /**
+   * Update property queueNameProperty from configType of cluster to first of validLeafQueues
+   * @param cluster cluster to operate with
+   * @param validLeafQueues Set of YARN capacity-scheduler leaf queues
+   * @param queueNameProperty queue name property to check and update
+   * @param configType config type name
+   * @throws AmbariException if an error occurs while updating the configurations
+   */
+  protected void updateQueueName(Cluster cluster, Set<String> validLeafQueues, String queueNameProperty, String configType) throws AmbariException {
+    String recommendQueue = validLeafQueues.iterator().next();
+    LOG.info("Update " + queueNameProperty + " in " + configType + " set to " + recommendQueue);
+    Map<String, String> updates = Collections.singletonMap(queueNameProperty, recommendQueue);
+    updateConfigurationPropertiesForCluster(cluster, configType, updates, true, true);
+  }
+
+  /**
+   * Pars Capacity Scheduler Properties and get all YARN Capacity Scheduler leaf queue names
+   * @param capacitySchedulerMap capacity-scheduler properties map
+   * @return all YARN Capacity Scheduler leaf queue names
+   */
+  protected Set<String> getCapacitySchedulerLeafQueues(Map<String, String> capacitySchedulerMap) {
+    Set<String> leafQueues= new HashSet<>();
+    Stack<String> toProcessQueues = new Stack<>();
+    if (capacitySchedulerMap.containsKey(YARN_SCHEDULER_CAPACITY_ROOT_QUEUES)){
+      StringTokenizer queueTokenizer = new StringTokenizer(capacitySchedulerMap.get(
+          YARN_SCHEDULER_CAPACITY_ROOT_QUEUES), ",");
+      while (queueTokenizer.hasMoreTokens()){
+        toProcessQueues.push(queueTokenizer.nextToken());
+      }
+    }
+    while (!toProcessQueues.empty()){
+      String queue = toProcessQueues.pop();
+      String queueKey = YARN_SCHEDULER_CAPACITY_ROOT_QUEUE + "." + queue + "." + QUEUES;
+      if (capacitySchedulerMap.containsKey(queueKey)){
+        StringTokenizer queueTokenizer = new StringTokenizer(capacitySchedulerMap.get(queueKey), ",");
+        while (queueTokenizer.hasMoreTokens()){
+          toProcessQueues.push(queue + "." + queueTokenizer.nextToken());
+        }
+      } else {
+        if (!queue.endsWith(".")){
+          String queueName = queue.substring(queue.lastIndexOf('.')+1);
+          leafQueues.add(queueName);
+        } else {
+          LOG.warn("Queue " + queue + " is not valid");
+        }
+      }
+    }
+    return leafQueues;
+  }
+
 }

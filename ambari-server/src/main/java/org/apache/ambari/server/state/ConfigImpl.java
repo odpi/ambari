@@ -23,9 +23,15 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import org.apache.ambari.annotations.TransactionalLock;
+import org.apache.ambari.annotations.TransactionalLock.LockArea;
+import org.apache.ambari.annotations.TransactionalLock.LockType;
+import org.apache.ambari.server.events.ClusterConfigChangedEvent;
+import org.apache.ambari.server.events.publishers.AmbariEventPublisher;
 import org.apache.ambari.server.orm.dao.ClusterDAO;
 import org.apache.ambari.server.orm.dao.ServiceConfigDAO;
 import org.apache.ambari.server.orm.entities.ClusterConfigEntity;
@@ -34,6 +40,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.assistedinject.Assisted;
@@ -58,6 +65,7 @@ public class ConfigImpl implements Config {
   private volatile Map<String, String> properties;
   private volatile Map<String, Map<String, String>> propertiesAttributes;
   private ClusterConfigEntity entity;
+  private volatile Map<PropertyInfo.PropertyType, Set<String>> propertiesTypes;
 
   @Inject
   private ClusterDAO clusterDAO;
@@ -67,6 +75,9 @@ public class ConfigImpl implements Config {
 
   @Inject
   private ServiceConfigDAO serviceConfigDAO;
+
+  @Inject
+  private AmbariEventPublisher eventPublisher;
 
   @AssistedInject
   public ConfigImpl(@Assisted Cluster cluster, @Assisted String type, @Assisted Map<String, String> properties,
@@ -81,6 +92,7 @@ public class ConfigImpl implements Config {
     stackId = cluster.getDesiredStackVersion();
 
     injector.injectMembers(this);
+    propertiesTypes = cluster.getConfigPropertiesTypes(type);
   }
 
 
@@ -96,6 +108,7 @@ public class ConfigImpl implements Config {
 
     this.entity = entity;
     injector.injectMembers(this);
+    propertiesTypes = cluster.getConfigPropertiesTypes(type);
   }
 
   /**
@@ -117,6 +130,26 @@ public class ConfigImpl implements Config {
       readWriteLock.readLock().unlock();
     }
 
+  }
+
+  @Override
+  public Map<PropertyInfo.PropertyType, Set<String>> getPropertiesTypes() {
+    readWriteLock.readLock().lock();
+    try {
+      return propertiesTypes;
+    } finally {
+      readWriteLock.readLock().unlock();
+    }
+  }
+
+  @Override
+  public void setPropertiesTypes(Map<PropertyInfo.PropertyType, Set<String>> propertiesTypes) {
+    readWriteLock.writeLock().lock();
+    try {
+      this.propertiesTypes = propertiesTypes;
+    } finally {
+      readWriteLock.writeLock().unlock();
+    }
   }
 
   @Override
@@ -192,7 +225,15 @@ public class ConfigImpl implements Config {
       readWriteLock.writeLock().lock();
       try {
         if (properties == null) {
-          properties = gson.<Map<String, String>>fromJson(entity.getData(), Map.class);
+          try {
+            properties = gson.<Map<String, String>>fromJson(entity.getData(), Map.class);
+          } catch (JsonSyntaxException e){
+            String msg = String.format(
+                "Malformed JSON stored in the database for %s configuration record with config_id %d",
+                entity.getType(), entity.getConfigId());
+            LOG.error(msg);
+            throw new JsonSyntaxException(msg, e);
+          }
         }
       } finally {
         readWriteLock.writeLock().unlock();
@@ -318,6 +359,9 @@ public class ConfigImpl implements Config {
     persist(true);
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   @Transactional
   public void persist(boolean newConfig) {
@@ -366,8 +410,8 @@ public class ConfigImpl implements Config {
           // if the configuration was found, then update it
           if (null != entity) {
             LOG.debug(
-                "Updating {} version {} with new configurations; a new version will not be created",
-                getType(), getVersion());
+                    "Updating {} version {} with new configurations; a new version will not be created",
+                    getType(), getVersion());
 
             entity.setData(gson.toJson(getProperties()));
 
@@ -384,6 +428,10 @@ public class ConfigImpl implements Config {
       cluster.getClusterGlobalLock().writeLock().unlock();
     }
 
-  }
+    // broadcast the change event for the configuration
+    ClusterConfigChangedEvent event = new ClusterConfigChangedEvent(cluster.getClusterName(),
+        getType(), getTag(), getVersion());
 
+      eventPublisher.publish(event);
+  }
 }

@@ -18,6 +18,7 @@
 
 package org.apache.ambari.server.state.cluster;
 
+import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -38,7 +39,6 @@ import org.apache.ambari.server.DuplicateResourceException;
 import org.apache.ambari.server.HostNotFoundException;
 import org.apache.ambari.server.agent.DiskInfo;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.events.HostAddedEvent;
 import org.apache.ambari.server.events.HostRegisteredEvent;
 import org.apache.ambari.server.events.HostRemovedEvent;
@@ -55,16 +55,26 @@ import org.apache.ambari.server.orm.dao.RequestOperationLevelDAO;
 import org.apache.ambari.server.orm.dao.ResourceTypeDAO;
 import org.apache.ambari.server.orm.dao.ServiceConfigDAO;
 import org.apache.ambari.server.orm.dao.StackDAO;
+import org.apache.ambari.server.orm.dao.TopologyHostInfoDAO;
+import org.apache.ambari.server.orm.dao.TopologyHostRequestDAO;
+import org.apache.ambari.server.orm.dao.TopologyLogicalTaskDAO;
+import org.apache.ambari.server.orm.dao.TopologyRequestDAO;
 import org.apache.ambari.server.orm.entities.ClusterEntity;
 import org.apache.ambari.server.orm.entities.ClusterVersionEntity;
 import org.apache.ambari.server.orm.entities.HostEntity;
+import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
 import org.apache.ambari.server.orm.entities.PermissionEntity;
 import org.apache.ambari.server.orm.entities.PrivilegeEntity;
 import org.apache.ambari.server.orm.entities.ResourceEntity;
 import org.apache.ambari.server.orm.entities.ResourceTypeEntity;
 import org.apache.ambari.server.orm.entities.StackEntity;
+import org.apache.ambari.server.orm.entities.TopologyHostRequestEntity;
+import org.apache.ambari.server.orm.entities.TopologyLogicalRequestEntity;
+import org.apache.ambari.server.orm.entities.TopologyLogicalTaskEntity;
+import org.apache.ambari.server.orm.entities.TopologyRequestEntity;
 import org.apache.ambari.server.security.SecurityHelper;
 import org.apache.ambari.server.security.authorization.AmbariGrantedAuthority;
+import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.state.AgentVersion;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
@@ -73,13 +83,16 @@ import org.apache.ambari.server.state.HostHealthStatus;
 import org.apache.ambari.server.state.HostHealthStatus.HealthStatus;
 import org.apache.ambari.server.state.HostState;
 import org.apache.ambari.server.state.RepositoryInfo;
+import org.apache.ambari.server.state.SecurityType;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.configgroup.ConfigGroup;
 import org.apache.ambari.server.state.host.HostFactory;
+import org.apache.ambari.server.utils.RetryHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.GrantedAuthority;
 
+import com.google.common.collect.Sets;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import com.google.inject.persist.Transactional;
@@ -130,11 +143,17 @@ public class ClustersImpl implements Clusters {
   @Inject
   private HostFactory hostFactory;
   @Inject
-  private Configuration configuration;
-  @Inject
   private AmbariMetaInfo ambariMetaInfo;
   @Inject
   private SecurityHelper securityHelper;
+  @Inject
+  private TopologyLogicalTaskDAO topologyLogicalTaskDAO;
+  @Inject
+  private TopologyHostRequestDAO topologyHostRequestDAO;
+  @Inject
+  private TopologyRequestDAO topologyRequestDAO;
+  @Inject
+  private TopologyHostInfoDAO topologyHostInfoDAO;
 
   /**
    * Data access object for stacks.
@@ -175,7 +194,7 @@ public class ClustersImpl implements Clusters {
   }
 
   @Transactional
-  private void loadClustersAndHosts() {
+  void loadClustersAndHosts() {
     for (ClusterEntity clusterEntity : clusterDAO.findAll()) {
       Cluster currentCluster = clusterFactory.create(clusterEntity);
       clusters.put(clusterEntity.getClusterName(), currentCluster);
@@ -199,6 +218,12 @@ public class ClustersImpl implements Clusters {
 
   @Override
   public void addCluster(String clusterName, StackId stackId)
+    throws AmbariException {
+    addCluster(clusterName, stackId, null);
+  }
+
+  @Override
+  public void addCluster(String clusterName, StackId stackId, SecurityType securityType)
       throws AmbariException {
     checkLoaded();
 
@@ -212,11 +237,11 @@ public class ClustersImpl implements Clusters {
       }
 
       // create an admin resource to represent this cluster
-      ResourceTypeEntity resourceTypeEntity = resourceTypeDAO.findById(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
+      ResourceTypeEntity resourceTypeEntity = resourceTypeDAO.findById(ResourceType.CLUSTER.getId());
       if (resourceTypeEntity == null) {
         resourceTypeEntity = new ResourceTypeEntity();
-        resourceTypeEntity.setId(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE);
-        resourceTypeEntity.setName(ResourceTypeEntity.CLUSTER_RESOURCE_TYPE_NAME);
+        resourceTypeEntity.setId(ResourceType.CLUSTER.getId());
+        resourceTypeEntity.setName(ResourceType.CLUSTER.name());
         resourceTypeEntity = resourceTypeDAO.merge(resourceTypeEntity);
       }
 
@@ -232,6 +257,9 @@ public class ClustersImpl implements Clusters {
       clusterEntity.setClusterName(clusterName);
       clusterEntity.setDesiredStack(stackEntity);
       clusterEntity.setResource(resourceEntity);
+      if (securityType != null) {
+        clusterEntity.setSecurityType(securityType);
+      }
 
       try {
         clusterDAO.create(clusterEntity);
@@ -264,7 +292,23 @@ public class ClustersImpl implements Clusters {
     if (null == cluster) {
       throw new ClusterNotFoundException(clusterName);
     }
+    RetryHelper.addAffectedCluster(cluster);
+    return cluster;
+  }
 
+  @Override
+  public Cluster getCluster(Long clusterId)
+    throws AmbariException {
+    checkLoaded();
+
+    Cluster cluster = null;
+    if (clusterId != null) {
+      cluster = clustersById.get(clusterId);
+    }
+    if (null == cluster) {
+      throw new ClusterNotFoundException(clusterId);
+    }
+    RetryHelper.addAffectedCluster(cluster);
     return cluster;
   }
 
@@ -319,20 +363,17 @@ public class ClustersImpl implements Clusters {
   public Set<Cluster> getClustersForHost(String hostname)
       throws AmbariException {
     checkLoaded();
-    r.lock();
-    try {
-      if(!hostClusterMap.containsKey(hostname)){
-            throw new HostNotFoundException(hostname);
-      }
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Looking up clusters for hostname"
-            + ", hostname=" + hostname
-            + ", mappedClusters=" + hostClusterMap.get(hostname).size());
-      }
-      return Collections.unmodifiableSet(hostClusterMap.get(hostname));
-    } finally {
-      r.unlock();
+    Set<Cluster> clusters = hostClusterMap.get(hostname);
+    if(clusters == null){
+      throw new HostNotFoundException(hostname);
     }
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Looking up clusters for hostname"
+          + ", hostname=" + hostname
+          + ", mappedClusters=" + clusters.size());
+    }
+    return Collections.unmodifiableSet(clusters);
+
   }
 
   @Override
@@ -353,15 +394,44 @@ public class ClustersImpl implements Clusters {
     return hosts.containsKey(hostname);
   }
 
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public boolean isHostMappedToCluster(String clusterName, String hostName) {
+    checkLoaded();
+
+    Set<Cluster> clusters = hostClusterMap.get(hostName);
+    for (Cluster cluster : clusters) {
+      if (clusterName.equals(cluster.getClusterName())) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   @Override
   public Host getHostById(Long hostId) throws AmbariException {
     checkLoaded();
 
-    if (!hosts.containsKey(hostId)) {
+    if (!hostsById.containsKey(hostId)) {
       throw new HostNotFoundException("Host Id = " + hostId);
     }
 
-    return hosts.get(hostId);
+    return hostsById.get(hostId);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public void updateHostMappings(Host host) {
+    Long hostId = host.getHostId();
+
+    if (null != hostId) {
+      hostsById.put(hostId, host);
+    }
   }
 
   /**
@@ -374,11 +444,8 @@ public class ClustersImpl implements Clusters {
   public void addHost(String hostname) throws AmbariException {
     checkLoaded();
 
-    String duplicateMessage = "Duplicate entry for Host"
-        + ", hostName= " + hostname;
-
     if (hosts.containsKey(hostname)) {
-      throw new AmbariException(duplicateMessage);
+      throw new AmbariException(MessageFormat.format("Duplicate entry for Host {0}", hostname));
     }
 
     w.lock();
@@ -396,7 +463,11 @@ public class ClustersImpl implements Clusters {
       host.setHealthStatus(new HostHealthStatus(HealthStatus.UNKNOWN, ""));
       host.setHostAttributes(new HashMap<String, String>());
       host.setState(HostState.INIT);
+
+      // the hosts by ID map is updated separately since the host has not yet
+      // been persisted yet - the below event is what causes the persist
       hosts.put(hostname, host);
+
       hostClusterMap.put(hostname, Collections.newSetFromMap(new ConcurrentHashMap<Cluster, Boolean>()));
 
       if (LOG.isDebugEnabled()) {
@@ -534,7 +605,7 @@ public class ClustersImpl implements Clusters {
           + " support host's os type" + ", clusterName=" + clusterName
           + ", clusterStackId=" + cluster.getDesiredStackVersion().getStackId()
           + ", hostname=" + hostname + ", hostOsFamily=" + host.getOsFamily();
-      LOG.warn(message);
+      LOG.error(message);
       throw new AmbariException(message);
     }
 
@@ -574,7 +645,7 @@ public class ClustersImpl implements Clusters {
   }
 
   @Transactional
-  private void mapHostClusterEntities(String hostName, Long clusterId) {
+  void mapHostClusterEntities(String hostName, Long clusterId) {
     HostEntity hostEntity = hostDAO.findByName(hostName);
     ClusterEntity clusterEntity = clusterDAO.findById(clusterId);
 
@@ -708,10 +779,11 @@ public class ClustersImpl implements Clusters {
   @Override
   public void unmapHostFromCluster(String hostname, String clusterName) throws AmbariException {
     final Cluster cluster = getCluster(clusterName);
-    unmapHostFromClusters(hostname, new HashSet<Cluster>() {{ add(cluster); }});
+    unmapHostFromClusters(hostname, Sets.newHashSet(cluster));
   }
 
-  public void unmapHostFromClusters(String hostname, Set<Cluster> clusters) throws AmbariException {
+  @Transactional
+  void unmapHostFromClusters(String hostname, Set<Cluster> clusters) throws AmbariException {
     Host host = null;
     HostEntity hostEntity = null;
 
@@ -756,7 +828,7 @@ public class ClustersImpl implements Clusters {
   }
 
   @Transactional
-  private void unmapHostClusterEntities(String hostName, long clusterId) {
+  void unmapHostClusterEntities(String hostName, long clusterId) {
     HostEntity hostEntity = hostDAO.findByName(hostName);
     ClusterEntity clusterEntity = clusterDAO.findById(clusterId);
 
@@ -764,11 +836,11 @@ public class ClustersImpl implements Clusters {
     clusterEntity.getHostEntities().remove(hostEntity);
 
     hostDAO.merge(hostEntity);
-    clusterDAO.merge(clusterEntity);
+    clusterDAO.merge(clusterEntity, true);
   }
 
   @Transactional
-  private void deleteConfigGroupHostMapping(Long hostId) throws AmbariException {
+  void deleteConfigGroupHostMapping(Long hostId) throws AmbariException {
     // Remove Config group mapping
     for (Cluster cluster : clusters.values()) {
       for (ConfigGroup configGroup : cluster.getConfigGroups().values()) {
@@ -793,6 +865,10 @@ public class ClustersImpl implements Clusters {
     // a copy of this to ensure that we can pass in the original set of
     // clusters that the host belonged to to the host removal event
     Set<Cluster> clusters = hostClusterMap.get(hostname);
+    if (clusters == null) {
+      throw new HostNotFoundException(hostname);
+    }
+
     Set<Cluster> hostsClusters = new HashSet<>(clusters);
 
     deleteHostEntityRelationships(hostname);
@@ -813,7 +889,7 @@ public class ClustersImpl implements Clusters {
    * @throws AmbariException
    */
   @Transactional
-  private void deleteHostEntityRelationships(String hostname) throws AmbariException {
+  void deleteHostEntityRelationships(String hostname) throws AmbariException {
     checkLoaded();
 
     if (!hosts.containsKey(hostname)) {
@@ -831,11 +907,43 @@ public class ClustersImpl implements Clusters {
       // Remove from all clusters in the cluster_host_mapping table.
       // This will also remove from kerberos_principal_hosts, hostconfigmapping, and configgrouphostmapping
       Set<Cluster> clusters = hostClusterMap.get(hostname);
+      Set<Long> clusterIds = Sets.newHashSet();
+      for (Cluster cluster: clusters) {
+        clusterIds.add(cluster.getClusterId());
+      }
+
+
+
 
       unmapHostFromClusters(hostname, clusters);
       hostDAO.refresh(entity);
 
       hostVersionDAO.removeByHostName(hostname);
+
+      // Remove blueprint tasks before hostRoleCommands
+      // TopologyLogicalTask owns the OneToOne relationship but Cascade is on HostRoleCommandEntity
+      if (entity.getHostRoleCommandEntities() != null) {
+        for (HostRoleCommandEntity hrcEntity : entity.getHostRoleCommandEntities()) {
+          TopologyLogicalTaskEntity topologyLogicalTaskEnity = hrcEntity.getTopologyLogicalTaskEntity();
+          if (topologyLogicalTaskEnity != null) {
+            topologyLogicalTaskDAO.remove(topologyLogicalTaskEnity);
+            hrcEntity.setTopologyLogicalTaskEntity(null);
+          }
+        }
+      }
+      for (Long clusterId: clusterIds) {
+        for (TopologyRequestEntity topologyRequestEntity: topologyRequestDAO.findByClusterId(clusterId)) {
+          TopologyLogicalRequestEntity topologyLogicalRequestEntity = topologyRequestEntity.getTopologyLogicalRequestEntity();
+
+          for (TopologyHostRequestEntity topologyHostRequestEntity: topologyLogicalRequestEntity.getTopologyHostRequestEntities()) {
+            if (hostname.equals(topologyHostRequestEntity.getHostName())) {
+              topologyHostRequestDAO.remove(topologyHostRequestEntity);
+            }
+          }
+        }
+      }
+
+
       entity.setHostRoleCommandEntities(null);
       hostRoleCommandDAO.removeByHostId(entity.getHostId());
 
@@ -844,6 +952,7 @@ public class ClustersImpl implements Clusters {
       hostConfigMappingDAO.removeByHostId(entity.getHostId());
       serviceConfigDAO.removeHostFromServiceConfigs(entity.getHostId());
       requestOperationLevelDAO.removeByHostId(entity.getHostId());
+      topologyHostInfoDAO.removeByHost(entity);
 
       // Remove from dictionaries
       hosts.remove(hostname);
@@ -865,8 +974,7 @@ public class ClustersImpl implements Clusters {
 
     Cluster cluster = findCluster(clusterName);
 
-    return (cluster == null && readOnly) || !configuration.getApiAuthentication()
-      || checkPermission(cluster, readOnly);
+    return (cluster == null && readOnly) || checkPermission(cluster, readOnly);
   }
 
   @Override
@@ -883,6 +991,28 @@ public class ClustersImpl implements Clusters {
     return cluster == null ? Collections.<String, Object>emptyMap() : cluster.getSessionAttributes();
   }
 
+  /**
+   * Returns the number of hosts that form the cluster identified by the given name.
+   *
+   * @param clusterName the name that identifies the cluster
+   * @return number of hosts that form the cluster
+   */
+  @Override
+  public int getClusterSize(String clusterName) {
+    checkLoaded();
+    r.lock();
+
+    int hostCount = 0;
+
+    if (clusterHostMap.containsKey(clusterName) && clusterHostMap.get(clusterName) != null) {
+      hostCount = clusterHostMap.get(clusterName).size();
+    }
+
+    r.unlock();
+
+    return hostCount;
+
+  }
 
   // ----- helper methods ---------------------------------------------------
 
@@ -921,7 +1051,7 @@ public class ClustersImpl implements Clusters {
         Integer                permissionId    = privilegeEntity.getPermission().getId();
 
         // admin has full access
-        if (permissionId.equals(PermissionEntity.AMBARI_ADMIN_PERMISSION)) {
+        if (permissionId.equals(PermissionEntity.AMBARI_ADMINISTRATOR_PERMISSION)) {
           return true;
         }
         if (cluster != null) {

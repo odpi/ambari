@@ -26,18 +26,7 @@ describe('App.WidgetWizardStep2Controller', function () {
     content: Em.Object.create()
   });
 
-  describe("#isEditWidget", function () {
-    it("empty name", function () {
-      controller.set('content.controllerName', '');
-      controller.propertyDidChange('isEditWidget');
-      expect(controller.get('isEditWidget')).to.be.false;
-    });
-    it("correct name", function () {
-      controller.set('content.controllerName', 'widgetEditController');
-      controller.propertyDidChange('isEditWidget');
-      expect(controller.get('isEditWidget')).to.be.true;
-    });
-  });
+  App.TestAliases.testAsComputedEqual(controller, 'isEditWidget', 'content.controllerName', 'widgetEditController');
 
   describe("#filteredMetrics", function () {
     var testCases = [
@@ -94,12 +83,14 @@ describe('App.WidgetWizardStep2Controller', function () {
   describe("#isSubmitDisabled", function () {
     beforeEach(function () {
       this.expressionFunc = sinon.stub(controller, 'isExpressionComplete');
+      this.metricsFunc = sinon.stub(controller, 'isExpressionWithMetrics');
       this.graphFunc = sinon.stub(controller, 'isGraphDataComplete');
       this.templateFunc = sinon.stub(controller, 'isTemplateDataComplete');
       controller.set('expressions', ['']);
     });
     afterEach(function () {
       this.expressionFunc.restore();
+      this.metricsFunc.restore();
       this.graphFunc.restore();
       this.templateFunc.restore();
       controller.get('expressions').clear();
@@ -113,13 +104,31 @@ describe('App.WidgetWizardStep2Controller', function () {
       controller.set('widgetPropertiesViews', []);
       controller.set('content.widgetType', 'NUMBER');
       this.expressionFunc.returns(true);
+      this.metricsFunc.returns(true);
       controller.propertyDidChange('isSubmitDisabled');
       expect(controller.get('isSubmitDisabled')).to.be.false;
     });
-    it("invalid number widget", function () {
+    it("invalid number widget with metrics", function () {
       controller.set('widgetPropertiesViews', []);
       controller.set('content.widgetType', 'NUMBER');
       this.expressionFunc.returns(false);
+      this.metricsFunc.returns(true);
+      controller.propertyDidChange('isSubmitDisabled');
+      expect(controller.get('isSubmitDisabled')).to.be.true;
+    });
+    it("number widget w/o metrics", function () {
+      controller.set('widgetPropertiesViews', []);
+      controller.set('content.widgetType', 'NUMBER');
+      this.expressionFunc.returns(true);
+      this.metricsFunc.returns(false);
+      controller.propertyDidChange('isSubmitDisabled');
+      expect(controller.get('isSubmitDisabled')).to.be.true;
+    });
+    it("invalid number widget w/o metrics", function () {
+      controller.set('widgetPropertiesViews', []);
+      controller.set('content.widgetType', 'NUMBER');
+      this.expressionFunc.returns(false);
+      this.metricsFunc.returns(false);
       controller.propertyDidChange('isSubmitDisabled');
       expect(controller.get('isSubmitDisabled')).to.be.true;
     });
@@ -163,89 +172,204 @@ describe('App.WidgetWizardStep2Controller', function () {
     var testCases = [
       {
         expression: null,
-        result: false
+        result: false,
+        title: 'no expression'
       },
       {
         expression: Em.Object.create({isInvalid: true}),
-        result: false
-      },
-      {
-        expression: Em.Object.create({isInvalid: false, isEmpty: false}),
-        result: true
+        result: false,
+        title: 'invalid expression'
       },
       {
         expression: Em.Object.create({isInvalid: false, isEmpty: true}),
-        result: false
+        result: false,
+        title: 'empty expression'
+      },
+      {
+        expression: Em.Object.create({isInvalid: false, isEmpty: false}),
+        result: true,
+        title: 'complete expression'
       }
     ];
     testCases.forEach(function (test) {
-      it("expression = " + test.expression, function () {
+      it(test.title, function () {
         expect(controller.isExpressionComplete(test.expression)).to.equal(test.result);
       });
     });
   });
 
+  describe("#isExpressionWithMetrics()", function () {
+    var testCases = [
+      {
+        expression: null,
+        result: false,
+        title: 'no expression'
+      },
+      {
+        expression: Em.Object.create(),
+        result: false,
+        title: 'no data array'
+      },
+      {
+        expression: Em.Object.create({data: []}),
+        result: false,
+        title: 'empty data array'
+      },
+      {
+        expression: Em.Object.create({data: [{isMetric: false}]}),
+        result: false,
+        title: 'no metrics'
+      },
+      {
+        expression: Em.Object.create({data: [{isMetric: false}, {isMetric: true}]}),
+        result: true,
+        title: 'metrics included'
+      }
+    ];
+    testCases.forEach(function (test) {
+      it(test.title, function () {
+        expect(controller.isExpressionWithMetrics(test.expression)).to.equal(test.result);
+      });
+    });
+  });
+
   describe("#isGraphDataComplete()", function () {
+    var mock,
+      cases = [
+        {
+          dataSets: [],
+          isGraphDataComplete: false,
+          title: 'dataSets is empty'
+        },
+        {
+          dataSets: [Em.Object.create({label: ''})],
+          isGraphDataComplete: false,
+          title: 'label is empty'
+        },
+        {
+          dataSets: [Em.Object.create({label: 'abc'})],
+          isExpressionComplete: false,
+          isGraphDataComplete: false,
+          title: 'expression is not complete'
+        },
+        {
+          dataSets: [Em.Object.create({label: 'abc'})],
+          isExpressionComplete: true,
+          isExpressionWithMetrics: false,
+          isGraphDataComplete: false,
+          title: 'no metrics in expression'
+        },
+        {
+          dataSets: [Em.Object.create({label: 'abc', expression: {data: [{isMetric: true}]}})],
+          isExpressionComplete: true,
+          isExpressionWithMetrics: true,
+          isGraphDataComplete: true,
+          title: 'expression is complete and contains metrics'
+        }
+      ];
+
     beforeEach(function () {
-      this.mock = sinon.stub(controller, 'isExpressionComplete');
+      mock = {
+        isExpressionComplete: sinon.stub(controller, 'isExpressionComplete'),
+        isExpressionWithMetrics: sinon.stub(controller, 'isExpressionWithMetrics')
+      };
     });
     afterEach(function () {
-      this.mock.restore();
+      mock.isExpressionComplete.restore();
+      mock.isExpressionWithMetrics.restore();
     });
-    it("dataSets is empty", function () {
-      expect(controller.isGraphDataComplete([])).to.be.false;
-    });
-    it("label is empty", function () {
-      expect(controller.isGraphDataComplete([Em.Object.create({label: ''})])).to.be.false;
-    });
-    it("expression is not complete", function () {
-      this.mock.returns(false);
-      expect(controller.isGraphDataComplete([Em.Object.create({label: 'abc'})])).to.be.false;
-    });
-    it("expression is complete", function () {
-      this.mock.returns(true);
-      expect(controller.isGraphDataComplete([Em.Object.create({label: 'abc'})])).to.be.true;
+
+    cases.forEach(function (item) {
+      it(item.title, function () {
+        mock.isExpressionComplete.returns(item.isExpressionComplete);
+        mock.isExpressionWithMetrics.returns(item.isExpressionWithMetrics);
+        expect(controller.isGraphDataComplete(item.dataSets)).to.equal(item.isGraphDataComplete);
+      });
     });
   });
 
   describe("#isTemplateDataComplete()", function () {
+    var mock,
+      cases = [
+        {
+          expressions: [],
+          isTemplateDataComplete: false,
+          title: 'expressions is empty'
+        },
+        {
+          expressions: [{}],
+          templateValue: '',
+          isTemplateDataComplete: false,
+          title: 'templateValue is empty'
+        },
+        {
+          expressions: [{}],
+          templateValue: 'abc',
+          isExpressionComplete: false,
+          isTemplateDataComplete: false,
+          title: 'expression is not complete'
+        },
+        {
+          expressions: [{}],
+          templateValue: 'abc',
+          isExpressionComplete: true,
+          isExpressionWithMetrics: false,
+          isTemplateDataComplete: false,
+          title: 'no metrics in expression'
+        },
+        {
+          expressions: [{data: [{isMetric: true}]}],
+          templateValue: 'abc',
+          isExpressionComplete: true,
+          isExpressionWithMetrics: true,
+          isTemplateDataComplete: true,
+          title: 'expression is complete and contains metrics'
+        }
+      ];
+
     beforeEach(function () {
-      this.mock = sinon.stub(controller, 'isExpressionComplete');
+      mock = {
+        isExpressionComplete: sinon.stub(controller, 'isExpressionComplete'),
+        isExpressionWithMetrics: sinon.stub(controller, 'isExpressionWithMetrics')
+      };
     });
     afterEach(function () {
-      this.mock.restore();
+      mock.isExpressionComplete.restore();
+      mock.isExpressionWithMetrics.restore();
     });
-    it("expressions is empty", function () {
-      expect(controller.isTemplateDataComplete([])).to.be.false;
-    });
-    it("templateValue is empty", function () {
-      expect(controller.isTemplateDataComplete([{}], '')).to.be.false;
-    });
-    it("expression is not complete", function () {
-      this.mock.returns(false);
-      expect(controller.isTemplateDataComplete([{}], 'abc')).to.be.false;
-    });
-    it("expression is complete", function () {
-      this.mock.returns(true);
-      expect(controller.isTemplateDataComplete([{}], 'abc')).to.be.true;
+
+    cases.forEach(function (item) {
+      it(item.title, function () {
+        mock.isExpressionComplete.returns(item.isExpressionComplete);
+        mock.isExpressionWithMetrics.returns(item.isExpressionWithMetrics);
+        expect(controller.isTemplateDataComplete(item.expressions, item.templateValue)).to.equal(item.isTemplateDataComplete);
+      });
     });
   });
 
   describe("#addDataSet()", function () {
-    it("", function () {
+
+    beforeEach(function () {
       controller.get('dataSets').clear();
       controller.addDataSet(null, true);
-      expect(controller.get('dataSets').objectAt(0).get('id')).to.equal(1);
-      expect(controller.get('dataSets').objectAt(0).get('isRemovable')).to.equal(false);
       controller.addDataSet(null);
-      expect(controller.get('dataSets').objectAt(1).get('id')).to.equal(2);
-      expect(controller.get('dataSets').objectAt(1).get('isRemovable')).to.equal(true);
+    });
+
+    afterEach(function() {
       controller.get('dataSets').clear();
+    });
+
+    it('check id', function () {
+      expect(controller.get('dataSets').mapProperty('id')).to.eql([1, 2]);
+    });
+
+    it('check isRemovable', function () {
+      expect(controller.get('dataSets').mapProperty('isRemovable')).to.eql([false, true]);
     });
   });
 
   describe("#removeDataSet()", function () {
-    it("", function () {
+    it('should remove selected dataSet', function () {
       var dataSet = Em.Object.create();
       controller.get('dataSets').pushObject(dataSet);
       controller.removeDataSet({context: dataSet});
@@ -254,20 +378,29 @@ describe('App.WidgetWizardStep2Controller', function () {
   });
 
   describe("#addExpression()", function () {
-    it("", function () {
+
+    beforeEach(function () {
       controller.get('expressions').clear();
       controller.addExpression(null, true);
-      expect(controller.get('expressions').objectAt(0).get('id')).to.equal(1);
-      expect(controller.get('expressions').objectAt(0).get('isRemovable')).to.equal(false);
       controller.addExpression(null);
-      expect(controller.get('expressions').objectAt(1).get('id')).to.equal(2);
-      expect(controller.get('expressions').objectAt(1).get('isRemovable')).to.equal(true);
+    });
+
+    afterEach(function () {
       controller.get('expressions').clear();
     });
+
+    it('check id', function () {
+      expect(controller.get('expressions').mapProperty('id')).to.eql([1, 2]);
+    });
+
+    it('check isRemovable', function () {
+      expect(controller.get('expressions').mapProperty('isRemovable')).to.eql([false, true]);
+    });
+
   });
 
   describe("#removeExpression()", function () {
-    it("", function () {
+    it("should remove selected expression", function () {
       var expression = Em.Object.create();
       controller.get('expressions').pushObject(expression);
       controller.removeExpression({context: expression});
@@ -276,115 +409,245 @@ describe('App.WidgetWizardStep2Controller', function () {
   });
 
   describe("#initWidgetData()", function () {
-    it("new data", function () {
-      controller.set('expressions', []);
-      controller.set('dataSets', []);
-      controller.get('content').setProperties({
-        widgetProperties: {a: 1},
-        widgetValues: [1],
-        widgetMetrics: [2]
+
+    describe("new data", function () {
+
+      beforeEach(function () {
+        controller.set('expressions', []);
+        controller.set('dataSets', []);
+        controller.get('content').setProperties({
+          widgetProperties: {a: 1},
+          widgetValues: [1],
+          widgetMetrics: [2]
+        });
+
+        controller.initWidgetData();
       });
 
-      controller.initWidgetData();
+      it('widgetProperties is {a: 1}', function () {
+        expect(controller.get('widgetProperties')).to.eql({a: 1});
+      });
 
-      expect(controller.get('widgetProperties')).to.eql({a: 1});
-      expect(controller.get('widgetValues')).to.eql([]);
-      expect(controller.get('widgetMetrics')).to.eql([]);
-      expect(controller.get('expressions')).to.not.be.empty;
-      expect(controller.get('dataSets')).to.not.be.empty;
+      it('widgetValues is []', function () {
+        expect(controller.get('widgetValues')).to.eql([]);
+      });
+
+      it('widgetMetrics is []', function () {
+        expect(controller.get('widgetMetrics')).to.eql([]);
+      });
+
+      it('expressions is not empty', function () {
+        expect(controller.get('expressions')).to.not.be.empty;
+      });
+
+      it('dataSets is not empty', function () {
+        expect(controller.get('dataSets')).to.not.be.empty;
+      });
+
     });
-    it("previously edited", function () {
-      controller.set('expressions', [{}]);
-      controller.set('dataSets', [{}]);
-      controller.get('content').setProperties({
-        widgetProperties: {a: 1},
-        widgetValues: [1],
-        widgetMetrics: [2]
+
+    describe("previously edited", function () {
+
+      beforeEach(function () {
+        controller.set('expressions', [{}]);
+        controller.set('dataSets', [{}]);
+        controller.get('content').setProperties({
+          widgetProperties: {a: 1},
+          widgetValues: [1],
+          widgetMetrics: [2]
+        });
+
+        controller.initWidgetData();
       });
 
-      controller.initWidgetData();
+      it('widgetProperties is {a: 1}', function () {
+        expect(controller.get('widgetProperties')).to.eql({a: 1});
+      });
+      it('widgetValues is [1]', function () {
+        expect(controller.get('widgetValues')).to.eql([1]);
+      });
+      it('widgetMetrics is  [2]', function () {
+        expect(controller.get('widgetMetrics')).to.eql([2]);
+      });
+      it('expressions is not empty', function () {
+        expect(controller.get('expressions')).to.not.be.empty;
+      });
+      it('dataSets is not empty', function () {
+        expect(controller.get('dataSets')).to.not.be.empty;
+      });
 
-      expect(controller.get('widgetProperties')).to.eql({a: 1});
-      expect(controller.get('widgetValues')).to.eql([1]);
-      expect(controller.get('widgetMetrics')).to.eql([2]);
-      expect(controller.get('expressions')).to.not.be.empty;
-      expect(controller.get('dataSets')).to.not.be.empty;
     });
   });
 
   describe("#updateExpressions()", function () {
+
     beforeEach(function () {
       sinon.stub(controller, 'parseExpression').returns({values: [1], metrics: [1]});
       sinon.stub(controller, 'parseTemplateExpression').returns({values: [1], metrics: [1]});
       sinon.stub(controller, 'parseGraphDataset').returns({values: [1], metrics: [1]});
     });
+
     afterEach(function () {
       controller.parseExpression.restore();
       controller.parseTemplateExpression.restore();
       controller.parseGraphDataset.restore();
     });
-    it("empty expressions", function () {
-      controller.set('expressions', []);
-      controller.updateExpressions();
-      expect(controller.parseExpression.called).to.be.false;
-      expect(controller.parseTemplateExpression.called).to.be.false;
-      expect(controller.parseGraphDataset.called).to.be.false;
-      expect(controller.get('widgetValues')).to.be.empty;
-      expect(controller.get('widgetMetrics')).to.be.empty;
+
+    describe("empty expressions", function () {
+
+      beforeEach(function () {
+        controller.set('expressions', []);
+        controller.updateExpressions();
+      });
+
+      it('parseExpression is not called', function () {
+        expect(controller.parseExpression.called).to.be.false;
+      });
+      it('parseTemplateExpression is not called', function () {
+        expect(controller.parseTemplateExpression.called).to.be.false;
+      });
+      it('parseGraphDataset is not called', function () {
+        expect(controller.parseGraphDataset.called).to.be.false;
+      });
+      it('widgetValues is empty', function () {
+        expect(controller.get('widgetValues')).to.be.empty;
+      });
+      it('widgetMetrics is empty', function () {
+        expect(controller.get('widgetMetrics')).to.be.empty;
+      });
     });
-    it("empty dataSets", function () {
-      controller.set('dataSets', []);
-      controller.updateExpressions();
-      expect(controller.parseExpression.called).to.be.false;
-      expect(controller.parseTemplateExpression.called).to.be.false;
-      expect(controller.parseGraphDataset.called).to.be.false;
-      expect(controller.get('widgetValues')).to.be.empty;
-      expect(controller.get('widgetMetrics')).to.be.empty;
+
+    describe("empty dataSets", function () {
+
+      beforeEach(function () {
+        controller.set('dataSets', []);
+        controller.updateExpressions();
+      });
+
+      it('parseExpression is not called', function () {
+        expect(controller.parseExpression.called).to.be.false;
+      });
+      it('parseTemplateExpression is not called', function () {
+        expect(controller.parseTemplateExpression.called).to.be.false;
+      });
+      it('parseGraphDataset is not called', function () {
+        expect(controller.parseGraphDataset.called).to.be.false;
+      });
+      it('widgetValues is empty', function () {
+        expect(controller.get('widgetValues')).to.be.empty;
+      });
+      it('widgetMetrics is empty', function () {
+        expect(controller.get('widgetMetrics')).to.be.empty;
+      });
     });
-    it("GAUGE widget", function () {
-      controller.set('expressions', [{}]);
-      controller.set('content.widgetType', 'GAUGE');
-      controller.set('dataSets', [{}]);
-      //controller.updateExpressions();
-      expect(controller.parseExpression.calledOnce).to.be.true;
-      expect(controller.parseTemplateExpression.called).to.be.false;
-      expect(controller.parseGraphDataset.called).to.be.false;
-      expect(controller.get('widgetValues')).to.not.be.empty;
-      expect(controller.get('widgetMetrics')).to.not.be.empty;
+
+    describe("GAUGE widget", function () {
+
+      beforeEach(function () {
+        controller.set('expressions', [{}]);
+        controller.set('content.widgetType', 'GAUGE');
+        controller.set('dataSets', [{}]);
+        //controller.updateExpressions();
+      });
+
+
+      it('parseExpression is called once', function () {
+        expect(controller.parseExpression.calledOnce).to.be.true;
+      });
+      it('parseTemplateExpression is not called', function () {
+        expect(controller.parseTemplateExpression.called).to.be.false;
+      });
+      it('parseGraphDataset is not called', function () {
+        expect(controller.parseGraphDataset.called).to.be.false;
+      });
+      it('widgetValues is not empty', function () {
+        expect(controller.get('widgetValues')).to.not.be.empty;
+      });
+      it('widgetMetrics is not empty', function () {
+        expect(controller.get('widgetMetrics')).to.not.be.empty;
+      });
     });
-    it("NUMBER widget", function () {
-      controller.set('expressions', [{}]);
-      controller.set('content.widgetType', 'NUMBER');
-      controller.set('dataSets', [{}]);
-      //controller.updateExpressions();
-      expect(controller.parseExpression.calledOnce).to.be.true;
-      expect(controller.parseTemplateExpression.called).to.be.false;
-      expect(controller.parseGraphDataset.called).to.be.false;
-      expect(controller.get('widgetValues')).to.not.be.empty;
-      expect(controller.get('widgetMetrics')).to.not.be.empty;
+
+    describe("NUMBER widget", function () {
+
+      beforeEach(function () {
+        controller.set('expressions', [{}]);
+        controller.set('content.widgetType', 'NUMBER');
+        controller.set('dataSets', [{}]);
+        //controller.updateExpressions();
+      });
+
+
+      it('parseExpression is called once', function () {
+        expect(controller.parseExpression.calledOnce).to.be.true;
+      });
+      it('parseTemplateExpression is not called', function () {
+        expect(controller.parseTemplateExpression.called).to.be.false;
+      });
+      it('parseGraphDataset is not called', function () {
+        expect(controller.parseGraphDataset.called).to.be.false;
+      });
+      it('widgetValues is not empty', function () {
+        expect(controller.get('widgetValues')).to.not.be.empty;
+      });
+      it('widgetMetrics is not empty', function () {
+        expect(controller.get('widgetMetrics')).to.not.be.empty;
+      });
     });
-    it("TEMPLATE widget", function () {
-      controller.set('expressions', [{}]);
-      controller.set('content.widgetType', 'TEMPLATE');
-      controller.set('dataSets', [{}]);
-      //controller.updateExpressions();
-      expect(controller.parseExpression.called).to.be.false;
-      expect(controller.parseTemplateExpression.calledOnce).to.be.true;
-      expect(controller.parseGraphDataset.called).to.be.false;
-      expect(controller.get('widgetValues')).to.not.be.empty;
-      expect(controller.get('widgetMetrics')).to.not.be.empty;
+
+    describe("TEMPLATE widget", function () {
+
+      beforeEach(function () {
+        controller.set('expressions', [{}]);
+        controller.set('content.widgetType', 'TEMPLATE');
+        controller.set('dataSets', [{}]);
+        //controller.updateExpressions();
+      });
+
+
+      it('parseExpression is not called', function () {
+        expect(controller.parseExpression.called).to.be.false;
+      });
+      it('parseTemplateExpression is called once', function () {
+        expect(controller.parseTemplateExpression.calledOnce).to.be.true;
+      });
+      it('parseGraphDataset is not called', function () {
+        expect(controller.parseGraphDataset.called).to.be.false;
+      });
+      it('widgetValues is not empty', function () {
+        expect(controller.get('widgetValues')).to.not.be.empty;
+      });
+      it('widgetMetrics is not empty', function () {
+        expect(controller.get('widgetMetrics')).to.not.be.empty;
+      });
     });
-    it("GRAPH widget", function () {
-      controller.set('expressions', [{}]);
-      controller.set('content.widgetType', 'GRAPH');
-      controller.set('dataSets', [{}]);
-      //controller.updateExpressions();
-      expect(controller.parseExpression.called).to.be.false;
-      expect(controller.parseTemplateExpression.called).to.be.false;
-      expect(controller.parseGraphDataset.calledOnce).to.be.true;
-      expect(controller.get('widgetValues')).to.not.be.empty;
-      expect(controller.get('widgetMetrics')).to.not.be.empty;
+
+    describe("GRAPH widget", function () {
+
+      beforeEach(function () {
+        controller.set('expressions', [{}]);
+        controller.set('content.widgetType', 'GRAPH');
+        controller.set('dataSets', [{}]);
+        //controller.updateExpressions();
+      });
+
+      it('parseExpression is not called', function () {
+        expect(controller.parseExpression.called).to.be.false;
+      });
+      it('parseTemplateExpression is not called', function () {
+        expect(controller.parseTemplateExpression.called).to.be.false;
+      });
+      it('parseGraphDataset is called once', function () {
+        expect(controller.parseGraphDataset.calledOnce).to.be.true;
+      });
+      it('widgetValues is not empty', function () {
+        expect(controller.get('widgetValues')).to.not.be.empty;
+      });
+      it('widgetMetrics is not empty', function () {
+        expect(controller.get('widgetMetrics')).to.not.be.empty;
+      });
     });
+
   });
 
   describe("#parseGraphDataset()", function () {
@@ -593,9 +856,9 @@ describe('App.WidgetWizardStep2Controller', function () {
     afterEach(function () {
       App.router.send.restore();
     });
-    it("", function () {
+    it("user is moved to the next step", function () {
       controller.next();
-      expect(App.router.send.calledWith('next'));
+      expect(App.router.send.calledWith('next')).to.be.true;
     });
   });
 });

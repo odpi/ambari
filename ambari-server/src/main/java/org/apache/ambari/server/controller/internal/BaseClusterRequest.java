@@ -18,11 +18,6 @@
 
 package org.apache.ambari.server.controller.internal;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-
 import org.apache.ambari.server.api.predicate.InvalidQueryException;
 import org.apache.ambari.server.api.predicate.QueryLexer;
 import org.apache.ambari.server.api.predicate.Token;
@@ -34,16 +29,29 @@ import org.apache.ambari.server.topology.BlueprintFactory;
 import org.apache.ambari.server.topology.Configuration;
 import org.apache.ambari.server.topology.HostGroupInfo;
 import org.apache.ambari.server.topology.InvalidTopologyTemplateException;
+import org.apache.ambari.server.topology.SecurityConfiguration;
 import org.apache.ambari.server.topology.TopologyRequest;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Provides common cluster request functionality.
  */
 public abstract class BaseClusterRequest implements TopologyRequest {
   /**
+   * Support for controlling whether Install and Start tasks are created on
+   * blueprint deploy by default.
+   */
+  public static final String PROVISION_ACTION_PROPERTY = "provision_action";
+  /**
    * host group info map
    */
   protected final Map<String, HostGroupInfo> hostGroupInfoMap = new HashMap<String, HostGroupInfo>();
+
+  protected ProvisionAction provisionAction;
 
   /**
    * cluster id
@@ -60,6 +68,11 @@ public abstract class BaseClusterRequest implements TopologyRequest {
    * configuration
    */
   protected Configuration configuration;
+
+  /**
+   * security configuration
+   */
+  protected SecurityConfiguration securityConfiguration;
 
   /**
    * blueprint factory
@@ -162,6 +175,11 @@ public abstract class BaseClusterRequest implements TopologyRequest {
     return blueprintFactory;
   }
 
+
+  public SecurityConfiguration getSecurityConfiguration() {
+    return securityConfiguration;
+  }
+
   /**
    * Get the host resource provider instance.
    *
@@ -173,5 +191,16 @@ public abstract class BaseClusterRequest implements TopologyRequest {
           ensureResourceProvider(Resource.Type.Host);
     }
     return hostResourceProvider;
+  }
+
+  /**
+   * Get requested @ProvisionClusterRequest.ProvisionAction
+   */
+  public ProvisionAction getProvisionAction() {
+    return provisionAction;
+  }
+
+  public void setProvisionAction(ProvisionAction provisionAction) {
+    this.provisionAction = provisionAction;
   }
 }

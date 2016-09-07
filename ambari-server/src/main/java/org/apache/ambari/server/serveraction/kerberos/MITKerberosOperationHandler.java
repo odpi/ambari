@@ -18,17 +18,20 @@
 
 package org.apache.ambari.server.serveraction.kerberos;
 
+import org.apache.ambari.server.security.credential.PrincipalKeyCredential;
 import org.apache.ambari.server.utils.ShellCommandUtil;
+import org.apache.commons.lang.ArrayUtils;
+import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.text.NumberFormat;
 import java.text.ParseException;
 import java.util.ArrayList;
-import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -73,7 +76,7 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
    * <p/>
    * The kerberosConfiguration Map is not being used.
    *
-   * @param administratorCredentials a KerberosCredential containing the administrative credentials
+   * @param administratorCredentials a PrincipalKeyCredential containing the administrative credential
    *                                 for the relevant KDC
    * @param realm                    a String declaring the default Kerberos realm (or domain)
    * @param kerberosConfiguration    a Map of key/value pairs containing data from the kerberos-env configuration set
@@ -83,11 +86,11 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
    * @throws KerberosOperationException           if an unexpected error occurred
    */
   @Override
-  public void open(KerberosCredential administratorCredentials, String realm,
+  public void open(PrincipalKeyCredential administratorCredentials, String realm,
                    Map<String, String> kerberosConfiguration)
       throws KerberosOperationException {
 
-    setAdministratorCredentials(administratorCredentials);
+    setAdministratorCredential(administratorCredentials);
     setDefaultRealm(realm);
 
     if (kerberosConfiguration != null) {
@@ -143,7 +146,7 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
       return false;
     } else {
       // Create the KAdmin query to execute:
-      ShellCommandUtil.Result result = invokeKAdmin(String.format("get_principal %s", principal));
+      ShellCommandUtil.Result result = invokeKAdmin(String.format("get_principal %s", principal), null);
 
       // If there is data from STDOUT, see if the following string exists:
       //    Principal: <principal>
@@ -163,10 +166,11 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
    * @param password  a String containing the password to use when creating the principal
    * @param service   a boolean value indicating whether the principal is to be created as a service principal or not
    * @return an Integer declaring the generated key number
-   * @throws KerberosKDCConnectionException       if a connection to the KDC cannot be made
-   * @throws KerberosAdminAuthenticationException if the administrator credentials fail to authenticate
-   * @throws KerberosRealmException               if the realm does not map to a KDC
-   * @throws KerberosOperationException           if an unexpected error occurred
+   * @throws KerberosKDCConnectionException          if a connection to the KDC cannot be made
+   * @throws KerberosAdminAuthenticationException    if the administrator credentials fail to authenticate
+   * @throws KerberosRealmException                  if the realm does not map to a KDC
+   * @throws KerberosPrincipalAlreadyExistsException if the principal already exists
+   * @throws KerberosOperationException              if an unexpected error occurred
    */
   @Override
   public Integer createPrincipal(String principal, String password, boolean service)
@@ -176,21 +180,24 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
       throw new KerberosOperationException("This operation handler has not been opened");
     }
 
-    if ((principal == null) || principal.isEmpty()) {
+    if (StringUtils.isEmpty(principal)) {
       throw new KerberosOperationException("Failed to create new principal - no principal specified");
-    } else if ((password == null) || password.isEmpty()) {
+    } else if (StringUtils.isEmpty(password)) {
       throw new KerberosOperationException("Failed to create new principal - no password specified");
     } else {
       String createAttributes = getCreateAttributes();
       // Create the kdamin query:  add_principal <-randkey|-pw <password>> [<options>] <principal>
-      ShellCommandUtil.Result result = invokeKAdmin(String.format("add_principal -pw \"%s\" %s %s",
-          password, (createAttributes == null) ? "" : createAttributes, principal));
+      ShellCommandUtil.Result result = invokeKAdmin(String.format("add_principal %s %s",
+          (createAttributes == null) ? "" : createAttributes, principal), password);
 
       // If there is data from STDOUT, see if the following string exists:
       //    Principal "<principal>" created
       String stdOut = result.getStdout();
+      String stdErr = result.getStderr();
       if ((stdOut != null) && stdOut.contains(String.format("Principal \"%s\" created", principal))) {
         return getKeyNumber(principal);
+      } else if ((stdErr != null) && stdErr.contains(String.format("Principal or policy already exists while creating \"%s\"", principal))) {
+        throw new KerberosPrincipalAlreadyExistsException(principal);
       } else {
         LOG.error("Failed to execute kadmin query: add_principal -pw \"********\" {} {}\nSTDOUT: {}\nSTDERR: {}",
             (createAttributes == null) ? "" : createAttributes, principal, stdOut, result.getStderr());
@@ -209,10 +216,11 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
    * @param principal a String containing the principal to update
    * @param password  a String containing the password to set
    * @return an Integer declaring the new key number
-   * @throws KerberosKDCConnectionException       if a connection to the KDC cannot be made
-   * @throws KerberosAdminAuthenticationException if the administrator credentials fail to authenticate
-   * @throws KerberosRealmException               if the realm does not map to a KDC
-   * @throws KerberosOperationException           if an unexpected error occurred
+   * @throws KerberosKDCConnectionException         if a connection to the KDC cannot be made
+   * @throws KerberosAdminAuthenticationException   if the administrator credentials fail to authenticate
+   * @throws KerberosRealmException                 if the realm does not map to a KDC
+   * @throws KerberosPrincipalDoesNotExistException if the principal does not exist
+   * @throws KerberosOperationException             if an unexpected error occurred
    */
   @Override
   public Integer setPrincipalPassword(String principal, String password) throws KerberosOperationException {
@@ -220,15 +228,26 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
       throw new KerberosOperationException("This operation handler has not been opened");
     }
 
-    if ((principal == null) || principal.isEmpty()) {
+    if (StringUtils.isEmpty(principal)) {
       throw new KerberosOperationException("Failed to set password - no principal specified");
-    } else if ((password == null) || password.isEmpty()) {
+    } else if (StringUtils.isEmpty(password)) {
       throw new KerberosOperationException("Failed to set password - no password specified");
     } else {
       // Create the kdamin query:  change_password <-randkey|-pw <password>> <principal>
-      invokeKAdmin(String.format("change_password -pw \"%s\" %s", password, principal));
+      ShellCommandUtil.Result result = invokeKAdmin(String.format("change_password %s", principal), password);
 
-      return getKeyNumber(principal);
+      String stdOut = result.getStdout();
+      String stdErr = result.getStderr();
+      if ((stdOut != null) && stdOut.contains(String.format("Password for \"%s\" changed", principal))) {
+        return getKeyNumber(principal);
+      } else if ((stdErr != null) && stdErr.contains("Principal does not exist")) {
+        throw new KerberosPrincipalDoesNotExistException(principal);
+      } else {
+        LOG.error("Failed to execute kadmin query: change_password -pw \"********\" {} \nSTDOUT: {}\nSTDERR: {}",
+            principal, stdOut, result.getStderr());
+        throw new KerberosOperationException(String.format("Failed to update password for %s\nSTDOUT: %s\nSTDERR: %s",
+            principal, stdOut, result.getStderr()));
+      }
     }
   }
 
@@ -250,10 +269,10 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
       throw new KerberosOperationException("This operation handler has not been opened");
     }
 
-    if ((principal == null) || principal.isEmpty()) {
+    if (StringUtils.isEmpty(principal)) {
       throw new KerberosOperationException("Failed to remove new principal - no principal specified");
     } else {
-      ShellCommandUtil.Result result = invokeKAdmin(String.format("delete_principal -force %s", principal));
+      ShellCommandUtil.Result result = invokeKAdmin(String.format("delete_principal -force %s", principal), null);
 
       // If there is data from STDOUT, see if the following string exists:
       //    Principal "<principal>" created
@@ -313,11 +332,11 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
       throw new KerberosOperationException("This operation handler has not been opened");
     }
 
-    if ((principal == null) || principal.isEmpty()) {
+    if (StringUtils.isEmpty(principal)) {
       throw new KerberosOperationException("Failed to get key number for principal  - no principal specified");
     } else {
       // Create the kdamin query:  get_principal <principal>
-      ShellCommandUtil.Result result = invokeKAdmin(String.format("get_principal %s", principal));
+      ShellCommandUtil.Result result = invokeKAdmin(String.format("get_principal %s", principal), null);
 
       String stdOut = result.getStdout();
       if (stdOut == null) {
@@ -354,124 +373,112 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
   /**
    * Invokes the kadmin shell command to issue queries
    *
-   * @param query a String containing the query to send to the kdamin command
+   * @param query        a String containing the query to send to the kdamin command
+   * @param userPassword a String containing the user's password to set or update if necessary,
+   *                     null if not needed
    * @return a ShellCommandUtil.Result containing the result of the operation
    * @throws KerberosKDCConnectionException       if a connection to the KDC cannot be made
    * @throws KerberosAdminAuthenticationException if the administrator credentials fail to authenticate
    * @throws KerberosRealmException               if the realm does not map to a KDC
    * @throws KerberosOperationException           if an unexpected error occurred
    */
-  protected ShellCommandUtil.Result invokeKAdmin(String query)
+  protected ShellCommandUtil.Result invokeKAdmin(String query, String userPassword)
       throws KerberosOperationException {
-    ShellCommandUtil.Result result = null;
-
-    if ((query == null) || query.isEmpty()) {
+    if (StringUtils.isEmpty(query)) {
       throw new KerberosOperationException("Missing kadmin query");
     }
-    KerberosCredential administratorCredentials = getAdministratorCredentials();
+
+    ShellCommandUtil.Result result;
+    PrincipalKeyCredential administratorCredential = getAdministratorCredential();
     String defaultRealm = getDefaultRealm();
 
     List<String> command = new ArrayList<String>();
-    File tempKeytabFile = null;
 
-    try {
-      String adminPrincipal = (administratorCredentials == null)
-          ? null
-          : administratorCredentials.getPrincipal();
+    String adminPrincipal = (administratorCredential == null)
+        ? null
+        : administratorCredential.getPrincipal();
 
-      if ((adminPrincipal == null) || adminPrincipal.isEmpty()) {
-        // Set the kdamin interface to be kadmin.local
-        if((executableKadminLocal == null) || executableKadminLocal.isEmpty()) {
-          throw new KerberosOperationException("No path for kadmin.local is available - this KerberosOperationHandler may not have been opened.");
-        }
+    ShellCommandUtil.InteractiveHandler interactiveHandler = null;
 
-        command.add(executableKadminLocal);
+    if (StringUtils.isEmpty(adminPrincipal)) {
+      // Set the kdamin interface to be kadmin.local
+      if (StringUtils.isEmpty(executableKadminLocal)) {
+        throw new KerberosOperationException("No path for kadmin.local is available - this KerberosOperationHandler may not have been opened.");
+      }
+
+      command.add(executableKadminLocal);
+
+      if (userPassword != null) {
+        interactiveHandler = new InteractivePasswordHandler(null, userPassword);
+      }
+    } else {
+      if (StringUtils.isEmpty(executableKadmin)) {
+        throw new KerberosOperationException("No path for kadmin is available - this KerberosOperationHandler may not have been opened.");
+      }
+      char[] adminPassword = administratorCredential.getKey();
+
+      // Set the kdamin interface to be kadmin
+      command.add(executableKadmin);
+
+      // Add explicit KDC admin host, if available
+      if (!StringUtils.isEmpty(getAdminServerHost())) {
+        command.add("-s");
+        command.add(getAdminServerHost());
+      }
+
+      // Add the administrative principal
+      command.add("-p");
+      command.add(adminPrincipal);
+
+      if (!ArrayUtils.isEmpty(adminPassword)) {
+        interactiveHandler = new InteractivePasswordHandler(String.valueOf(adminPassword), userPassword);
+      } else if (userPassword != null) {
+        interactiveHandler = new InteractivePasswordHandler(null, userPassword);
+      }
+    }
+
+    if (!StringUtils.isEmpty(defaultRealm)) {
+      // Add default realm clause
+      command.add("-r");
+      command.add(defaultRealm);
+    }
+
+    // Add kadmin query
+    command.add("-q");
+    command.add(query);
+
+    if (LOG.isDebugEnabled()) {
+      LOG.debug(String.format("Executing: %s", command));
+    }
+
+    result = executeCommand(command.toArray(new String[command.size()]), null, interactiveHandler);
+
+    if (!result.isSuccessful()) {
+      String message = String.format("Failed to execute kadmin:\n\tCommand: %s\n\tExitCode: %s\n\tSTDOUT: %s\n\tSTDERR: %s",
+          command, result.getExitCode(), result.getStdout(), result.getStderr());
+      LOG.warn(message);
+
+      // Test STDERR to see of any "expected" error conditions were encountered...
+      String stdErr = result.getStderr();
+      // Did admin credentials fail?
+      if (stdErr.contains("Client not found in Kerberos database")) {
+        throw new KerberosAdminAuthenticationException(stdErr);
+      } else if (stdErr.contains("Incorrect password while initializing")) {
+        throw new KerberosAdminAuthenticationException(stdErr);
+      }
+      // Did we fail to connect to the KDC?
+      else if (stdErr.contains("Cannot contact any KDC")) {
+        throw new KerberosKDCConnectionException(stdErr);
+      } else if (stdErr.contains("Cannot resolve network address for admin server in requested realm while initializing kadmin interface")) {
+        throw new KerberosKDCConnectionException(stdErr);
+      }
+      // Was the realm invalid?
+      else if (stdErr.contains("Missing parameters in krb5.conf required for kadmin client")) {
+        throw new KerberosRealmException(stdErr);
+      } else if (stdErr.contains("Cannot find KDC for requested realm while initializing kadmin interface")) {
+        throw new KerberosRealmException(stdErr);
       } else {
-        if((executableKadmin == null) || executableKadmin.isEmpty()) {
-          throw new KerberosOperationException("No path for kadmin is available - this KerberosOperationHandler may not have been opened.");
-        }
-        char[] adminPassword = administratorCredentials.getPassword();
-        String adminKeyTab = administratorCredentials.getKeytab();
-
-        // Set the kdamin interface to be kadmin
-        command.add(executableKadmin);
-
-        // Add explicit KDC admin host, if available
-        if (getAdminServerHost() != null) {
-          command.add("-s");
-          command.add(getAdminServerHost());
-        }
-
-        // Add the administrative principal
-        command.add("-p");
-        command.add(adminPrincipal);
-
-        if ((adminKeyTab != null) && !adminKeyTab.isEmpty()) {
-          tempKeytabFile = createKeytabFile(adminKeyTab);
-
-          if (tempKeytabFile != null) {
-            // Add keytab file administrative principal
-            command.add("-k");
-            command.add("-t");
-            command.add(tempKeytabFile.getAbsolutePath());
-          }
-        } else if (adminPassword != null) {
-          // Add password for administrative principal
-          command.add("-w");
-          command.add(String.valueOf(adminPassword));
-        }
-      }
-
-      if ((defaultRealm != null) && !defaultRealm.isEmpty()) {
-        // Add default realm clause
-        command.add("-r");
-        command.add(defaultRealm);
-      }
-
-      // Add kadmin query
-      command.add("-q");
-      command.add(query);
-
-      if(LOG.isDebugEnabled()) {
-        LOG.debug(String.format("Executing: %s", createCleanCommand(command)));
-      }
-
-      result = executeCommand(command.toArray(new String[command.size()]));
-
-      if (!result.isSuccessful()) {
-        String message = String.format("Failed to execute kadmin:\n\tCommand: %s\n\tExitCode: %s\n\tSTDOUT: %s\n\tSTDERR: %s",
-            createCleanCommand(command), result.getExitCode(), result.getStdout(), result.getStderr());
-        LOG.warn(message);
-
-        // Test STDERR to see of any "expected" error conditions were encountered...
-        String stdErr = result.getStderr();
-        // Did admin credentials fail?
-        if (stdErr.contains("Client not found in Kerberos database")) {
-          throw new KerberosAdminAuthenticationException(stdErr);
-        } else if (stdErr.contains("Incorrect password while initializing")) {
-          throw new KerberosAdminAuthenticationException(stdErr);
-        }
-        // Did we fail to connect to the KDC?
-        else if (stdErr.contains("Cannot contact any KDC")) {
-          throw new KerberosKDCConnectionException(stdErr);
-        } else if (stdErr.contains("Cannot resolve network address for admin server in requested realm while initializing kadmin interface")) {
-          throw new KerberosKDCConnectionException(stdErr);
-        }
-        // Was the realm invalid?
-        else if (stdErr.contains("Missing parameters in krb5.conf required for kadmin client")) {
-          throw new KerberosRealmException(stdErr);
-        } else if (stdErr.contains("Cannot find KDC for requested realm while initializing kadmin interface")) {
-          throw new KerberosRealmException(stdErr);
-        } else {
-          throw new KerberosOperationException("Unexpected error condition executing the kadmin command");
-        }
-      }
-    } finally {
-      // If a temporary keytab file was created, clean it up.
-      if (tempKeytabFile != null) {
-        if (!tempKeytabFile.delete()) {
-          tempKeytabFile.deleteOnExit();
-        }
+        throw new KerberosOperationException("Unexpected error condition executing the kadmin command");
       }
     }
 
@@ -479,41 +486,43 @@ public class MITKerberosOperationHandler extends KerberosOperationHandler {
   }
 
   /**
-   * Build the kadmin command string, replacing administrator password with "********"
-   *
-   * @param command a List of items making up the command
-   * @return the cleaned command string
+   * InteractivePasswordHandler is a {@link org.apache.ambari.server.utils.ShellCommandUtil.InteractiveHandler}
+   * implementation that answers queries from kadmin or kdamin.local command for the admin and/or user
+   * passwords.
    */
-  private String createCleanCommand(List<String> command) {
-    StringBuilder cleanedCommand = new StringBuilder();
-    Iterator<String> iterator = command.iterator();
+  protected static class InteractivePasswordHandler implements ShellCommandUtil.InteractiveHandler {
+    /**
+     * The queue of responses to return
+     */
+    private final Queue<String> responses = new LinkedList<String>();
 
-    if (iterator.hasNext()) {
-      cleanedCommand.append(iterator.next());
-    }
 
-    while (iterator.hasNext()) {
-      String part = iterator.next();
+    /**
+     * Constructor.
+     *
+     * @param adminPassword the KDC administrator's password (optional)
+     * @param userPassword  the user's password (optional)
+     */
+    public InteractivePasswordHandler(String adminPassword, String userPassword) {
 
-      cleanedCommand.append(' ');
-
-      if (part.contains(" ")) {
-        cleanedCommand.append('"');
-        cleanedCommand.append(part);
-        cleanedCommand.append('"');
-      } else {
-        cleanedCommand.append(part);
+      if (adminPassword != null) {
+        responses.offer(adminPassword);
       }
 
-      if ("-w".equals(part)) {
-        // Skip the password and use "********" instead
-        if (iterator.hasNext()) {
-          iterator.next();
-        }
-        cleanedCommand.append(" ********");
+      if (userPassword != null) {
+        responses.offer(userPassword);
+        responses.offer(userPassword);  // Add a 2nd time for the password "confirmation" request
       }
     }
 
-    return cleanedCommand.toString();
+    @Override
+    public boolean done() {
+      return responses.size() == 0;
+    }
+
+    @Override
+    public String getResponse(String query) {
+      return responses.poll();
+    }
   }
 }

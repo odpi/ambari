@@ -34,27 +34,60 @@ from resource_management.core import ExecuteTimeoutException
 from resource_management.core.providers import Provider
 from resource_management.core.logger import Logger
 
-def _ensure_metadata(path, user, group, mode=None, cd_access=None):
+def assert_not_safemode_folder(path, safemode_folders):
+  if os.path.abspath(path) in safemode_folders:
+    raise Fail(("Not performing recursive operation ('recursive_ownership' or 'recursive_mode_flags') on folder '%s'" +
+    " as this can damage the system. Please pass changed safemode_folders parameter to Directory resource if you really intend to do this.") % (path))
+
+def _ensure_metadata(path, user, group, mode=None, cd_access=None, recursive_ownership=False, recursive_mode_flags=None, recursion_follow_links=False, safemode_folders=[]):
   user_entity = group_entity = None
+  _user_entity = _group_entity = None
 
   if user or group:
     stat = sudo.stat(path)
 
   if user:
-    _user_entity = pwd.getpwnam(user)
+    try:
+      _user_entity = pwd.getpwnam(user)
+    except KeyError:
+      raise Fail("User '{0}' doesn't exist".format(user))
+    
     if stat.st_uid != _user_entity.pw_uid:
       user_entity = _user_entity
       Logger.info(
         "Changing owner for %s from %d to %s" % (path, stat.st_uid, user))
       
   if group:
-    _group_entity = grp.getgrnam(group)
+    try:
+      _group_entity = grp.getgrnam(group)
+    except KeyError:
+      raise Fail("Group '{0}' doesn't exist".format(group))
+    
     if stat.st_gid != _group_entity.gr_gid:
       group_entity = _group_entity
       Logger.info(
         "Changing group for %s from %d to %s" % (path, stat.st_gid, group))
   
+  if recursive_ownership:
+    assert_not_safemode_folder(path, safemode_folders)
+    sudo.chown_recursive(path, _user_entity, _group_entity, recursion_follow_links)
+  
   sudo.chown(path, user_entity, group_entity)
+  
+  if recursive_mode_flags:
+    if not isinstance(recursive_mode_flags, dict):
+      raise Fail("'recursion_follow_links' value should be a dictionary with 'f' and(or) 'd' key (for file and directory permission flags)")
+    
+    regexp_to_match = "^({0},)*({0})$".format("[ugoa]+[+=-][rwx]+" )
+    for key, flags in recursive_mode_flags.iteritems():
+      if key != 'd' and key != 'f':
+        raise Fail("'recursive_mode_flags' with value '%s' has unknown key '%s', only keys 'f' and 'd' are valid" % (str(recursive_mode_flags), str(key)))
+          
+      if not re.match(regexp_to_match, flags):
+        raise Fail("'recursive_mode_flags' found '%s', but should value format have the following format: [ugoa...][[+-=][perms...]...]." % (str(flags)))
+    
+    assert_not_safemode_folder(path, safemode_folders)
+    sudo.chmod_recursive(path, recursive_mode_flags, recursion_follow_links)
 
   if mode:
     stat = sudo.stat(path)
@@ -67,7 +100,7 @@ def _ensure_metadata(path, user, group, mode=None, cd_access=None):
     if not re.match("^[ugoa]+$", cd_access):
       raise Fail("'cd_acess' value '%s' is not valid" % (cd_access))
     
-    dir_path = path
+    dir_path = re.sub('/+', '/', path)
     while dir_path != os.sep:
       if sudo.path_isdir(dir_path):
         sudo.chmod_extended(dir_path, cd_access+"+rx")
@@ -131,28 +164,25 @@ class FileProvider(Provider):
 class DirectoryProvider(Provider):
   def action_create(self):
     path = self.resource.path
-    
+
     if not sudo.path_exists(path):
-      Logger.info("Creating directory %s" % self.resource)
+      Logger.info("Creating directory %s since it doesn't exist." % self.resource)
       
       # dead links should be followed, else we gonna have failures on trying to create directories on top of them.
       if self.resource.follow:
-        followed_links = []
+        # Follow symlink until the tail.
+        followed_links = set()
         while sudo.path_lexists(path):
           if path in followed_links:
             raise Fail("Applying %s failed, looped symbolic links found while resolving %s" % (self.resource, path))
-          followed_links.append(path)
+          followed_links.add(path)
           path = sudo.readlink(path)
           
         if path != self.resource.path:
           Logger.info("Following the link {0} to {1} to create the directory".format(self.resource.path, path))
-      
-      if self.resource.recursive:
-        if self.resource.recursive_permission:
-          DirectoryProvider.makedirs_and_set_permission_recursively(path, self.resource.owner,
-                                                                    self.resource.group, self.resource.mode)
-        else:
-          sudo.makedirs(path, self.resource.mode or 0755)
+
+      if self.resource.create_parents:
+        sudo.makedirs(path, self.resource.mode or 0755)
       else:
         dirname = os.path.dirname(path)
         if not sudo.path_isdir(dirname):
@@ -164,24 +194,9 @@ class DirectoryProvider(Provider):
       raise Fail("Applying %s failed, file %s already exists" % (self.resource, path))
     
     _ensure_metadata(path, self.resource.owner, self.resource.group,
-                        mode=self.resource.mode, cd_access=self.resource.cd_access)
-
-  @staticmethod
-  def makedirs_and_set_permission_recursively(path, owner, group, mode):
-    folders=[]
-    path,folder=os.path.split(path)
-    while folder!="":
-      folders.append(folder)
-      path,folder=os.path.split(path)
-    if path!="":
-      folders.append(path)
-    folders.reverse()
-    dir_prefix=""
-    for folder in folders:
-      dir_prefix=os.path.join(dir_prefix, folder)
-      if not sudo.path_exists(dir_prefix):
-        sudo.makedir(dir_prefix, mode or 0755)
-        _ensure_metadata(dir_prefix, None, None, mode)
+                        mode=self.resource.mode, cd_access=self.resource.cd_access,
+                        recursive_ownership=self.resource.recursive_ownership, recursive_mode_flags=self.resource.recursive_mode_flags, 
+                        recursion_follow_links=self.resource.recursion_follow_links, safemode_folders=self.resource.safemode_folders)
 
   def action_delete(self):
     path = self.resource.path
@@ -224,20 +239,9 @@ class LinkProvider(Provider):
 
   def action_delete(self):
     path = self.resource.path
-    if sudo.path_exists(path):
+    if sudo.path_lexists(path):
       Logger.info("Deleting %s" % self.resource)
       sudo.unlink(path)
-
-
-def _preexec_fn(resource):
-  def preexec():
-    if resource.group:
-      gid = grp.getgrnam(resource.group).gr_gid
-      os.setgid(gid)
-      os.setegid(gid)
-
-  return preexec
-
 
 class ExecuteProvider(Provider):
   def action_run(self):
@@ -248,8 +252,7 @@ class ExecuteProvider(Provider):
       
     shell.checked_call(self.resource.command, logoutput=self.resource.logoutput,
                         cwd=self.resource.cwd, env=self.resource.environment,
-                        preexec_fn=_preexec_fn(self.resource), user=self.resource.user,
-                        wait_for_finish=self.resource.wait_for_finish,
+                        user=self.resource.user, wait_for_finish=self.resource.wait_for_finish,
                         timeout=self.resource.timeout,on_timeout=self.resource.on_timeout,
                         path=self.resource.path,
                         sudo=self.resource.sudo,

@@ -57,8 +57,8 @@ App.KerberosWizardStep3Controller = App.KerberosProgressPageController.extend({
       name: 'common.service_component.info',
       sender: this,
       data: {
-        serviceName: this.serviceName,
-        componentName: this.componentName,
+        serviceName: this.get('serviceName'),
+        componentName: this.get('componentName'),
         urlParams: "fields=ServiceComponentInfo/state"
       }
     });
@@ -77,7 +77,7 @@ App.KerberosWizardStep3Controller = App.KerberosProgressPageController.extend({
       },
       'data': {
         'serviceName': this.serviceName,
-        'displayName': App.format.role(this.serviceName),
+        'displayName': App.format.role(this.serviceName, true),
         'actionName': this.serviceName + '_SERVICE_CHECK',
         'operationLevel': {
           "level": "CLUSTER",
@@ -107,9 +107,7 @@ App.KerberosWizardStep3Controller = App.KerberosProgressPageController.extend({
   /**
    * Show or hide warning to ignore errors and continue with the install
    */
-  showIgnore: function() {
-    return this.get('tasks').someProperty('showRetry', true);
-  }.property('tasks.@each.showRetry'),
+  showIgnore: Em.computed.someBy('tasks', 'showRetry', true),
 
   /**
    * Enable or disable next button if ignore checkbox ticked
@@ -118,6 +116,6 @@ App.KerberosWizardStep3Controller = App.KerberosProgressPageController.extend({
     if (this.get('showIgnore')) {
       this.set('isSubmitDisabled', !this.get('ignore'));
     }
-  }.observes('ignore','showIgnore')
+  }.observes('ignore', 'showIgnore')
 });
 

@@ -18,6 +18,29 @@
 
 package org.apache.ambari.server.stack;
 
+import com.google.common.base.Function;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.state.ComponentInfo;
+import org.apache.ambari.server.state.CustomCommandDefinition;
+import org.apache.ambari.server.state.PropertyInfo;
+import org.apache.ambari.server.state.QuickLinksConfigurationInfo;
+import org.apache.ambari.server.state.ServiceInfo;
+import org.apache.ambari.server.state.ServicePropertyInfo;
+import org.apache.ambari.server.state.ThemeInfo;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.builder.ToStringBuilder;
+import org.apache.commons.lang.builder.ToStringStyle;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
+
 import java.io.File;
 import java.util.Collection;
 import java.util.Collections;
@@ -27,13 +50,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.state.ComponentInfo;
-import org.apache.ambari.server.state.CustomCommandDefinition;
-import org.apache.ambari.server.state.PropertyInfo;
-import org.apache.ambari.server.state.ServiceInfo;
-import org.apache.ambari.server.state.ThemeInfo;
 
 /**
  * Service module which provides all functionality related to parsing and fully
@@ -68,6 +84,11 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
   private Map<String, ThemeModule> themeModules = new HashMap<String, ThemeModule>();
 
   /**
+   * Map of quicklinks, single value currently
+   */
+  private Map<String, QuickLinksConfigurationModule> quickLinksConfigurationModules = new HashMap<String, QuickLinksConfigurationModule>();
+
+  /**
    * Encapsulates IO operations on service directory
    */
   private ServiceDirectory serviceDirectory;
@@ -81,6 +102,11 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
    * validity flag
    */
   protected boolean valid = true;
+
+  /**
+   * Logger
+   */
+  private final static Logger LOG = LoggerFactory.getLogger(ServiceModule.class);
 
   /**
    * Constructor.
@@ -112,12 +138,19 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
     serviceInfo.setAlertsFile(serviceDirectory.getAlertsFile());
     serviceInfo.setKerberosDescriptorFile(serviceDirectory.getKerberosDescriptorFile());
     serviceInfo.setWidgetsDescriptorFile(serviceDirectory.getWidgetsDescriptorFile(serviceInfo.getName()));
+    serviceInfo.setRoleCommandOrder(serviceDirectory.getRoleCommandOrder());
     serviceInfo.setSchemaVersion(AmbariMetaInfo.SCHEMA_VERSION_2);
     serviceInfo.setServicePackageFolder(serviceDirectory.getPackageDir());
+    serviceInfo.setServiceUpgradesFolder(serviceDirectory.getUpgradesDir());
+    serviceInfo.setAdvisorFile(serviceDirectory.getAdvisorFile());
+    serviceInfo.setAdvisorName(serviceDirectory.getAdvisorName(serviceInfo.getName()));
 
     populateComponentModules();
     populateConfigurationModules();
     populateThemeModules();
+    populateQuickLinksConfigurationModules();
+
+    validateServiceInfo();
   }
 
   @Override
@@ -127,13 +160,39 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
 
   @Override
   public void resolve(
-      ServiceModule parentModule, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices)
+      ServiceModule parentModule, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions)
       throws AmbariException {
+    resolveInternal(parentModule, allStacks, commonServices, extensions, false);
+  }
+
+  public void resolveExplicit(
+      ServiceModule parentModule, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions)
+      throws AmbariException {
+    resolveInternal(parentModule, allStacks, commonServices, extensions, true);
+  }
+
+  public void resolveInternal(
+      ServiceModule parentModule, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices,
+      Map<String, ExtensionModule> extensions, boolean resolveExplicit)
+      throws AmbariException {
+    if (!serviceInfo.isValid() || !parentModule.isValid()) {
+      return;
+    }
+
+    LOG.info("Resolve service");
+
+    // If resolving against parent stack service module (stack inheritance), do not merge if an
+    // explicit parent is specified
+    if(!StringUtils.isBlank(serviceInfo.getParent()) && !resolveExplicit) {
+      return;
+    }
+
     ServiceInfo parent = parentModule.getModuleInfo();
-    
+
     if (serviceInfo.getComment() == null) {
       serviceInfo.setComment(parent.getComment());
     }
+    LOG.info("Display name service/parent: " + serviceInfo.getDisplayName() + "/" + parent.getDisplayName());
     if (serviceInfo.getDisplayName() == null) {
       serviceInfo.setDisplayName(parent.getDisplayName());
     }
@@ -166,6 +225,9 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
     if (serviceInfo.getServicePackageFolder() == null) {
       serviceInfo.setServicePackageFolder(parent.getServicePackageFolder());
     }
+    if (serviceInfo.getServiceUpgradesFolder() == null) {
+      serviceInfo.setServiceUpgradesFolder(parent.getServiceUpgradesFolder());
+    }
     if (serviceInfo.getMetricsFile() == null) {
       serviceInfo.setMetricsFile(parent.getMetricsFile());
     }
@@ -181,13 +243,63 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
     if (serviceInfo.getWidgetsDescriptorFile() == null) {
       serviceInfo.setWidgetsDescriptorFile(parent.getWidgetsDescriptorFile());
     }
+    if (serviceInfo.getAdvisorFile() == null) {
+      serviceInfo.setAdvisorFile(parent.getAdvisorFile());
+    }
+    if (serviceInfo.getAdvisorName() == null) {
+      serviceInfo.setAdvisorName(parent.getAdvisorName());
+    }
+
+    if (serviceInfo.getRoleCommandOrder() == null) {
+      serviceInfo.setRoleCommandOrder(parent.getRoleCommandOrder());
+    }
 
     mergeCustomCommands(parent.getCustomCommands(), serviceInfo.getCustomCommands());
     mergeConfigDependencies(parent);
-    mergeComponents(parentModule, allStacks, commonServices);
-    mergeConfigurations(parentModule, allStacks, commonServices);
-    mergeThemes(parentModule, allStacks, commonServices);
+    mergeComponents(parentModule, allStacks, commonServices, extensions);
+    mergeConfigurations(parentModule, allStacks, commonServices, extensions);
+    mergeThemes(parentModule, allStacks, commonServices, extensions);
+    mergeQuickLinksConfigurations(parentModule, allStacks, commonServices, extensions);
     mergeExcludedConfigTypes(parent);
+
+    mergeServiceProperties(parent.getServicePropertyList());
+  }
+
+  /**
+   * Merges service properties from parent into the the service properties of this this service.
+   * Current properties overrides properties with same name from parent
+   * @param other service properties to merge with the current service property list
+   */
+  private void mergeServiceProperties(List<ServicePropertyInfo> other) {
+    if (!other.isEmpty()) {
+      List<ServicePropertyInfo> servicePropertyList = serviceInfo.getServicePropertyList();
+      List<ServicePropertyInfo> servicePropertiesToAdd = Lists.newArrayList();
+
+      Set<String> servicePropertyNames = Sets.newTreeSet(
+        Iterables.transform(servicePropertyList, new Function<ServicePropertyInfo, String>() {
+          @Nullable
+          @Override
+          public String apply(ServicePropertyInfo serviceProperty) {
+            return serviceProperty.getName();
+          }
+        })
+      );
+
+      for (ServicePropertyInfo otherServiceProperty : other) {
+        if (!servicePropertyNames.contains(otherServiceProperty.getName()))
+          servicePropertiesToAdd.add(otherServiceProperty);
+      }
+
+      List<ServicePropertyInfo> mergedServicePropertyList =
+        ImmutableList.<ServicePropertyInfo>builder()
+          .addAll(servicePropertyList)
+          .addAll(servicePropertiesToAdd)
+          .build();
+
+      serviceInfo.setServicePropertyList(mergedServicePropertyList);
+
+      validateServiceInfo();
+    }
   }
 
   /**
@@ -197,7 +309,7 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
    *
    * @throws AmbariException
    */
-  public void resolveCommonService(Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices)
+  public void resolveCommonService(Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions)
       throws AmbariException {
     if(!isCommonService) {
       throw new AmbariException("Not a common service");
@@ -215,12 +327,12 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
         ServiceModule baseService = commonServices.get(baseServiceKey);
         ModuleState baseModuleState = baseService.getModuleState();
         if (baseModuleState == ModuleState.INIT) {
-          baseService.resolveCommonService(allStacks, commonServices);
+          baseService.resolveCommonService(allStacks, commonServices, extensions);
         } else if (baseModuleState == ModuleState.VISITED) {
           //todo: provide more information to user about cycle
           throw new AmbariException("Cycle detected while parsing common service");
         }
-        resolve(baseService, allStacks, commonServices);
+        resolveExplicit(baseService, allStacks, commonServices, extensions);
       } else {
         throw new AmbariException("Common service cannot inherit from a non common service");
       }
@@ -262,7 +374,7 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
    */
   private void populateConfigurationModules() {
     ConfigurationDirectory configDirectory = serviceDirectory.getConfigurationDirectory(
-        serviceInfo.getConfigDir());
+        serviceInfo.getConfigDir(), AmbariMetaInfo.SERVICE_PROPERTIES_FOLDER_NAME);
 
     if (configDirectory != null) {
       for (ConfigurationModule config : configDirectory.getConfigurationModules()) {
@@ -270,10 +382,10 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
           if (isValid()){
             setValid(config.isValid() && info.isValid());
             if (!isValid()){
-              setErrors(config.getErrors());
-              setErrors(info.getErrors());
+              addErrors(config.getErrors());
+              addErrors(info.getErrors());
             }
-          }          
+          }
           serviceInfo.getProperties().addAll(info.getProperties());
           serviceInfo.setTypeAttributes(config.getConfigType(), info.getAttributes());
           configurationModules.put(config.getConfigType(), config);
@@ -315,8 +427,8 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
    * Merge theme modules.
    */
   private void mergeThemes(ServiceModule parent, Map<String, StackModule> allStacks,
-                           Map<String, ServiceModule> commonServices) throws AmbariException {
-    Collection<ThemeModule> mergedModules = mergeChildModules(allStacks, commonServices, themeModules, parent.themeModules);
+                           Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions) throws AmbariException {
+    Collection<ThemeModule> mergedModules = mergeChildModules(allStacks, commonServices, extensions, themeModules, parent.themeModules);
 
     for (ThemeModule mergedModule : mergedModules) {
       themeModules.put(mergedModule.getId(), mergedModule);
@@ -326,9 +438,41 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
       } else {
         serviceInfo.getThemesMap().remove(moduleInfo.getFileName());
       }
+    }
+  }
 
+  private void populateQuickLinksConfigurationModules(){
+    if (serviceInfo.getQuickLinksConfigurationsDir() == null) {
+      serviceInfo.setQuickLinksConfigurationsDir(AmbariMetaInfo.SERVICE_QUICKLINKS_CONFIGURATIONS_FOLDER_NAME);
     }
 
+    String quickLinksConfigurationsDir = serviceDirectory.getAbsolutePath() + File.separator + serviceInfo.getQuickLinksConfigurationsDir();
+
+    if (serviceInfo.getQuickLinksConfigurations() != null) {
+      for (QuickLinksConfigurationInfo quickLinksConfigurationInfo: serviceInfo.getQuickLinksConfigurations()) {
+        File file = new File(quickLinksConfigurationsDir + File.separator + quickLinksConfigurationInfo.getFileName());
+        QuickLinksConfigurationModule module = new QuickLinksConfigurationModule(file, quickLinksConfigurationInfo);
+        quickLinksConfigurationModules.put(module.getId(), module);
+      }
+    }    //Not fail if quicklinks.json file contains errors
+  }
+
+  /**
+   * Merge theme modules.
+   */
+  private void mergeQuickLinksConfigurations(ServiceModule parent, Map<String, StackModule> allStacks,
+                           Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions) throws AmbariException {
+    Collection<QuickLinksConfigurationModule> mergedModules = mergeChildModules(allStacks, commonServices, extensions, quickLinksConfigurationModules, parent.quickLinksConfigurationModules);
+
+    for (QuickLinksConfigurationModule mergedModule : mergedModules) {
+      quickLinksConfigurationModules.put(mergedModule.getId(), mergedModule);
+      QuickLinksConfigurationInfo moduleInfo = mergedModule.getModuleInfo();
+      if (!moduleInfo.isDeleted()) {
+        serviceInfo.getQuickLinksConfigurationsMap().put(moduleInfo.getFileName(), moduleInfo);
+      } else {
+        serviceInfo.getQuickLinksConfigurationsMap().remove(moduleInfo.getFileName());
+      }
+    }
   }
 
   /**
@@ -383,13 +527,13 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
    * @param commonServices  common service modules
    */
   private void mergeConfigurations(
-      ServiceModule parent, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices)
+      ServiceModule parent, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions)
       throws AmbariException {
     serviceInfo.getProperties().clear();
     serviceInfo.setAllConfigAttributes(new HashMap<String, Map<String, Map<String, String>>>());
 
     Collection<ConfigurationModule> mergedModules = mergeChildModules(
-        allStacks, commonServices, configurationModules, parent.configurationModules);
+        allStacks, commonServices, extensions, configurationModules, parent.configurationModules);
 
     for (ConfigurationModule module : mergedModules) {
       configurationModules.put(module.getId(), module);
@@ -409,11 +553,11 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
    * @param commonServices  common service modules
    */
   private void mergeComponents(
-      ServiceModule parent, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices)
+      ServiceModule parent, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions)
       throws AmbariException {
     serviceInfo.getComponents().clear();
     Collection<ComponentModule> mergedModules = mergeChildModules(
-        allStacks, commonServices, componentModules, parent.componentModules);
+        allStacks, commonServices, extensions, componentModules, parent.componentModules);
     componentModules.clear();
     for (ComponentModule module : mergedModules) {
       componentModules.put(module.getId(), module);
@@ -464,21 +608,35 @@ public class ServiceModule extends BaseModule<ServiceModule, ServiceInfo> implem
   public void setValid(boolean valid) {
     this.valid = valid;
   }
-  
+
   private Set<String> errorSet = new HashSet<String>();
-  
+
   @Override
-  public void setErrors(String error) {
+  public void addError(String error) {
     errorSet.add(error);
   }
 
   @Override
-  public Collection getErrors() {
+  public Collection<String> getErrors() {
     return errorSet;
   }
-  
+
   @Override
-  public void setErrors(Collection error) {
-    this.errorSet.addAll(error);
-  }  
+  public void addErrors(Collection<String> errors) {
+    this.errorSet.addAll(errors);
+  }
+
+
+  private void validateServiceInfo() {
+    if (!serviceInfo.isValid()) {
+      setValid(false);
+      addErrors(serviceInfo.getErrors());
+    }
+  }
+  
+
+  @Override
+  public String toString() {
+    return ToStringBuilder.reflectionToString(this, ToStringStyle.MULTI_LINE_STYLE);
+  }
 }

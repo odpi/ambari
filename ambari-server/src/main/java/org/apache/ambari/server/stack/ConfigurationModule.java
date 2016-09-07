@@ -18,14 +18,15 @@
 
 package org.apache.ambari.server.stack;
 
-import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.state.PropertyInfo;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.state.PropertyInfo;
 
 
 /**
@@ -57,12 +58,12 @@ public class ConfigurationModule extends BaseModule<ConfigurationModule, Configu
   private Set<String> errorSet = new HashSet<String>();
   
   @Override
-  public void setErrors(String error) {
+  public void addError(String error) {
     errorSet.add(error);
   }
 
   @Override
-  public Collection getErrors() {
+  public Collection<String> getErrors() {
     return errorSet;
   }   
   
@@ -77,22 +78,23 @@ public class ConfigurationModule extends BaseModule<ConfigurationModule, Configu
     this.info = info;
     if (info != null && !info.isValid()){
       setValid(info.isValid());
-      setErrors(info.getErrors());
+      addErrors(info.getErrors());
     }
   }
 
   @Override
-  public void resolve(ConfigurationModule parent, Map<String, StackModule> allStacks, Map<String, ServiceModule> commonServices) throws AmbariException {
+  public void resolve(ConfigurationModule parent, Map<String, StackModule> allStacks,
+	    Map<String, ServiceModule> commonServices, Map<String, ExtensionModule> extensions) throws AmbariException {
     // merge properties also removes deleted props so should be called even if extension is disabled
     if (parent != null) {
       if (parent.info != null) {
         if (!parent.isValid() || !parent.info.isValid()) {
           setValid(false);
           info.setValid(false);
-          setErrors(parent.getErrors());
-          setErrors(parent.info.getErrors());
-          info.setErrors(parent.getErrors());
-          info.setErrors(parent.info.getErrors());
+          addErrors(parent.getErrors());
+          addErrors(parent.info.getErrors());
+          info.addErrors(parent.getErrors());
+          info.addErrors(parent.info.getErrors());
         }
       }
 
@@ -213,7 +215,7 @@ public class ConfigurationModule extends BaseModule<ConfigurationModule, Configu
   }
 
   @Override
-  public void setErrors(Collection error) {
-    this.errorSet.addAll(error);
+  public void addErrors(Collection<String> errors) {
+    this.errorSet.addAll(errors);
   }
 }

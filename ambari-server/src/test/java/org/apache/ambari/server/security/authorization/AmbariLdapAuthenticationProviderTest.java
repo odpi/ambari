@@ -17,15 +17,20 @@
  */
 package org.apache.ambari.server.security.authorization;
 
-import com.google.inject.persist.PersistService;
-import junit.framework.Assert;
+import static org.easymock.EasyMock.anyObject;
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.expectLastCall;
+import static org.easymock.EasyMock.find;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
-import com.google.inject.Guice;
-import com.google.inject.Inject;
-import com.google.inject.Injector;
+import org.apache.ambari.server.audit.AuditLoggerModule;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.dao.UserDAO;
+import org.apache.ambari.server.orm.entities.UserEntity;
 import org.apache.ambari.server.security.ClientSecurityType;
 import org.apache.directory.server.annotations.CreateLdapServer;
 import org.apache.directory.server.annotations.CreateTransport;
@@ -33,25 +38,22 @@ import org.apache.directory.server.core.annotations.ApplyLdifFiles;
 import org.apache.directory.server.core.annotations.ContextEntry;
 import org.apache.directory.server.core.annotations.CreateDS;
 import org.apache.directory.server.core.annotations.CreatePartition;
-import org.apache.directory.server.core.api.DirectoryService;
-import org.apache.directory.server.core.integ.AbstractLdapTestUnit;
 import org.apache.directory.server.core.integ.FrameworkRunner;
-import org.apache.directory.server.kerberos.kdc.KdcServer;
-import org.apache.directory.server.ldap.LdapServer;
-import org.easymock.EasyMockSupport;
 import org.easymock.IAnswer;
 import org.junit.After;
-import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.slf4j.Logger;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import static org.easymock.EasyMock.*;
 
-import static org.junit.Assert.*;
+import com.google.inject.Guice;
+import com.google.inject.Inject;
+import com.google.inject.Injector;
+import com.google.inject.persist.PersistService;
+
+import junit.framework.Assert;
 
 @RunWith(FrameworkRunner.class)
 @CreateDS(allowAnonAccess = true,
@@ -82,14 +84,18 @@ public class AmbariLdapAuthenticationProviderTest extends AmbariLdapAuthenticati
   @Inject
   private UserDAO userDAO;
   @Inject
+  private Users users;
+  @Inject
   Configuration configuration;
 
   @Before
   public void setUp() {
-    injector = Guice.createInjector(new AuthorizationTestModule());
+    injector = Guice.createInjector(new AuditLoggerModule(), new AuthorizationTestModule());
     injector.injectMembers(this);
     injector.getInstance(GuiceJpaInitializer.class);
     configuration.setClientSecurityType(ClientSecurityType.LDAP);
+    configuration.setProperty(Configuration.LDAP_ALT_USER_SEARCH_FILTER.getKey(), "(&(mail={0})(objectClass={userObjectClass}))");
+    configuration.setProperty(Configuration.LDAP_ALT_USER_SEARCH_ENABLED.getKey(), "false");
   }
 
   @After
@@ -97,7 +103,7 @@ public class AmbariLdapAuthenticationProviderTest extends AmbariLdapAuthenticati
     injector.getInstance(PersistService.class).stop();
   }
 
-  @Test(expected = BadCredentialsException.class)
+  @Test(expected = InvalidUsernamePasswordCombinationException.class)
   public void testBadCredential() throws Exception {
     Authentication authentication = new UsernamePasswordAuthenticationToken("notFound", "wrong");
     authenticationProvider.authenticate(authentication);
@@ -109,14 +115,14 @@ public class AmbariLdapAuthenticationProviderTest extends AmbariLdapAuthenticati
     AmbariLdapAuthenticationProvider provider = createMockBuilder(AmbariLdapAuthenticationProvider.class)
             .addMockedMethod("loadLdapAuthenticationProvider")
             .addMockedMethod("isLdapEnabled")
-            .withConstructor(configuration, authoritiesPopulator).createMock();
+            .withConstructor(configuration, authoritiesPopulator, userDAO).createMock();
     // Create the last thrown exception
     org.springframework.security.core.AuthenticationException exception =
             createNiceMock(org.springframework.security.core.AuthenticationException.class);
     expect(exception.getCause()).andReturn(exception).atLeastOnce();
 
     expect(provider.isLdapEnabled()).andReturn(true);
-    expect(provider.loadLdapAuthenticationProvider()).andThrow(exception);
+    expect(provider.loadLdapAuthenticationProvider("notFound")).andThrow(exception);
     // Logging call
     Logger log = createNiceMock(Logger.class);
     provider.LOG = log;
@@ -145,7 +151,7 @@ public class AmbariLdapAuthenticationProviderTest extends AmbariLdapAuthenticati
     AmbariLdapAuthenticationProvider provider = createMockBuilder(AmbariLdapAuthenticationProvider.class)
             .addMockedMethod("loadLdapAuthenticationProvider")
             .addMockedMethod("isLdapEnabled")
-            .withConstructor(configuration, authoritiesPopulator).createMock();
+            .withConstructor(configuration, authoritiesPopulator, userDAO).createMock();
     // Create the cause
     org.springframework.ldap.AuthenticationException cause =
             createNiceMock(org.springframework.ldap.AuthenticationException.class);
@@ -155,7 +161,7 @@ public class AmbariLdapAuthenticationProviderTest extends AmbariLdapAuthenticati
     expect(exception.getCause()).andReturn(cause).atLeastOnce();
 
     expect(provider.isLdapEnabled()).andReturn(true);
-    expect(provider.loadLdapAuthenticationProvider()).andThrow(exception);
+    expect(provider.loadLdapAuthenticationProvider("notFound")).andThrow(exception);
     // Logging call
     Logger log = createNiceMock(Logger.class);
     provider.LOG = log;
@@ -175,11 +181,17 @@ public class AmbariLdapAuthenticationProviderTest extends AmbariLdapAuthenticati
   @Test
   public void testAuthenticate() throws Exception {
     assertNull("User alread exists in DB", userDAO.findLdapUserByName("allowedUser"));
+    users.createUser("allowedUser", "password", UserType.LDAP, true, false);
+    UserEntity ldapUser = userDAO.findLdapUserByName("allowedUser");
     Authentication authentication = new UsernamePasswordAuthenticationToken("allowedUser", "password");
-    Authentication result = authenticationProvider.authenticate(authentication);
+
+    AmbariAuthentication result = (AmbariAuthentication) authenticationProvider.authenticate(authentication);
     assertTrue(result.isAuthenticated());
-    result = authenticationProvider.authenticate(authentication);
+    assertEquals(ldapUser.getUserId(), result.getUserId());
+
+    result = (AmbariAuthentication) authenticationProvider.authenticate(authentication);
     assertTrue(result.isAuthenticated());
+    assertEquals(ldapUser.getUserId(), result.getUserId());
   }
 
   @Test
@@ -188,5 +200,51 @@ public class AmbariLdapAuthenticationProviderTest extends AmbariLdapAuthenticati
     Authentication authentication = new UsernamePasswordAuthenticationToken("allowedUser", "password");
     Authentication auth = authenticationProvider.authenticate(authentication);
     Assert.assertTrue(auth == null);
+  }
+
+  @Test
+  public void testAuthenticateLoginAlias() throws Exception {
+    // Given
+    assertNull("User already exists in DB", userDAO.findLdapUserByName("allowedUser@ambari.apache.org"));
+    users.createUser("allowedUser@ambari.apache.org", "password", UserType.LDAP, true, false);
+    Authentication authentication = new UsernamePasswordAuthenticationToken("allowedUser@ambari.apache.org", "password");
+    configuration.setProperty(Configuration.LDAP_ALT_USER_SEARCH_ENABLED.getKey(), "true");
+
+    // When
+    Authentication result = authenticationProvider.authenticate(authentication);
+
+    // Then
+    assertTrue(result.isAuthenticated());
+  }
+
+  @Test(expected = InvalidUsernamePasswordCombinationException.class)
+  public void testBadCredentialsForMissingLoginAlias() throws Exception {
+    // Given
+    assertNull("User already exists in DB", userDAO.findLdapUserByName("allowedUser"));
+    Authentication authentication = new UsernamePasswordAuthenticationToken("missingloginalias@ambari.apache.org", "password");
+    configuration.setProperty(Configuration.LDAP_ALT_USER_SEARCH_ENABLED.getKey(), "true");
+
+
+    // When
+    authenticationProvider.authenticate(authentication);
+
+    // Then
+    // InvalidUsernamePasswordCombinationException should be thrown due to no user with 'missingloginalias@ambari.apache.org'  is found in ldap
+  }
+
+
+  @Test(expected = InvalidUsernamePasswordCombinationException.class)
+  public void testBadCredentialsBadPasswordForLoginAlias() throws Exception {
+    // Given
+    assertNull("User already exists in DB", userDAO.findLdapUserByName("allowedUser"));
+    Authentication authentication = new UsernamePasswordAuthenticationToken("allowedUser@ambari.apache.org", "bad_password");
+    configuration.setProperty(Configuration.LDAP_ALT_USER_SEARCH_ENABLED.getKey(), "true");
+
+
+    // When
+    authenticationProvider.authenticate(authentication);
+
+    // Then
+    // InvalidUsernamePasswordCombinationException should be thrown due to wrong password
   }
 }

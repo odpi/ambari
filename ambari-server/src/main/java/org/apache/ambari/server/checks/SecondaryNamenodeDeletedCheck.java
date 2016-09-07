@@ -17,6 +17,7 @@
  */
 package org.apache.ambari.server.checks;
 
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -40,8 +41,10 @@ import com.google.inject.Singleton;
  * Checks that the Secondary NameNode is not present on any of the hosts.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.NAMENODE_HA, order = 2.0f)
+@UpgradeCheck(group = UpgradeCheckGroup.NAMENODE_HA, order = 16.0f)
 public class SecondaryNamenodeDeletedCheck extends AbstractCheckDescriptor {
+  private static final String HDFS_SERVICE_NAME = MasterHostResolver.Service.HDFS.name();
+
   @Inject
   HostComponentStateDAO hostComponentStateDao;
   /**
@@ -53,14 +56,7 @@ public class SecondaryNamenodeDeletedCheck extends AbstractCheckDescriptor {
 
   @Override
   public boolean isApplicable(PrereqCheckRequest request) throws AmbariException {
-    if (!super.isApplicable(request)) {
-      return false;
-    }
-
-    final Cluster cluster = clustersProvider.get().getCluster(request.getClusterName());
-    try {
-      cluster.getService("HDFS");
-    } catch (ServiceNotFoundException ex) {
+    if (!super.isApplicable(request, Arrays.asList(HDFS_SERVICE_NAME), true)) {
       return false;
     }
 
@@ -72,6 +68,11 @@ public class SecondaryNamenodeDeletedCheck extends AbstractCheckDescriptor {
     return true;
   }
 
+  // TODO AMBARI-12698, there are 2 ways to filter the prechecks.
+  // 1. Explictly mention them in each upgrade pack, which is more flexible, but requires adding the name of checks
+  //   to perform in each upgrade pack.
+  // 2. Make each upgrade check class call a function before perform() that will determine if the check is appropriate
+  //   given the type of upgrade. The PrereqCheckRequest object has a field for the type of upgrade.
   @Override
   public void perform(PrerequisiteCheck prerequisiteCheck, PrereqCheckRequest request) throws AmbariException {
     Set<String> hosts = new HashSet<String>();
@@ -80,7 +81,7 @@ public class SecondaryNamenodeDeletedCheck extends AbstractCheckDescriptor {
     final String clusterName = request.getClusterName();
     final Cluster cluster = clustersProvider.get().getCluster(clusterName);
     try {
-      ServiceComponent serviceComponent = cluster.getService(MasterHostResolver.Service.HDFS.name()).getServiceComponent(SECONDARY_NAMENODE);
+      ServiceComponent serviceComponent = cluster.getService(HDFS_SERVICE_NAME).getServiceComponent(SECONDARY_NAMENODE);
       if (serviceComponent != null) {
         hosts = serviceComponent.getServiceComponentHosts().keySet();
       }
@@ -93,16 +94,18 @@ public class SecondaryNamenodeDeletedCheck extends AbstractCheckDescriptor {
     if (hosts.isEmpty()) {
       List<HostComponentStateEntity> allHostComponents = hostComponentStateDao.findAll();
       for(HostComponentStateEntity hc : allHostComponents) {
-        if (hc.getServiceName().equalsIgnoreCase(MasterHostResolver.Service.HDFS.name()) && hc.getComponentName().equalsIgnoreCase(SECONDARY_NAMENODE)) {
+        if (hc.getServiceName().equalsIgnoreCase(HDFS_SERVICE_NAME) && hc.getComponentName().equalsIgnoreCase(SECONDARY_NAMENODE)) {
           hosts.add(hc.getHostName());
         }
       }
     }
 
     if (!hosts.isEmpty()) {
-      prerequisiteCheck.getFailedOn().add(SECONDARY_NAMENODE);
+      String foundHost = hosts.toArray(new String[hosts.size()])[0];
+      prerequisiteCheck.getFailedOn().add(HDFS_SERVICE_NAME);
       prerequisiteCheck.setStatus(PrereqCheckStatus.FAIL);
-      prerequisiteCheck.setFailReason(getFailReason(prerequisiteCheck, request));
+      String failReason = getFailReason(prerequisiteCheck, request);
+      prerequisiteCheck.setFailReason(String.format(failReason, foundHost));
     }
   }
 }

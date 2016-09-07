@@ -18,14 +18,18 @@
 
 package org.apache.ambari.server.controller.jmx;
 
+import org.apache.ambari.server.configuration.ComponentSSLConfiguration;
+import org.apache.ambari.server.controller.internal.URLStreamProvider;
 import org.apache.ambari.server.controller.utilities.StreamProvider;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-public class TestStreamProvider implements StreamProvider {
+public class TestStreamProvider extends URLStreamProvider {
 
   protected static Map<String, String> FILE_MAPPING = new HashMap<String, String>();
 
@@ -41,30 +45,43 @@ public class TestStreamProvider implements StreamProvider {
     FILE_MAPPING.put("8745",  "storm_rest_api_jmx.json");
   }
 
+  private static String NN_HASTATE_ONLY_JMX = "hdfs_namenode_jmx_ha_only.json";
+
   /**
    * Delay to simulate response time.
    */
   protected final long delay;
 
   private String lastSpec;
+  private List<String> specs = new ArrayList<>();
 
   private boolean isLastSpecUpdated;
 
   public TestStreamProvider() {
+    super(1000, 1000, ComponentSSLConfiguration.instance());
     delay = 0;
   }
 
   public TestStreamProvider(long delay) {
+    super(1000, 1000, ComponentSSLConfiguration.instance());
     this.delay = delay;
   }
 
   @Override
   public InputStream readFrom(String spec) throws IOException {
+    specs.add(spec);
     if (!isLastSpecUpdated)
       lastSpec = spec;
     
     isLastSpecUpdated = false;
-    String filename = FILE_MAPPING.get(getPort(spec));
+
+    String filename = null;
+    if (spec.endsWith(":50070/jmx?get=Hadoop:service=NameNode,name=FSNamesystem::tag.HAState")) {
+      filename = NN_HASTATE_ONLY_JMX;
+    } else {
+      filename = FILE_MAPPING.get(getPort(spec));
+    }
+
     if (filename == null) {
       throw new IOException("Can't find JMX source for " + spec);
     }
@@ -81,6 +98,10 @@ public class TestStreamProvider implements StreamProvider {
 
   public String getLastSpec() {
     return lastSpec;
+  }
+
+  public List<String> getSpecs() {
+    return specs;
   }
 
   private String getPort(String spec) {

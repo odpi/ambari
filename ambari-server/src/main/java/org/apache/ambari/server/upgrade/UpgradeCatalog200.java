@@ -45,7 +45,6 @@ import org.apache.ambari.server.orm.entities.ClusterServiceEntityPK;
 import org.apache.ambari.server.orm.entities.HostComponentDesiredStateEntity;
 import org.apache.ambari.server.orm.entities.HostComponentStateEntity;
 import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntity;
-import org.apache.ambari.server.orm.entities.ServiceComponentDesiredStateEntityPK;
 import org.apache.ambari.server.orm.entities.ServiceDesiredStateEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
@@ -78,6 +77,8 @@ public class UpgradeCatalog200 extends AbstractUpgradeCatalog {
   private static final String KERBEROS_PRINCIPAL_TABLE = "kerberos_principal";
   private static final String KERBEROS_PRINCIPAL_HOST_TABLE = "kerberos_principal_host";
   private static final String TEZ_USE_CLUSTER_HADOOP_LIBS_PROPERTY = "tez.use.cluster.hadoop-libs";
+  private static final String FLUME_ENV_CONFIG = "flume-env";
+  private static final String CONTENT_PROPERTY = "content";
 
   /**
    * {@inheritDoc}
@@ -332,6 +333,7 @@ public class UpgradeCatalog200 extends AbstractUpgradeCatalog {
     addNewConfigurationsFromXml();
     updateHiveDatabaseType();
     updateTezConfiguration();
+    updateFlumeEnvConfig();
     addMissingConfigs();
     persistHDPRepo();
     updateClusterEnvConfiguration();
@@ -361,12 +363,63 @@ public class UpgradeCatalog200 extends AbstractUpgradeCatalog {
                   stackRepoId, baseUrl);
         }
       }
+
+      // Repositories that have been autoset may be unexpected for user
+      // (especially if they are taken from online json)
+      // We have to output to stdout here, and not to log
+      // to be sure that user sees this message
+      System.out.printf("Ambari has recorded the following repository base urls for cluster %s. Please verify the " +
+              "values and ensure that these are correct. If necessary, " +
+              "after starting Ambari Server, you can edit them using Ambari UI, " +
+              "Admin -> Stacks and Versions -> Versions Tab and editing the base urls for the current Repo. " +
+              "It is critical that these repo base urls are valid for your environment as they " +
+              "will be used for Add Host/Service operations.",
+        cluster.getClusterName());
+      System.out.println(repositoryTable(ambariMetaInfo.getStack(stackName, stackVersion).getRepositories()));
     }
 
   }
 
+  /**
+   * Formats a list repositories for printing to console
+   * @param repositories list of repositories
+   * @return multi-line string
+   */
+  static String repositoryTable(List<RepositoryInfo> repositories) {
+    StringBuilder result = new StringBuilder();
+    for (RepositoryInfo repository : repositories) {
+      result.append(String.format(" %8s |", repository.getOsType()));
+      result.append(String.format(" %18s |", repository.getRepoId()));
+      result.append(String.format(" %48s ", repository.getBaseUrl()));
+      result.append("\n");
+    }
+    return result.toString();
+  }
+
   protected void updateTezConfiguration() throws AmbariException {
     updateConfigurationProperties("tez-site", Collections.singletonMap(TEZ_USE_CLUSTER_HADOOP_LIBS_PROPERTY, String.valueOf(false)), false, false);
+  }
+
+  protected void updateFlumeEnvConfig() throws AmbariException {
+    AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
+
+    for (final Cluster cluster : getCheckedClusterMap(ambariManagementController.getClusters()).values()) {
+      Config flumeEnvConfig = cluster.getDesiredConfigByType(FLUME_ENV_CONFIG);
+      if (flumeEnvConfig != null) {
+        String content = flumeEnvConfig.getProperties().get(CONTENT_PROPERTY);
+        if (content != null && !content.contains("/usr/lib/flume/lib/ambari-metrics-flume-sink.jar")) {
+          String newPartOfContent = "\n\n" +
+            "# Note that the Flume conf directory is always included in the classpath.\n" +
+            "# Add flume sink to classpath\n" +
+            "if [ -e \"/usr/lib/flume/lib/ambari-metrics-flume-sink.jar\" ]; then\n" +
+            "  export FLUME_CLASSPATH=$FLUME_CLASSPATH:/usr/lib/flume/lib/ambari-metrics-flume-sink.jar\n" +
+            "fi\n";
+          content += newPartOfContent;
+          Map<String, String> updates = Collections.singletonMap(CONTENT_PROPERTY, content);
+          updateConfigurationPropertiesForCluster(cluster, FLUME_ENV_CONFIG, updates, true, false);
+        }
+      }
+    }
   }
 
   protected void updateHiveDatabaseType() throws AmbariException {
@@ -462,11 +515,8 @@ public class UpgradeCatalog200 extends AbstractUpgradeCatalog {
           }
 
           // remove component state
-          ServiceComponentDesiredStateEntityPK primaryKey = new ServiceComponentDesiredStateEntityPK();
-          primaryKey.setClusterId(nagios.getClusterId());
-          primaryKey.setComponentName(componentDesiredState.getComponentName());
-          primaryKey.setServiceName(componentDesiredState.getServiceName());
-          componentDesiredStateDao.removeByPK(primaryKey);
+          componentDesiredStateDao.removeByName(nagios.getClusterId(),
+              componentDesiredState.getServiceName(), componentDesiredState.getComponentName());
         }
 
         // remove service state

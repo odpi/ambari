@@ -81,29 +81,31 @@ App.HighAvailabilityProgressPopupController = Ember.Controller.extend({
    * @param stageId {Number}
    */
   initPopup: function (popupTitle, requestIds, progressController, showSpinner, stageId) {
-    if(showSpinner){
+    if (showSpinner) {
       var loadingPopup = App.ModalPopup.show({
         header: Em.I18n.t('jobs.loadingTasks'),
         primary: false,
         secondary: false,
         bodyClass: Ember.View.extend({
-          template: Ember.Handlebars.compile('<div class="spinner"></div>')
+          template: Ember.Handlebars.compile('{{view App.SpinnerView}}')
         })
       });
       this.set('spinnerPopup', loadingPopup);
     }
-    this.set('progressController', progressController);
-    this.set('popupTitle', popupTitle);
-    this.set('requestIds', requestIds);
-    this.set('hostsData', []);
-    this.set('stageId', stageId);
+    this.setProperties({
+      progressController: progressController,
+      popupTitle: popupTitle,
+      requestIds: requestIds,
+      hostsData: [],
+      stageId: stageId
+    });
     this.getHosts();
   },
 
   /**
    * Send AJAX request to get hosts tasks data
    */
-  getHosts: function () {
+  getHosts: function (successCallback) {
     var requestIds = this.get('requestIds');
     var stageId = this.get('stageId');
     var name = 'background_operations.get_by_request';
@@ -113,6 +115,9 @@ App.HighAvailabilityProgressPopupController = Ember.Controller.extend({
         stageId = '0';
       }
     }
+    if (Em.isNone(successCallback)) {
+      successCallback = 'onGetHostsSuccess';
+    }
     requestIds.forEach(function (requestId) {
       App.ajax.send({
         name: name,
@@ -121,9 +126,26 @@ App.HighAvailabilityProgressPopupController = Ember.Controller.extend({
           requestId: requestId,
           stageId: stageId
         },
-        success: 'onGetHostsSuccess'
+        success: successCallback
       })
     }, this);
+  },
+  
+  doPolling: function () {
+    var self = this;
+    this.set('progressController.logs', []);
+    setTimeout(function () {
+      self.getHosts('doPollingSuccessCallback');
+    }, App.bgOperationsUpdateInterval);
+  },
+
+  doPollingSuccessCallback: function (data) {
+    this.set('hostsData', [data]);
+    var hostsData = this.get('hostsData');
+    this.set('progressController.logs', data.tasks);
+    if (this.isRequestRunning(hostsData)) {
+      this.doPolling();
+    }
   },
 
   /**
@@ -138,10 +160,13 @@ App.HighAvailabilityProgressPopupController = Ember.Controller.extend({
       this.calculateHostsData(hostsData);
       App.HostPopup.initPopup(popupTitle, this);
       if (this.isRequestRunning(hostsData)) {
+        if (this.get('progressController.name') === 'mainAdminStackAndUpgradeController') {
+          this.doPolling();
+        }
         this.addObserver('progressController.logs.length', this, 'getDataFromProgressController');
       }
     }
-    if(this.get('spinnerPopup')){
+    if (this.get('spinnerPopup')) {
       this.get('spinnerPopup').hide();
       this.set('spinnerPopup', null);
     }
@@ -155,6 +180,7 @@ App.HighAvailabilityProgressPopupController = Ember.Controller.extend({
     var hosts = [];
     var hostsMap = {};
     var popupTitle = this.get('popupTitle');
+
     data.forEach(function (request) {
       request.tasks.forEach(function (task) {
         var host = task.Tasks.host_name;
@@ -190,7 +216,7 @@ App.HighAvailabilityProgressPopupController = Ember.Controller.extend({
     var stageId = this.get('stageId');
     // If the progress page is broken into stages then update host with only stage's tasks
     if (!!stageId) {
-      tasksData = this.get('progressController.logs').filterProperty('Tasks.stage_id',stageId);
+      tasksData = this.get('progressController.logs').filterProperty('Tasks.stage_id', stageId);
     } else {
       tasksData = this.get('progressController.logs');
     }
@@ -216,8 +242,11 @@ App.HighAvailabilityProgressPopupController = Ember.Controller.extend({
     var result = false;
     requests.forEach(function (request) {
       if ((request.Requests.task_count -
-          (request.Requests.aborted_task_count + request.Requests.completed_task_count + request.Requests.failed_task_count
-              + request.Requests.timed_out_task_count - request.Requests.queued_task_count)) > 0) {
+          (request.Requests.aborted_task_count +
+           request.Requests.completed_task_count +
+           request.Requests.failed_task_count +
+           request.Requests.timed_out_task_count -
+           request.Requests.queued_task_count)) > 0) {
         result = true;
       }
     });

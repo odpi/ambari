@@ -3,6 +3,9 @@
     "clusterName": "c1",
     "hostname": "c6401.ambari.apache.org",
     "hostLevelParams": {
+        "not_managed_hdfs_path_list": "[\"/apps/hive/warehouse\",\"/apps/falcon\",\"/mr-history/done\",\"/app-logs\",\"/tmp\"]",
+        "agent_stack_retry_count": "5",
+        "agent_stack_retry_on_unavailability": "false",
         "jdk_location": "http://c6401.ambari.apache.org:8080/resources/",
         "ambari_db_rca_password": "mapred",
         "ambari_db_rca_url": "jdbc:postgresql://c6401.ambari.apache.org/ambarirca",
@@ -17,7 +20,8 @@
         "java_version": "8",
         "db_name": "ambari",
         "group_list": "[\"hadoop\",\"nobody\",\"users\"]",
-        "user_list": "[\"hive\",\"oozie\",\"nobody\",\"ambari-qa\",\"flume\",\"hdfs\",\"storm\",\"mapred\",\"hbase\",\"tez\",\"zookeeper\",\"falcon\",\"sqoop\",\"yarn\",\"hcat\"]"
+        "user_list": "[\"hive\",\"oozie\",\"nobody\",\"ambari-qa\",\"flume\",\"hdfs\",\"storm\",\"mapred\",\"hbase\",\"tez\",\"zookeeper\",\"falcon\",\"sqoop\",\"yarn\",\"hcat\"]",
+        "custom_sqlanywhere_jdbc_name" : "sqla-client-jdbc.tar.gz"
     },
     "commandType": "EXECUTION_COMMAND",
     "roleParams": {},
@@ -399,7 +403,7 @@
             "yarn.nodemanager.address": "0.0.0.0:45454",
             "yarn.nodemanager.container-monitor.interval-ms": "3000",
             "yarn.nodemanager.log-aggregation.compression-type": "gz",
-            "yarn.nodemanager.log.retain-second": "604800",
+            "yarn.nodemanager.log.retain-seconds": "604800",
             "yarn.nodemanager.delete.debug-delay-sec": "0",
             "yarn.nodemanager.log-dirs": "/hadoop/yarn/log,/hadoop/yarn/log1",
             "yarn.nodemanager.health-checker.interval-ms": "135000",
@@ -449,8 +453,7 @@
             "dtnode_heapsize": "1024m",
             "proxyuser_group": "users",
             "hadoop_heapsize": "1024",
-            "hadoop_pid_dir_prefix": "/var/run/hadoop",
-            "dfs.datanode.data.dir.mount.file": "/etc/hadoop/conf/dfs_data_dir_mount.hist"
+            "hadoop_pid_dir_prefix": "/var/run/hadoop"
         },
         "hive-env": {
             "hcat_pid_dir": "/var/run/webhcat",
@@ -469,6 +472,7 @@
             "hive_database": "New MySQL Database"
         },
         "cluster-env": {
+            "managed_hdfs_resource_property_names": "",
             "security_enabled": "false",
             "hdfs_user_principal" : "",
             "hdfs_user_keytab" : "",
@@ -486,7 +490,8 @@
             "hbase_regionserver_heapsize": "1024m",
             "hbase_regionserver_xmn_max": "512",
             "hbase_regionserver_xmn_ratio": "0.2",
-            "hbase_log_dir": "/var/log/hbase"
+            "hbase_log_dir": "/var/log/hbase",
+            "hbase_java_io_tmpdir" : "/tmp"
         },
         "ganglia-env": {
             "gmond_user": "nobody",
@@ -553,9 +558,10 @@
             "content": "\n#!/bin/bash\n\nif [ -d \"/usr/lib/bigtop-tomcat\" ]; then\n  export OOZIE_CONFIG=${OOZIE_CONFIG:-/etc/oozie/conf}\n  export CATALINA_BASE=${CATALINA_BASE:-/var/lib/oozie/oozie-server}\n  export CATALINA_TMPDIR=${CATALINA_TMPDIR:-/var/tmp/oozie}\n  export OOZIE_CATALINA_HOME=/usr/lib/bigtop-tomcat\nfi\n\n#Set JAVA HOME\nexport JAVA_HOME={{java_home}}\n\nexport JRE_HOME=${JAVA_HOME}\n\n# Set Oozie specific environment variables here.\n\n# Settings for the Embedded Tomcat that runs Oozie\n# Java System properties for Oozie should be specified in this variable\n#\n# export CATALINA_OPTS=\n\n# Oozie configuration file to load from Oozie configuration directory\n#\n# export OOZIE_CONFIG_FILE=oozie-site.xml\n\n# Oozie logs directory\n#\nexport OOZIE_LOG={{oozie_log_dir}}\n\n# Oozie pid directory\n#\nexport CATALINA_PID={{pid_file}}\n\n#Location of the data for oozie\nexport OOZIE_DATA={{oozie_data_dir}}\n\n# Oozie Log4J configuration file to load from Oozie configuration directory\n#\n# export OOZIE_LOG4J_FILE=oozie-log4j.properties\n\n# Reload interval of the Log4J configuration file, in seconds\n#\n# export OOZIE_LOG4J_RELOAD=10\n\n# The port Oozie server runs\n#\nexport OOZIE_HTTP_PORT={{oozie_server_port}}\n\n# The admin port Oozie server runs\n#\nexport OOZIE_ADMIN_PORT={{oozie_server_admin_port}}\n\n# The host name Oozie server runs on\n#\n# export OOZIE_HTTP_HOSTNAME=`hostname -f`\n\n# The base URL for callback URLs to Oozie\n#\n# export OOZIE_BASE_URL=\"http://${OOZIE_HTTP_HOSTNAME}:${OOZIE_HTTP_PORT}/oozie\"\nexport JAVA_LIBRARY_PATH=/usr/lib/hadoop/lib/native/Linux-amd64-64",
             "oozie_user": "oozie",
             "oozie_admin_users": "{oozie_user}, {oozie_user}-admin",
-            "oozie_database": "Existing SQLA Database",
+            "oozie_database": "Existing SQL Anywhere Database",
             "oozie_data_dir": "/hadoop/oozie/data",
-            "oozie_log_dir": "/var/log/oozie"
+            "oozie_log_dir": "/var/log/oozie",
+            "oozie_tmp_dir": "/var/tmp/oozie"
         },
         "webhcat-env": {
             "content": "\n# The file containing the running pid\nPID_FILE={{pid_file}}\n\nTEMPLETON_LOG_DIR={{templeton_log_dir}}/\n\n\nWEBHCAT_LOG_DIR={{templeton_log_dir}}/\n\n# The console error log\nERROR_LOG={{templeton_log_dir}}/webhcat-console-error.log\n\n# The console log\nCONSOLE_LOG={{templeton_log_dir}}/webhcat-console.log\n\n#TEMPLETON_JAR=templeton_jar_name\n\n#HADOOP_PREFIX=hadoop_prefix\n\n#HCAT_PREFIX=hive_prefix\n\n# Set HADOOP_HOME to point to a specific hadoop install directory\nexport HADOOP_HOME=/usr/lib/hadoop"

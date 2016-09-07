@@ -17,7 +17,7 @@
  */
 
 var App = require('app');
-var date = require('utils/date');
+var date = require('utils/date/date');
 
 App.WizardStep9View = App.TableView.extend({
 
@@ -45,9 +45,7 @@ App.WizardStep9View = App.TableView.extend({
    * When progress is 100, step is completed
    * @type {bool}
    */
-  isStepCompleted: function() {
-   return (this.get('controller.progress') === '100');
-  }.property('controller.progress'),
+  isStepCompleted: Em.computed.equal('controller.progress', '100'),
 
   /**
    * Number of visible hosts
@@ -67,9 +65,7 @@ App.WizardStep9View = App.TableView.extend({
    * Active category
    * @type {Ember.Object}
    */
-  selectedCategory: function() {
-    return this.get('categories').findProperty('isActive');
-  }.property('categories.@each.isActive'),
+  selectedCategory: Em.computed.findBy('categories', 'isActive', true),
 
   /**
    * Ember Object category. This object also contains
@@ -84,13 +80,9 @@ App.WizardStep9View = App.TableView.extend({
    */
   categoryObject: Em.Object.extend({
     hostsCount: 0,
-    label: function () {
-      return "%@ (%@)".fmt(this.get('value'), this.get('hostsCount'));
-    }.property('value', 'hostsCount'),
+    label: Em.computed.format('{0} ({1})', 'value', 'hostsCount'),
     isActive: false,
-    itemClass: function () {
-      return this.get('isActive') ? 'active' : '';
-    }.property('isActive')
+    itemClass: Em.computed.ifThenElse('isActive', 'active', '')
   }),
 
   /**
@@ -111,18 +103,13 @@ App.WizardStep9View = App.TableView.extend({
    * True if <code>controller.hostsWithHeartbeatLost</code> contains some values
    * @type {bool}
    */
-  isHostHeartbeatLost: function () {
-    return (this.get('controller.hostsWithHeartbeatLost').length > 0);
-  }.property('controller.hostsWithHeartbeatLost.@each'),
+  isHostHeartbeatLost: Em.computed.bool('controller.hostsWithHeartbeatLost.length'),
 
   /**
    * Css-string to overall progress-bar width-property
    * @type {string}
    */
-  barWidth: function () {
-    var controller = this.get('controller');
-    return 'width: ' + controller.get('progress') + '%;';
-  }.property('controller.progress'),
+  barWidth: Em.computed.format('width: {0}%;', 'controller.progress'),
 
   /**
    * Filter hosts info shown up on bottom of the box. Set by filter function, when 'seletedCategory' changed
@@ -134,9 +121,7 @@ App.WizardStep9View = App.TableView.extend({
    * Message for overall progress
    * @type {string}
    */
-  progressMessage: function () {
-    return Em.I18n.t('installer.step9.overallProgress').format(this.get('controller.progress'));
-  }.property('controller.progress'),
+  progressMessage: Em.computed.i18nFormat('installer.step9.overallProgress', 'controller.progress'),
 
   /**
    * Run <code>countCategoryHosts</code>, <code>filter</code> only once
@@ -237,7 +222,6 @@ App.WizardStep9View = App.TableView.extend({
   didInsertElement: function () {
     this.onStatus();
     this.get('controller').navigateStep();
-    App.get('router').set('transitionInProgress', false);
   },
 
   /**
@@ -256,7 +240,6 @@ App.WizardStep9View = App.TableView.extend({
     } else if (this.get('controller.status') === 'failed') {
       this.set('barColor', 'progress-danger');
       this.set('resultMsgColor', 'alert-error');
-      console.log('TRACE: Inside error view step9');
       if (this.get('isHostHeartbeatLost')) {
         // When present requests succeeds but some host components are in UNKNOWN or INSTALL_FAILED state and
         // hosts are in HEARTBEAT_LOST state
@@ -267,12 +250,11 @@ App.WizardStep9View = App.TableView.extend({
         this.set('resultMsg', Em.I18n.t('installer.step9.status.failed'));
       }
     } else if (this.get('controller.status') === 'success') {
-      console.log('TRACE: Inside success view step9');
       this.set('barColor', 'progress-success');
-      this.set('resultMsg', Em.I18n.t('installer.step9.status.success'));
+      this.set('resultMsg', this.get('controller.content.cluster.status') === 'START_SKIPPED' ? Em.I18n.t('installer.step9.status.skipStartSuccess') : Em.I18n.t('installer.step9.status.success'));
       this.set('resultMsgColor', 'alert-success');
     }
-  }.observes('controller.status', 'controller.startCallFailed','isHostHeartbeatLost'),
+  }.observes('controller.status', 'controller.content.cluster.status', 'controller.startCallFailed','isHostHeartbeatLost'),
 
   /**
    * Show popup with info about failed hosts
@@ -298,6 +280,13 @@ App.WizardStep9View = App.TableView.extend({
   }
 
 });
+
+function hostStatus(statuses) {
+  return Em.computed('isHostCompleted', 'obj.status', function () {
+    statuses = Em.makeArray(statuses);
+    return this.get('isHostCompleted') && statuses.contains(this.get('obj.status'));
+  });
+}
 
 App.HostStatusView = Em.View.extend({
 
@@ -325,33 +314,25 @@ App.HostStatusView = Em.View.extend({
    * Css-string to progress-bar width-property
    * @type {string}
    */
-  barWidth: function () {
-    return 'width: ' + this.get('obj.progress') + '%;';
-  }.property('obj.progress'),
+  barWidth: Em.computed.format('width: {0}%;','obj.progress'),
 
   /**
    * Is current host failed
    * @type {bool}
    */
-  isFailed: function () {
-    return (this.get('isHostCompleted') && (this.get('obj.status') === 'failed' || this.get('obj.status') === 'heartbeat_lost'));
-  }.property('obj.status', 'isHostCompleted'),
+  isFailed: hostStatus(['failed', 'heartbeat_lost']),
 
   /**
    * Is current host successfully installed
    * @type {bool}
    */
-  isSuccess: function () {
-    return (this.get('isHostCompleted') && this.get('obj.status') === 'success');
-  }.property('obj.status', 'isHostCompleted'),
+  isSuccess: hostStatus('success'),
 
   /**
    * Current host has warnings
    * @type {bool}
    */
-  isWarning: function () {
-    return(this.get('isHostCompleted') && this.get('obj.status') === 'warning');
-  }.property('obj.status', 'isHostCompleted'),
+  isWarning: hostStatus('warning'),
 
   /**
    * Current host completed all its tasks

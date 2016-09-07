@@ -18,14 +18,14 @@ limitations under the License.
 
 """
 
-from resource_management import *
+from resource_management.libraries.script.script import Script
 import os
 from status_params import *
 
 # server configurations
 config = Script.get_config()
 
-hdp_root = None
+stack_root = None
 knox_home = None
 knox_conf_dir = None
 knox_logs_dir = None
@@ -38,7 +38,7 @@ knox_master_secret_path = None
 knox_cert_store_path = None
 
 try:
-  hdp_root = os.path.abspath(os.path.join(os.environ["HADOOP_HOME"],".."))
+  stack_root = os.path.abspath(os.path.join(os.environ["HADOOP_HOME"],".."))
   knox_home = os.environ['KNOX_HOME']
   knox_conf_dir = os.environ['KNOX_CONF_DIR']
   knox_logs_dir = os.environ['KNOX_LOG_DIR']
@@ -57,6 +57,8 @@ knox_host_name = config['clusterHostInfo']['knox_gateway_hosts'][0]
 knox_host_name_in_cluster = config['hostname']
 knox_master_secret = config['configurations']['knox-env']['knox_master_secret']
 topology_template = config['configurations']['topology']['content']
+admin_topology_template = config['configurations']['admin-topology']['content']
+knoxsso_topology_template = config['configurations']['knoxsso-topology']['content']
 gateway_log4j = config['configurations']['gateway-log4j']['content']
 security_enabled = config['configurations']['cluster-env']['security_enabled']
 ldap_log4j = config['configurations']['ldap-log4j']['content']

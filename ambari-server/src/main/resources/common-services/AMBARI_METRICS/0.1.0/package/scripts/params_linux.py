@@ -18,10 +18,13 @@ limitations under the License.
 
 """
 
-from resource_management import *
+from resource_management.libraries.script.script import Script
 from resource_management.libraries.functions import conf_select
+from resource_management.libraries.functions.default import default
+from resource_management.libraries.functions.format import format
 from ambari_commons import OSCheck
 from ambari_commons.constants import AMBARI_SUDO_BINARY
+from resource_management.libraries.functions.expect import expect
 
 config = Script.get_config()
 
@@ -51,3 +54,5 @@ sudo = AMBARI_SUDO_BINARY
 
 dfs_type = default("/commandParams/dfs_type", "")
 
+hbase_regionserver_shutdown_timeout = expect('/configurations/ams-hbase-env/hbase_regionserver_shutdown_timeout', int,
+                                             30)

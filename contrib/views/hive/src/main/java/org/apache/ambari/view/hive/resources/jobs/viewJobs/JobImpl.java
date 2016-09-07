@@ -55,6 +55,8 @@ public class JobImpl implements Job {
   private String logFile;
   private String confFile;
 
+  private String hiveQueryId;
+
   public JobImpl() {}
   public JobImpl(Map<String, Object> stringObjectMap) throws InvocationTargetException, IllegalAccessException {
     for (Map.Entry<String, Object> entry : stringObjectMap.entrySet())  {
@@ -73,14 +75,25 @@ public class JobImpl implements Job {
 
     JobImpl job = (JobImpl) o;
 
-    if (id != null ? !id.equals(job.id) : job.id != null) return false;
+    return id != null ? id.equals(job.id) : job.id == null;
 
-    return true;
   }
 
   @Override
   public int hashCode() {
     return id != null ? id.hashCode() : 0;
+  }
+
+  @Override
+  @Transient
+  public String getHiveQueryId() {
+    return hiveQueryId;
+  }
+
+  @Override
+  @Transient
+  public void setHiveQueryId(String hiveQueryId) {
+    this.hiveQueryId = hiveQueryId;
   }
 
   @Override
@@ -295,5 +308,16 @@ public class JobImpl implements Job {
   @Override
   public void setGlobalSettings(String globalSettings) {
     this.globalSettings = globalSettings;
+  }
+
+  @Override
+  public String toString() {
+    return new StringBuilder("JobImpl{")
+      .append("id='").append(id)
+      .append(", owner='").append(owner)
+      .append(", hiveQueryId='").append(hiveQueryId)
+      .append(", dagId='").append(dagId)
+      .append(", queryId='").append(queryId)
+      .append('}').toString();
   }
 }

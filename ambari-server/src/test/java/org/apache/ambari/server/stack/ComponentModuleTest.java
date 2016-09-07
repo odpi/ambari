@@ -19,6 +19,7 @@
 package org.apache.ambari.server.stack;
 
 import org.apache.ambari.server.state.AutoDeployInfo;
+import org.apache.ambari.server.state.BulkCommandDefinition;
 import org.apache.ambari.server.state.ClientConfigFileDefinition;
 import org.apache.ambari.server.state.CommandScriptDefinition;
 import org.apache.ambari.server.state.ComponentInfo;
@@ -387,6 +388,168 @@ public class ComponentModuleTest {
     assertTrue(component.isDeleted());
   }
 
+  @Test
+  public void testResolve_BulkCommandsDefinition(){
+    BulkCommandDefinition bulkCommandsDefinition = new BulkCommandDefinition();
+    ComponentInfo info = new ComponentInfo();
+    ComponentInfo parentInfo = new ComponentInfo();
+
+    // parent has value set, child value is null
+    parentInfo.setBulkCommands(bulkCommandsDefinition);
+    assertSame(bulkCommandsDefinition, resolveComponent(info, parentInfo).getModuleInfo().getBulkCommandDefinition());
+
+    // child has value set, parent value is null
+    info.setBulkCommands(bulkCommandsDefinition);
+    parentInfo.setBulkCommands(null);
+    assertSame(bulkCommandsDefinition, resolveComponent(info, parentInfo).getModuleInfo().getBulkCommandDefinition());
+
+    // value set in both parent and child; child overwrites
+    BulkCommandDefinition bulkCommandsDefinition2 = createNiceMock(BulkCommandDefinition.class);
+    info.setBulkCommands(bulkCommandsDefinition);
+    parentInfo.setBulkCommands(bulkCommandsDefinition2);
+    assertSame(bulkCommandsDefinition, resolveComponent(info, parentInfo).getModuleInfo().getBulkCommandDefinition());
+  }
+
+  @Test
+  public void testResolve_DecommissionAllowedInheritance(){
+    List<ComponentInfo> components = createComponentInfo(2);
+    ComponentInfo info = components.get(0);
+    ComponentInfo parentInfo = components.get(1);
+
+    //parent has it, child doesn't
+    parentInfo.setDecommissionAllowed("true");
+    assertSame("true", resolveComponent(info, parentInfo).getModuleInfo().getDecommissionAllowed());
+  }
+
+  @Test
+  public void testResolve_DecommissionAllowed(){
+    List<ComponentInfo> components = createComponentInfo(2);
+    ComponentInfo info = components.get(0);
+    ComponentInfo parentInfo = components.get(1);
+
+    //parent doesn't have it, child has it
+    info.setDecommissionAllowed("false");
+    assertSame("false", resolveComponent(info, parentInfo).getModuleInfo().getDecommissionAllowed());
+  }
+
+  @Test
+  public void testResolve_DecommissionAllowedOverwrite(){
+    List<ComponentInfo> components = createComponentInfo(2);
+    ComponentInfo info = components.get(0);
+    ComponentInfo parentInfo = components.get(1);
+
+    //parent has it, child overwrites it
+    parentInfo.setDecommissionAllowed("false");
+    info.setDecommissionAllowed("true");
+    assertSame("true", resolveComponent(info, parentInfo).getModuleInfo().getDecommissionAllowed());
+  }
+
+  @Test
+  public void testResolve_Reassignable(){
+    List<ComponentInfo> components = createComponentInfo(2);
+    ComponentInfo info = components.get(0);
+    ComponentInfo parentInfo = components.get(1);
+
+    //parent doesn't have it, child has it
+    info.setReassignAllowed("false");
+    assertSame("false", resolveComponent(info, parentInfo).getModuleInfo().getReassignAllowed());
+  }
+
+  @Test
+  public void testResolve_ReassignableInheritance(){
+    List<ComponentInfo> components = createComponentInfo(2);
+    ComponentInfo info = components.get(0);
+    ComponentInfo parentInfo = components.get(1);
+
+    //parent has it, child doesn't
+    parentInfo.setReassignAllowed("true");
+    assertSame("true", resolveComponent(info, parentInfo).getModuleInfo().getReassignAllowed());
+  }
+
+  @Test
+  public void testResolve_ReassignableOverwrite(){
+    List<ComponentInfo> components = createComponentInfo(2);
+    ComponentInfo info = components.get(0);
+    ComponentInfo parentInfo = components.get(1);
+
+    //parent has it, child overwrites it
+    parentInfo.setReassignAllowed("false");
+    info.setReassignAllowed("true");
+    assertSame("true", resolveComponent(info, parentInfo).getModuleInfo().getReassignAllowed());
+  }
+
+  /**
+   * Test that versionAdvertised is resolved correctly.
+   */
+  @Test
+  public void testResolve_VersionAdvertised() {
+    List<ComponentInfo> components = createComponentInfo(2);
+    ComponentInfo info = components.get(0);
+    ComponentInfo parentInfo = components.get(1);
+
+    // Test cases where the current Component Info explicitly sets the value.
+
+    // 1. Chain of versionAdvertised is: true (parent) -> true (current) => true
+    parentInfo.setVersionAdvertisedField(new Boolean(true));
+    parentInfo.setVersionAdvertised(true);
+    info.setVersionAdvertisedField(new Boolean(true));
+    assertEquals(true, resolveComponent(info, parentInfo).getModuleInfo().isVersionAdvertised());
+
+    // 2. Chain of versionAdvertised is: true (parent) -> false (current) => false
+    parentInfo.setVersionAdvertisedField(new Boolean(true));
+    parentInfo.setVersionAdvertised(true);
+    info.setVersionAdvertisedField(new Boolean(false));
+    assertEquals(false, resolveComponent(info, parentInfo).getModuleInfo().isVersionAdvertised());
+
+    // 3. Chain of versionAdvertised is: false (parent) -> true (current) => true
+    parentInfo.setVersionAdvertisedField(new Boolean(false));
+    parentInfo.setVersionAdvertised(false);
+    info.setVersionAdvertisedField(new Boolean(true));
+    assertEquals(true, resolveComponent(info, parentInfo).getModuleInfo().isVersionAdvertised());
+
+    // 4. Chain of versionAdvertised is: null (parent) -> true (current) => true
+    parentInfo.setVersionAdvertisedField(null);
+    parentInfo.setVersionAdvertised(false);
+    info.setVersionAdvertisedField(new Boolean(true));
+    assertEquals(true, resolveComponent(info, parentInfo).getModuleInfo().isVersionAdvertised());
+
+    // Test cases where current Component Info is null so it should inherit from parent.
+
+    // 5. Chain of versionAdvertised is: true (parent) -> null (current) => true
+    parentInfo.setVersionAdvertisedField(new Boolean(true));
+    parentInfo.setVersionAdvertised(true);
+    info.setVersionAdvertisedField(null);
+    assertEquals(true, resolveComponent(info, parentInfo).getModuleInfo().isVersionAdvertised());
+
+    // 6. Chain of versionAdvertised is: true (parent) -> inherit (current) => true
+    parentInfo.setVersionAdvertisedField(new Boolean(true));
+    parentInfo.setVersionAdvertised(true);
+    info.setVersionAdvertisedField(null);
+    assertEquals(true, resolveComponent(info, parentInfo).getModuleInfo().isVersionAdvertised());
+
+    // 7. Chain of versionAdvertised is: false (parent) -> null (current) => false
+    parentInfo.setVersionAdvertisedField(new Boolean(false));
+    parentInfo.setVersionAdvertised(false);
+    info.setVersionAdvertisedField(null);
+    assertEquals(false, resolveComponent(info, parentInfo).getModuleInfo().isVersionAdvertised());
+
+    // 8. Chain of versionAdvertised is: false (parent) -> inherit (current) => false
+    parentInfo.setVersionAdvertisedField(new Boolean(false));
+    parentInfo.setVersionAdvertised(false);
+    info.setVersionAdvertisedField(null);
+    assertEquals(false, resolveComponent(info, parentInfo).getModuleInfo().isVersionAdvertised());
+  }
+
+  private List<ComponentInfo> createComponentInfo(int count){
+    List<ComponentInfo> result = new ArrayList<ComponentInfo>();
+    if(count > 0) {
+      for(int i = 0; i < count; i++){
+        result.add(new ComponentInfo());
+      }
+    }
+    return result;
+  }
+
   private ComponentModule resolveComponent(ComponentInfo info, ComponentInfo parentInfo) {
     info.setName("FOO");
     parentInfo.setName("FOO");
@@ -394,7 +557,7 @@ public class ComponentModuleTest {
     ComponentModule component = new ComponentModule(info);
     ComponentModule parentComponent = new ComponentModule(parentInfo);
 
-    component.resolve(parentComponent, Collections.<String, StackModule>emptyMap(), Collections.<String, ServiceModule>emptyMap());
+    component.resolve(parentComponent, Collections.<String, StackModule>emptyMap(), Collections.<String, ServiceModule>emptyMap(), Collections.<String, ExtensionModule>emptyMap());
 
     return component;
   }

@@ -20,21 +20,32 @@ limitations under the License.
 import sys
 import fileinput
 import os
-from resource_management import *
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.resources.properties_file import PropertiesFile
+from resource_management.libraries.resources.modify_properties_file import ModifyPropertiesFile
+from resource_management.core.source import DownloadSource
 from resource_management.core.logger import Logger
+from resource_management.core.shell import as_sudo
+from resource_management.core.exceptions import Fail
+from resource_management.core.resources.system import Directory, Execute, File
 
-def ranger(name=None):
+
+def ranger(name=None, upgrade_type=None):
   if name == 'ranger_admin':
-    setup_ranger_admin()
+    setup_ranger_admin(upgrade_type=upgrade_type)
 
   if name == 'ranger_usersync':
-    setup_usersync()
+    setup_usersync(upgrade_type=upgrade_type)
 
-def setup_ranger_admin():
+def setup_ranger_admin(upgrade_type=None):
   import params
 
   check_db_connnection()
-  
+
+  if params.driver_curl_source and not params.driver_curl_source.endswith("/None"):
+    if params.previous_jdbc_jar and os.path.isfile(params.previous_jdbc_jar):
+      File(params.previous_jdbc_jar, action='delete')
+
   File(params.downloaded_custom_connector,
       content = DownloadSource(params.driver_curl_source),
       mode = 0644
@@ -45,9 +56,21 @@ def setup_ranger_admin():
           sudo=True)
 
   File(params.driver_curl_target, mode=0644)
-  
+
   ModifyPropertiesFile(format("{ranger_home}/install.properties"),
     properties = params.config['configurations']['admin-properties']
+  )
+
+  custom_config = dict()
+  custom_config['unix_user'] = params.unix_user
+  custom_config['unix_group'] = params.unix_group
+
+  ModifyPropertiesFile(format("{ranger_home}/install.properties"),
+    properties=custom_config
+  )
+
+  ModifyPropertiesFile(format("{ranger_home}/install.properties"),
+    properties = {'SQL_CONNECTOR_JAR': format('{driver_curl_target}')}
   )
 
   ##if db flavor == oracle - set oracle home env variable
@@ -71,11 +94,24 @@ def setup_ranger_admin():
     mode=0744
   )
 
-def setup_usersync():
+  Directory(params.admin_log_dir,
+    owner = params.unix_user,
+    group = params.unix_group
+  )
+
+def setup_usersync(upgrade_type=None):
   import params
 
   PropertiesFile(format("{usersync_home}/install.properties"),
     properties = params.config['configurations']['usersync-properties'],
+  )
+
+  custom_config = dict()
+  custom_config['unix_user'] = params.unix_user
+  custom_config['unix_group'] = params.unix_group
+
+  ModifyPropertiesFile(format("{usersync_home}/install.properties"),
+    properties=custom_config
   )
 
   cmd = format("cd {usersync_home} && ") + as_sudo([format('{usersync_home}/setup.sh')])
@@ -88,6 +124,11 @@ def setup_usersync():
     mode = 0755,
   )
 
+  Directory(params.usersync_log_dir,
+    owner = params.unix_user,
+    group = params.unix_group
+  )
+
 def check_db_connnection():
   import params
 
@@ -96,7 +137,7 @@ def check_db_connnection():
   if params.db_flavor.lower() == 'mysql':
     cmd = format('{sql_command_invoker} -u {db_root_user} --password={db_root_password!p} -h {db_host}  -s -e "select version();"')
   elif params.db_flavor.lower() == 'oracle':
-    cmd = format('{sql_command_invoker} {db_root_user}/{db_root_password!p}@{db_host} AS SYSDBA')
+    cmd = format("{sql_command_invoker} '{db_root_user}/\"{db_root_password}\"@{db_host}' AS SYSDBA")
     env_dict = {'ORACLE_HOME':params.oracle_home, 'LD_LIBRARY_PATH':params.oracle_home}
   elif params.db_flavor.lower() == 'postgres':
     cmd = 'true'

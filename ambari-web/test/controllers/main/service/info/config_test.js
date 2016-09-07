@@ -20,32 +20,162 @@ var App = require('app');
 require('controllers/main/service/info/configs');
 var batchUtils = require('utils/batch_scheduled_requests');
 var mainServiceInfoConfigsController = null;
+var testHelpers = require('test/helpers');
+
+function getController() {
+  return App.MainServiceInfoConfigsController.create({
+    dependentServiceNames: [],
+    loadDependentConfigs: function () {
+      return {done: Em.K}
+    },
+    loadConfigTheme: function () {
+      return $.Deferred().resolve().promise();
+    }
+  });
+}
+
 describe("App.MainServiceInfoConfigsController", function () {
 
   beforeEach(function () {
     sinon.stub(App.themesMapper, 'generateAdvancedTabs').returns(Em.K);
-    mainServiceInfoConfigsController = App.MainServiceInfoConfigsController.create({
-      dependentServiceNames: [],
-      loadDependentConfigs: function () {
-        return {done: Em.K}
-      },
-      loadConfigTheme: function () {
-        return $.Deferred().resolve().promise();
-      }
-    });
+    mainServiceInfoConfigsController = getController();
   });
+
+  App.TestAliases.testAsComputedAlias(getController(), 'serviceConfigs', 'App.config.preDefinedServiceConfigs', 'array');
 
   afterEach(function() {
     App.themesMapper.generateAdvancedTabs.restore();
   });
 
+  describe("#getHash", function () {
+
+    var tests = [
+      {
+        msg: "properties only used for ui purpose should be excluded from hash",
+        configs: [
+          Em.Object.create({
+            id: "hive.llap.daemon.task.scheduler.enable.preemption",
+            isRequiredByAgent: true,
+            isFinal: false,
+            value: ''
+          }),
+          Em.Object.create({
+            id: "ambari.copy.hive.llap.daemon.num.executors",
+            isRequiredByAgent: false,
+            isFinal: false,
+            value: ''
+          })
+        ],
+        result: JSON.stringify({
+          'hive.llap.daemon.task.scheduler.enable.preemption': {
+            value: '',
+            overrides: [],
+            isFinal: false
+          }
+        })
+      },
+      {
+        msg: "properties should be sorted in alphabetical order",
+        configs: [
+          Em.Object.create({
+            id: "b.b",
+            isRequiredByAgent: true,
+            isFinal: false,
+            value: ''
+          }),
+          Em.Object.create({
+            id: "b.a",
+            isRequiredByAgent: true,
+            isFinal: false,
+            value: ''
+          }),
+          Em.Object.create({
+            id: "b.c",
+            isRequiredByAgent: true,
+            isFinal: false,
+            value: ''
+          }),
+          Em.Object.create({
+            id: "a.b",
+            isRequiredByAgent: true,
+            isFinal: false,
+            value: ''
+          })
+        ],
+        result: JSON.stringify({
+          'a.b': {
+            value: '',
+            overrides: [],
+            isFinal: false
+          },
+          'b.a': {
+            value: '',
+            overrides: [],
+            isFinal: false
+          },
+          'b.b': {
+            value: '',
+            overrides: [],
+            isFinal: false
+          },
+          'b.c': {
+            value: '',
+            overrides: [],
+            isFinal: false
+          }
+        })
+      },{
+        msg: "properties without id should be sorted with",
+        configs: [
+          Em.Object.create({
+            isRequiredByAgent: true,
+            isFinal: false,
+            value: '',
+            name: 'name',
+            filename: 'filename'
+          }),
+          Em.Object.create({
+            id: "a",
+            isRequiredByAgent: true,
+            isFinal: false,
+            value: ''
+          })
+        ],
+        result: JSON.stringify({
+          'a': {
+            value: '',
+            overrides: [],
+            isFinal: false
+          },
+          'name__filename': {
+            value: '',
+            overrides: [],
+            isFinal: false
+          }
+        })
+      }
+    ];
+
+    afterEach(function () {
+      mainServiceInfoConfigsController.set('selectedService', '');
+    });
+
+    tests.forEach(function (t) {
+      it(t.msg, function () {
+        mainServiceInfoConfigsController.set('selectedService', {configs: t.configs});
+        expect(mainServiceInfoConfigsController.getHash()).to.equal(t.result);
+      });
+    });
+  });
+
+
   describe("#showSavePopup", function () {
     var tests = [
       {
-        path: false,
-        callback: null,
+        transitionCallback: false,
+        callback: false,
         action: "onSave",
-        m: "save configs without path/callback",
+        m: "save configs without transitionCallback/callback",
         results: [
           {
             method: "restartServicePopup",
@@ -54,10 +184,10 @@ describe("App.MainServiceInfoConfigsController", function () {
         ]
       },
       {
-        path: true,
+        transitionCallback: true,
         callback: true,
         action: "onSave",
-        m: "save configs with path/callback",
+        m: "save configs with transitionCallback/callback",
         results: [
           {
             method: "restartServicePopup",
@@ -66,10 +196,10 @@ describe("App.MainServiceInfoConfigsController", function () {
         ]
       },
       {
-        path: false,
+        transitionCallback: false,
         callback: false,
         action: "onDiscard",
-        m: "discard changes without path/callback",
+        m: "discard changes without transitionCallback/callback",
         results: [
           {
             method: "restartServicePopup",
@@ -78,7 +208,7 @@ describe("App.MainServiceInfoConfigsController", function () {
         ]
       },
       {
-        path: false,
+        transitionCallback: false,
         callback: true,
         action: "onDiscard",
         m: "discard changes with callback",
@@ -98,55 +228,83 @@ describe("App.MainServiceInfoConfigsController", function () {
         ]
       },
       {
-        path: true,
-        callback: null,
+        transitionCallback: true,
+        callback: false,
         action: "onDiscard",
-        m: "discard changes with path",
+        m: "discard changes with transitionCallback",
         results: [
           {
             method: "restartServicePopup",
             called: false
           },
           {
-            field: "forceTransition",
-            value: true
+            method: "transitionCallback",
+            called: true
           }
         ]
       }
     ];
 
     beforeEach(function () {
+      mainServiceInfoConfigsController.reopen({
+        passwordConfigsAreChanged: false
+      });
       sinon.stub(mainServiceInfoConfigsController, "get", function(key) {
-        return key == 'isSubmitDisabled' ?  false : Em.get(mainServiceInfoConfigsController, key);
+        return key === 'isSubmitDisabled' ? false : Em.get(mainServiceInfoConfigsController, key);
       });
       sinon.stub(mainServiceInfoConfigsController, "restartServicePopup", Em.K);
       sinon.stub(mainServiceInfoConfigsController, "getHash", function () {
         return "hash"
       });
-      sinon.stub(App.router, "route", Em.K);
     });
+
     afterEach(function () {
       mainServiceInfoConfigsController.get.restore();
       mainServiceInfoConfigsController.restartServicePopup.restore();
       mainServiceInfoConfigsController.getHash.restore();
-      App.router.route.restore();
     });
 
     tests.forEach(function (t) {
       t.results.forEach(function (r) {
-        it(t.m + " " + r.method + " " + r.field, function () {
-          if (t.callback) {
-            t.callback = sinon.stub();
-          }
-          mainServiceInfoConfigsController.showSavePopup(t.path, t.callback)[t.action]();
+        describe(t.m + " " + r.method + " " + r.field, function () {
+
+          beforeEach(function () {
+            if (t.callback) {
+              t.callback = sinon.stub();
+            }
+            if (t.transitionCallback) {
+              t.transitionCallback = sinon.stub();
+            }
+            mainServiceInfoConfigsController.showSavePopup(t.transitionCallback, t.callback)[t.action]();
+          });
+
+
           if (r.method) {
             if (r.method === 'callback') {
-              expect(t.callback.calledOnce).to.equal(r.called);
-            } else {
-              expect(mainServiceInfoConfigsController[r.method].calledOnce).to.equal(r.called);
+              it('callback is ' + (r.called ? '' : 'not') + ' called once', function () {
+                expect(t.callback.calledOnce).to.equal(r.called);
+              });
             }
-          } else if (r.field) {
-            expect(mainServiceInfoConfigsController.get(r.field)).to.equal(r.value);
+            else {
+              if (r.method === 'transitionCallback') {
+                it('transitionCallback is ' + (r.called ? '' : 'not') + ' called once', function () {
+                  expect(t.transitionCallback.calledOnce).to.equal(r.called);
+                });
+              }
+              else {
+                it(r.method + ' is ' + (r.called ? '' : 'not') + ' called once', function () {
+                  expect(mainServiceInfoConfigsController[r.method].calledOnce).to.equal(r.called);
+                });
+              }
+            }
+          }
+          else {
+            if (r.field) {
+              it(r.field + ' is equal to ' + r.value, function () {
+                expect(mainServiceInfoConfigsController.get(r.field)).to.equal(r.value);
+              });
+
+            }
           }
         }, this);
       });
@@ -305,23 +463,27 @@ describe("App.MainServiceInfoConfigsController", function () {
         mainServiceInfoConfigsController.set("content.displayName", t.displayName);
         mainServiceInfoConfigsController.set("content.passiveState", t.passiveState);
         mainServiceInfoConfigsController.rollingRestartStaleConfigSlaveComponents(t.componentName);
-        expect(batchUtils.launchHostComponentRollingRestart.calledWith(t.componentName.context, t.displayName, t.passiveState == "ON", true)).to.equal(true);
+        expect(batchUtils.launchHostComponentRollingRestart.calledWith(t.componentName.context, t.displayName, t.passiveState === "ON", true)).to.equal(true);
       });
     });
   });
 
   describe("#restartAllStaleConfigComponents", function () {
+
     beforeEach(function () {
       sinon.stub(batchUtils, "restartAllServiceHostComponents", Em.K);
     });
+
     afterEach(function () {
       batchUtils.restartAllServiceHostComponents.restore();
     });
+
     it("trigger restartAllServiceHostComponents", function () {
       mainServiceInfoConfigsController.restartAllStaleConfigComponents().onPrimary();
       expect(batchUtils.restartAllServiceHostComponents.calledOnce).to.equal(true);
     });
-    it("trigger check last check point warning before triggering restartAllServiceHostComponents", function () {
+
+    describe("trigger check last check point warning before triggering restartAllServiceHostComponents", function () {
       var mainConfigsControllerHdfsStarted = App.MainServiceInfoConfigsController.create({
         content: {
           serviceName: "HDFS",
@@ -336,36 +498,51 @@ describe("App.MainServiceInfoConfigsController", function () {
         }
       });
       var mainServiceItemController = App.MainServiceItemController.create({});
-      sinon.stub(mainServiceItemController, 'checkNnLastCheckpointTime', function() {
-        return true;
-      });
-      sinon.stub(App.router, 'get', function(k) {
-        if ('mainServiceItemController' === k) {
-          return mainServiceItemController;
-        }
-        return Em.get(App.router, k);
+
+      beforeEach(function () {
+        sinon.stub(mainServiceItemController, 'checkNnLastCheckpointTime', function() {
+          return true;
+        });
+        sinon.stub(App.router, 'get', function(k) {
+          if ('mainServiceItemController' === k) {
+            return mainServiceItemController;
+          }
+          return Em.get(App.router, k);
+        });
+        mainConfigsControllerHdfsStarted.restartAllStaleConfigComponents();
       });
 
-      mainConfigsControllerHdfsStarted.restartAllStaleConfigComponents();
-      expect(mainServiceItemController.checkNnLastCheckpointTime.calledOnce).to.equal(true);
-      mainServiceItemController.checkNnLastCheckpointTime.restore();
-      App.router.get.restore();
+      afterEach(function () {
+        mainServiceItemController.checkNnLastCheckpointTime.restore();
+        App.router.get.restore();
+      });
+
+      it('checkNnLastCheckpointTime is called once', function () {
+        expect(mainServiceItemController.checkNnLastCheckpointTime.calledOnce).to.equal(true);
+      });
+
+
     });
   });
 
   describe("#doCancel", function () {
     beforeEach(function () {
       sinon.stub(Em.run, 'once', Em.K);
+      sinon.stub(mainServiceInfoConfigsController, 'loadSelectedVersion');
+      sinon.stub(mainServiceInfoConfigsController, 'clearRecommendationsInfo');
     });
     afterEach(function () {
       Em.run.once.restore();
+      mainServiceInfoConfigsController.loadSelectedVersion.restore();
+      mainServiceInfoConfigsController.clearRecommendationsInfo.restore();
     });
 
     it("should clear dependent configs", function() {
       mainServiceInfoConfigsController.set('groupsToSave', { HDFS: 'my cool group'});
-      mainServiceInfoConfigsController.set('_dependentConfigValues', Em.A([{name: 'prop_1'}]));
+      mainServiceInfoConfigsController.set('recommendations', Em.A([{name: 'prop_1'}]));
       mainServiceInfoConfigsController.doCancel();
-      expect(App.isEmptyObject(mainServiceInfoConfigsController.get('_dependentConfigValues'))).to.be.true;
+      expect(App.isEmptyObject(mainServiceInfoConfigsController.get('recommendations'))).to.be.true;
+      expect(mainServiceInfoConfigsController.clearRecommendationsInfo.calledOnce).to.be.true;
     });
   });
 
@@ -422,16 +599,15 @@ describe("App.MainServiceInfoConfigsController", function () {
       sinon.stub(App.router, 'getClusterName', function() {
         return 'clName';
       });
-      sinon.stub(App.ajax, "send", Em.K);
     });
     afterEach(function () {
-      App.ajax.send.restore();
       App.router.getClusterName.restore();
     });
     it("ajax request to put cluster cfg", function () {
       mainServiceInfoConfigsController.set('stepConfigs', sc);
-      expect(mainServiceInfoConfigsController.putChangedConfigurations([]));
-      expect(App.ajax.send.calledOnce).to.be.true;
+      mainServiceInfoConfigsController.putChangedConfigurations([]);
+      var args = testHelpers.findAjaxRequest('name', 'common.across.services.configurations');
+      expect(args[0]).exists;
     });
     it('values should be parsed', function () {
       mainServiceInfoConfigsController.set('stepConfigs', sc);
@@ -538,8 +714,8 @@ describe("App.MainServiceInfoConfigsController", function () {
         Em.Object.create({ name: "p4", value: " d1 d2 d3 ", displayType: "directories" }),
         Em.Object.create({ name: "p5", value: " v1 ", displayType: "password" }),
         Em.Object.create({ name: "p6", value: " v ", displayType: "host" }),
-        Em.Object.create({ name: "javax.jdo.option.ConnectionURL", value: " v1 ", displayType: "advanced" }),
-        Em.Object.create({ name: "oozie.service.JPAService.jdbc.url", value: " v1 ", displayType: "advanced" })
+        Em.Object.create({ name: "javax.jdo.option.ConnectionURL", value: " v1 ", displayType: "string" }),
+        Em.Object.create({ name: "oozie.service.JPAService.jdbc.url", value: " v1 ", displayType: "string" })
       ],
       result: [
         Em.Object.create({ name: "p1", value: " v1 v1", displayType: "" }),
@@ -548,8 +724,8 @@ describe("App.MainServiceInfoConfigsController", function () {
         Em.Object.create({ name: "p4", value: "d1,d2,d3", displayType: "directories" }),
         Em.Object.create({ name: "p5", value: " v1 ", displayType: "password" }),
         Em.Object.create({ name: "p6", value: "v", displayType: "host" }),
-        Em.Object.create({ name: "javax.jdo.option.ConnectionURL", value: " v1", displayType: "advanced" }),
-        Em.Object.create({ name: "oozie.service.JPAService.jdbc.url", value: " v1", displayType: "advanced" })
+        Em.Object.create({ name: "javax.jdo.option.ConnectionURL", value: " v1", displayType: "string" }),
+        Em.Object.create({ name: "oozie.service.JPAService.jdbc.url", value: " v1", displayType: "string" })
       ]
     };
 
@@ -558,34 +734,6 @@ describe("App.MainServiceInfoConfigsController", function () {
       expect(t.configs).to.deep.equal(t.result);
     });
 
-  });
-
-  describe("#putConfigGroupChanges", function() {
-
-    var t = {
-      data: {
-        ConfigGroup: {
-          id: "id"
-        }
-      },
-      request: [{
-        ConfigGroup: {
-          id: "id"
-        }
-      }]
-    };
-
-    beforeEach(function() {
-      sinon.spy($,"ajax");
-    });
-    afterEach(function() {
-      $.ajax.restore();
-    });
-
-    it("updates configs groups", function() {
-      mainServiceInfoConfigsController.putConfigGroupChanges(t.data);
-      expect(JSON.parse($.ajax.args[0][0].data)).to.deep.equal(t.request);
-    });
   });
 
   describe("#checkOverrideProperty", function () {
@@ -700,10 +848,10 @@ describe("App.MainServiceInfoConfigsController", function () {
     it("expect that serviceConfig.compareConfigs will be getComparisonConfig", function() {
       expect(mainServiceInfoConfigsController.setCompareDefaultGroupConfig({isUserProperty: true}, {})).to.eql({compareConfigs: ["compConfig"], isUserProperty: true, isComparison: true, hasCompareDiffs: true});
     });
-    it("expect that serviceConfig.compareConfigs will be getComparisonConfig", function() {
+    it("expect that serviceConfig.compareConfigs will be getComparisonConfig (2)", function() {
       expect(mainServiceInfoConfigsController.setCompareDefaultGroupConfig({isReconfigurable: true}, {})).to.eql({compareConfigs: ["compConfig"], isReconfigurable: true, isComparison: true, hasCompareDiffs: true});
     });
-    it("expect that serviceConfig.compareConfigs will be getComparisonConfig", function() {
+    it("expect that serviceConfig.compareConfigs will be getComparisonConfig (3)", function() {
       expect(mainServiceInfoConfigsController.setCompareDefaultGroupConfig({isReconfigurable: true, isMock: true}, {})).to.eql({compareConfigs: ["compConfig"], isReconfigurable: true, isMock: true, isComparison: true, hasCompareDiffs: true});
     });
     it("property was created during upgrade and have no comparison, compare with 'Undefined' value should be created", function() {
@@ -721,7 +869,6 @@ describe("App.MainServiceInfoConfigsController", function () {
     describe('#bodyClass', function () {
       beforeEach(function() {
         sinon.stub(App.StackService, 'find').returns([{dependentServiceNames: []}]);
-        sinon.stub(App.ajax, 'send', Em.K);
         // default implementation
         bodyView = mainServiceInfoConfigsController.showSaveConfigsPopup().get('bodyClass').create({
           parentView: Em.View.create()
@@ -729,13 +876,13 @@ describe("App.MainServiceInfoConfigsController", function () {
       });
 
       afterEach(function() {
-        App.ajax.send.restore();
         App.StackService.find.restore();
       });
 
       describe('#componentsFilterSuccessCallback', function () {
         it('check components with unknown state', function () {
           bodyView = mainServiceInfoConfigsController.showSaveConfigsPopup('', true, '', {}, '', 'unknown', '').get('bodyClass').create({
+            didInsertElement: Em.K,
             parentView: Em.View.create()
           });
           bodyView.componentsFilterSuccessCallback({
@@ -765,30 +912,12 @@ describe("App.MainServiceInfoConfigsController", function () {
 
     it('should ignore configs with widgets (enhanced configs)', function () {
 
-      mainServiceInfoConfigsController.reopen({selectedService: {
-        configs: [
-          Em.Object.create({isVisible: true, widget: Em.View, isValid: false}),
-          Em.Object.create({isVisible: true, widget: Em.View, isValid: true}),
-          Em.Object.create({isVisible: true, isValid: true}),
-          Em.Object.create({isVisible: true, isValid: false})
-        ]
-      }});
-
-      expect(mainServiceInfoConfigsController.get('errorsCount')).to.equal(1);
-
-    });
-
-    it('should ignore configs with widgets (enhanced configs) and hidden configs', function () {
-
-      mainServiceInfoConfigsController.reopen({selectedService: {
-        configs: [
-          Em.Object.create({isVisible: true, widget: Em.View, isValid: false}),
-          Em.Object.create({isVisible: true, widget: Em.View, isValid: true}),
-          Em.Object.create({isVisible: false, isValid: false}),
-          Em.Object.create({isVisible: true, isValid: true}),
-          Em.Object.create({isVisible: true, isValid: false})
-        ]
-      }});
+      mainServiceInfoConfigsController.reopen({selectedService: Em.Object.create({
+        configsWithErrors: Em.A([
+          Em.Object.create({widget: {}}),
+          Em.Object.create({widget: null})
+        ])
+      })});
 
       expect(mainServiceInfoConfigsController.get('errorsCount')).to.equal(1);
 
@@ -817,6 +946,17 @@ describe("App.MainServiceInfoConfigsController", function () {
       expect(mainServiceInfoConfigsController.get('dataIsLoaded')).to.be.true;
       expect(mainServiceInfoConfigsController.get('versionLoaded')).to.be.true;
       expect(mainServiceInfoConfigsController.get('isInit')).to.be.false;
+
+    });
+
+  });
+
+  describe('#hasCompareDiffs', function () {
+
+    it('should return false for `password`-configs', function () {
+
+      var hasCompareDiffs = mainServiceInfoConfigsController.hasCompareDiffs({displayType: 'password'}, {});
+      expect(hasCompareDiffs).to.be.false;
 
     });
 

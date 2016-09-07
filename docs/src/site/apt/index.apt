@@ -52,19 +52,21 @@ Introduction
 
 Getting Started with Ambari
 
-  Follow the {{{https://cwiki.apache.org/confluence/display/AMBARI/Installation+Guide+for+Ambari+2.1.1} installation guide for Ambari 2.1.1}}.
+  Follow the {{{https://cwiki.apache.org/confluence/display/AMBARI/Installation+Guide+for+Ambari+2.4.0} installation guide for Ambari 2.4.0}}.
 
   Note: Ambari currently supports the 64-bit version of the following Operating Systems:
 
-  * RHEL (Redhat Enterprise Linux) 5 and 6
+  * RHEL (Redhat Enterprise Linux) 6 and 7
 
-  * CentOS 5 and 6
+  * CentOS 6 and 7
 
-  * OEL (Oracle Enterprise Linux) 5 and 6
+  * OEL (Oracle Enterprise Linux) 6 and 7
 
   * SLES (SuSE Linux Enterprise Server) 11
 
-  * Ubuntu 12
+  * Ubuntu 12 and 14
+
+  * Debian 7
 
 Get Involved
 

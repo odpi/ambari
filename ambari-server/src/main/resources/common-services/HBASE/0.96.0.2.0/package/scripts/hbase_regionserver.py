@@ -19,22 +19,29 @@ limitations under the License.
 """
 
 import sys
-from resource_management import *
+
+from resource_management.core import shell
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.security_commons import build_expectations, \
   cached_kinit_executor, get_params_from_filesystem, validate_security_config_properties, \
   FILE_TYPE_XML
+
+from ambari_commons import OSCheck, OSConst
+from ambari_commons.os_family_impl import OsFamilyImpl
+
 from hbase import hbase
 from hbase_service import hbase_service
 import upgrade
 from setup_ranger_hbase import setup_ranger_hbase
-from ambari_commons import OSCheck, OSConst
-from ambari_commons.os_family_impl import OsFamilyImpl
 
 
 class HbaseRegionServer(Script):
   def install(self, env):
     import params
-    self.install_packages(env, params.exclude_packages)
+    env.set_params(params)
+    self.install_packages(env)
 
   def configure(self, env):
     import params
@@ -67,29 +74,28 @@ class HbaseRegionServerWindows(HbaseRegionServer):
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class HbaseRegionServerDefault(HbaseRegionServer):
-  def get_stack_to_component(self):
-    return {"HDP": "hbase-regionserver"}
+  def get_component_name(self):
+    return "hbase-regionserver"
 
-  def pre_rolling_restart(self, env):
+  def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     upgrade.prestart(env, "hbase-regionserver")
 
-  def post_rolling_restart(self, env):
+  def post_upgrade_restart(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     upgrade.post_regionserver(env)
 
-  def start(self, env, rolling_restart=False):
+  def start(self, env, upgrade_type=None):
     import params
     env.set_params(params)
     self.configure(env) # for security
-    setup_ranger_hbase(rolling_upgrade=rolling_restart)  
-    hbase_service( 'regionserver',
-      action = 'start'
-    )
+    setup_ranger_hbase(upgrade_type=upgrade_type, service_name="hbase-regionserver")
 
-  def stop(self, env, rolling_restart=False):
+    hbase_service('regionserver', action='start')
+
+  def stop(self, env, upgrade_type=None):
     import params
     env.set_params(params)
 
@@ -100,8 +106,8 @@ class HbaseRegionServerDefault(HbaseRegionServer):
   def status(self, env):
     import status_params
     env.set_params(status_params)
-    pid_file = format("{pid_dir}/hbase-{hbase_user}-regionserver.pid")
-    check_process_status(pid_file)
+
+    check_process_status(status_params.regionserver_pid_file)
 
   def security_status(self, env):
     import status_params
@@ -152,6 +158,17 @@ class HbaseRegionServerDefault(HbaseRegionServer):
     else:
       self.put_structured_out({"securityState": "UNSECURED"})
 
+  def get_log_folder(self):
+    import params
+    return params.log_dir
+  
+  def get_user(self):
+    import params
+    return params.hbase_user
+
+  def get_pid_files(self):
+    import status_params
+    return [status_params.regionserver_pid_file]
 
 if __name__ == "__main__":
   HbaseRegionServer().execute()

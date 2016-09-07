@@ -18,6 +18,7 @@
 
 package org.apache.ambari.view.utils.hdfs;
 
+import com.google.common.base.Strings;
 import org.apache.ambari.view.ViewContext;
 import org.apache.ambari.view.utils.ambari.AmbariApi;
 import org.apache.ambari.view.utils.ambari.NoClusterAssociatedException;
@@ -38,11 +39,9 @@ public class AuthConfigurationBuilder {
   private Map<String, String> params = new HashMap<String, String>();
 
   private ViewContext context;
-  private AmbariApi ambariApi;
 
   public AuthConfigurationBuilder(ViewContext context) {
     this.context = context;
-    this.ambariApi = new AmbariApi(context);
   }
 
   /**
@@ -54,15 +53,15 @@ public class AuthConfigurationBuilder {
     String auth;
     auth = context.getProperties().get("webhdfs.auth");
 
-    if (auth == null || auth.isEmpty()) {
-      try {
+    if (Strings.isNullOrEmpty(auth)) {
+      if (context.getCluster() != null) {
         auth = getConfigurationFromAmbari();
-      } catch (NoClusterAssociatedException e) {
+      } else {
         auth = "auth=SIMPLE";
         LOG.warn(String.format("HDFS090 Authentication parameters could not be determined. %s assumed.", auth));
       }
     }
-
+    LOG.debug("Hdfs auth params : {}", auth);
     parseAuthString(auth);
   }
 
@@ -81,9 +80,16 @@ public class AuthConfigurationBuilder {
    * Determine configuration from Ambari.
    */
   private String getConfigurationFromAmbari() throws NoClusterAssociatedException {
-    String authMethod = ambariApi.getCluster().getConfigurationValue(
+    String authMethod = context.getCluster().getConfigurationValue(
         "core-site", "hadoop.security.authentication");
-    return String.format("auth=%s", authMethod);
+
+    String authString = String.format("auth=%s", authMethod);
+
+    String proxyUser = context.getCluster().getConfigurationValue("cluster-env","ambari_principal_name");
+    if(proxyUser != null && !authMethod.equalsIgnoreCase("SIMPLE")){
+      authString = authString + String.format(";proxyuser=%s",proxyUser.split("@")[0]);
+    }
+    return authString;
   }
 
   /**

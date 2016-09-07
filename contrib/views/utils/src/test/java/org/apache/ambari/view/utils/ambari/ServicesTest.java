@@ -41,6 +41,8 @@ public class ServicesTest extends EasyMockSupport {
   private static final String HTTP_RM_URL2 = "http://c2.ambari.apache.org:8088";
   private static final String HTTPS_RM_URL1 = "https://c1.ambari.apache.org:8088";
   private static final String HTTPS_RM_URL2 = "https://c2.ambari.apache.org:8088";
+  private static final String RM_URL1_HOST = "c1.ambari.apache.org";
+  private static final String RM_URL2_HOST = "c2.ambari.apache.org";
   private static final String RM_URL1_HOST_PORT = "c1.ambari.apache.org:8088";
   private static final String RM_URL2_HOST_PORT = "c2.ambari.apache.org:8088";
   private static final String RM_INFO_API_ENDPOINT = Services.RM_INFO_API_ENDPOINT;
@@ -61,7 +63,7 @@ public class ServicesTest extends EasyMockSupport {
   @Test
   public void shouldReturnATSUrlConfiguredInCustomMode() throws Exception {
     Map<String, String> map = new HashMap<>();
-    map.put("yarn.timeline-server.url", HTTP_RM_URL1);
+    map.put("yarn.ats.url", HTTP_RM_URL1);
     ViewContext viewContext = getViewContext(map);
 
     AmbariApi ambariApi = createNiceMock(AmbariApi.class);
@@ -76,7 +78,7 @@ public class ServicesTest extends EasyMockSupport {
   @Test(expected = AmbariApiException.class)
   public void shouldThrowExceptionIfNoProtocolInCustomMode() {
     Map<String, String> map = new HashMap<>();
-    map.put("yarn.timeline-server.url", RM_URL1_HOST_PORT);
+    map.put("yarn.ats.url", RM_URL1_HOST_PORT);
     ViewContext viewContext = getViewContext(map);
 
     AmbariApi ambariApi = createNiceMock(AmbariApi.class);
@@ -98,7 +100,7 @@ public class ServicesTest extends EasyMockSupport {
 
     expect(ambariApi.isClusterAssociated()).andReturn(true).anyTimes();
     setClusterExpectation(cluster, "HTTP_ONLY");
-    expect(ambariApi.getCluster()).andReturn(cluster).anyTimes();
+    expect(viewContext.getCluster()).andReturn(cluster).anyTimes();
     replayAll();
 
     assertEquals(HTTP_RM_URL1, services.getTimelineServerUrl());
@@ -253,7 +255,7 @@ public class ServicesTest extends EasyMockSupport {
 
     expect(ambariApi.isClusterAssociated()).andReturn(true).anyTimes();
     setClusterExpectation(cluster, "HTTP_ONLY");
-    expect(ambariApi.getCluster()).andReturn(cluster).anyTimes();
+    expect(viewContext.getCluster()).andReturn(cluster).anyTimes();
 
     replayAll();
 
@@ -274,6 +276,59 @@ public class ServicesTest extends EasyMockSupport {
   }
 
   @Test
+  public void shouldConnectToDefaultHostPortInClusterModeWhenWebaddressConfigIsEmpty() throws Exception {
+    ViewContext viewContext = getViewContext(new HashMap<String, String>());
+    AmbariApi ambariApi = createNiceMock(AmbariApi.class);
+    Cluster cluster = createNiceMock(Cluster.class);
+
+    expect(ambariApi.isClusterAssociated()).andReturn(true).anyTimes();
+    setClusterExpectationWithEmptyWebappConfig(cluster, "HTTP_ONLY");
+    expect(viewContext.getCluster()).andReturn(cluster).anyTimes();
+
+    Services services = new Services(ambariApi, viewContext);
+
+    replayAll();
+    assertEquals("http://" + RM_URL1_HOST + ":8088", services.getRMUrl());
+
+    reset(cluster);
+    setClusterExpectationWithEmptyWebappConfig(cluster, "HTTPS_ONLY");
+    replay(cluster);
+
+    assertEquals("https://" + RM_URL1_HOST + ":8090", services.getRMUrl());
+
+  }
+
+  @Test
+  public void shouldConnectToDefaultHostPortInClusterModeWithHAWhenWebaddressConfigIsEmpty() throws Exception {
+    ViewContext viewContext = getViewContext(new HashMap<String, String>());
+    AmbariApi ambariApi = createNiceMock(AmbariApi.class);
+    Cluster cluster = createNiceMock(Cluster.class);
+    URLStreamProvider urlStreamProvider = createNiceMock(URLStreamProvider.class);
+
+    expect(ambariApi.isClusterAssociated()).andReturn(true).anyTimes();
+    setClusterExpectationInHAWithEmptyWebappConfig(cluster, "HTTP_ONLY");
+    expect(viewContext.getCluster()).andReturn(cluster).anyTimes();
+
+    Services services = new Services(ambariApi, viewContext);
+
+    InputStream inputStream = IOUtils.toInputStream("{\"clusterInfo\": {\"haState\": \"ACTIVE\"}}");
+    expect(viewContext.getURLStreamProvider()).andReturn(urlStreamProvider).anyTimes();
+    expect(urlStreamProvider.readFrom(eq("http://" + RM_URL1_HOST + ":8088" + RM_INFO_API_ENDPOINT), eq("GET"), anyString(), EasyMock.<Map<String, String>>anyObject())).andReturn(inputStream);
+
+    replayAll();
+    assertEquals("http://" + RM_URL1_HOST + ":8088", services.getRMUrl());
+
+    reset(cluster, urlStreamProvider);
+    setClusterExpectationInHAWithEmptyWebappConfig(cluster, "HTTPS_ONLY");
+    inputStream = IOUtils.toInputStream("{\"clusterInfo\": {\"haState\": \"ACTIVE\"}}");
+    expect(urlStreamProvider.readFrom(eq("https://" + RM_URL1_HOST + ":8090" + RM_INFO_API_ENDPOINT), eq("GET"), anyString(), EasyMock.<Map<String, String>>anyObject())).andReturn(inputStream);
+    replay(cluster, urlStreamProvider);
+
+    assertEquals("https://" + RM_URL1_HOST + ":8090", services.getRMUrl());
+
+  }
+
+  @Test
   public void shouldFetchRMUrlsWhileHAEnabledInClusterMode() throws Exception {
     ViewContext viewContext = getViewContext(new HashMap<String, String>());
     AmbariApi ambariApi = createNiceMock(AmbariApi.class);
@@ -287,7 +342,7 @@ public class ServicesTest extends EasyMockSupport {
 
     expect(ambariApi.isClusterAssociated()).andReturn(true).anyTimes();
     setClusterExpectationInHA(cluster, "HTTP_ONLY");
-    expect(ambariApi.getCluster()).andReturn(cluster).anyTimes();
+    expect(viewContext.getCluster()).andReturn(cluster).anyTimes();
     expect(viewContext.getURLStreamProvider()).andReturn(urlStreamProvider).anyTimes();
     expect(urlStreamProvider.readFrom(eq(HTTP_RM_URL1 + RM_INFO_API_ENDPOINT), eq("GET"), anyString(), EasyMock.<Map<String, String>>anyObject())).andReturn(inputStream);
 
@@ -322,6 +377,22 @@ public class ServicesTest extends EasyMockSupport {
     assertEquals(HTTPS_RM_URL2, services.getRMUrl());
   }
 
+  @Test
+  public void basicGetYARNProtocol() throws Exception {
+    ViewContext viewContext = getViewContext(new HashMap<String, String>());
+    AmbariApi ambariApi = createNiceMock(AmbariApi.class);
+    Cluster cluster = createNiceMock(Cluster.class);
+
+    expect(ambariApi.isClusterAssociated()).andReturn(true).anyTimes();
+    setClusterExpectationWithEmptyWebappConfig(cluster, "HTTP_ONLY");
+    expect(viewContext.getCluster()).andReturn(cluster).anyTimes();
+
+    Services services = new Services(ambariApi, viewContext);
+
+    replayAll();
+    assertEquals("http", services.getYARNProtocol());
+  }
+
   private void setClusterExpectation(Cluster cluster, String httpPolicy) {
     expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.ha.enabled")).andReturn("false");
     expect(cluster.getConfigurationValue("yarn-site", "yarn.http.policy")).andReturn(httpPolicy);
@@ -339,6 +410,21 @@ public class ServicesTest extends EasyMockSupport {
     expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.webapp.address.rm2")).andReturn(RM_URL2_HOST_PORT);
     expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.webapp.https.address.rm1")).andReturn(RM_URL1_HOST_PORT);
     expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.webapp.https.address.rm2")).andReturn(RM_URL2_HOST_PORT);
+  }
+
+  private void setClusterExpectationInHAWithEmptyWebappConfig(Cluster cluster, String httpPolicy) {
+    expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.ha.enabled")).andReturn("true");
+    expect(cluster.getConfigurationValue("yarn-site", "yarn.http.policy")).andReturn(httpPolicy);
+    expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.ha.rm-ids")).andReturn("rm1,rm2");
+    expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.hostname.rm1")).andReturn(RM_URL1_HOST);
+    expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.hostname.rm2")).andReturn(RM_URL2_HOST);
+
+  }
+
+  private void setClusterExpectationWithEmptyWebappConfig(Cluster cluster, String httpPolicy) {
+    expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.ha.enabled")).andReturn("false");
+    expect(cluster.getConfigurationValue("yarn-site", "yarn.http.policy")).andReturn(httpPolicy);
+    expect(cluster.getConfigurationValue("yarn-site", "yarn.resourcemanager.hostname")).andReturn(RM_URL1_HOST);
   }
 
   private ViewContext getViewContext(Map<String, String> map) {

@@ -18,7 +18,11 @@
 
 var App = require('app');
 
-App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
+var fileUtils = require('utils/file_utils');
+
+var CUSTOM_TIME_INDEX = 8;
+
+App.GraphWidgetView = Em.View.extend(App.WidgetMixin, App.ExportMetricsMixin, {
   templateName: require('templates/common/widget/graph_widget'),
 
   /**
@@ -55,6 +59,12 @@ App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
       //1h - default time range
       timeRange = 1;
     }
+
+    // Custom start and end time is specified by user
+    if (this.get('exportTargetView.currentTimeIndex') === CUSTOM_TIME_INDEX) {
+      return 0;
+    }
+
     return this.get('customTimeRange') || timeRange * this.get('TIME_FACTOR');
   }.property('content.properties.time_range', 'customTimeRange'),
 
@@ -68,6 +78,38 @@ App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
    * @type {Array}
    */
   data: [],
+
+  /**
+   * time range index for graph
+   * @type {number}
+   */
+  timeIndex: 0,
+
+  /**
+   * custom start time for graph
+   * @type {number|null}
+   */
+  startTime: null,
+
+  /**
+   * custom end time for graph
+   * @type {number|null}
+   */
+  endTime: null,
+
+  /**
+   * graph time range duration in seconds
+   * @type {number|null}
+   */
+  graphSeconds: null,
+
+  /**
+   * time range duration as string
+   * @type {string|null}
+   */
+  durationFormatted: null,
+
+  exportTargetView: Em.computed.alias('childViews.lastObject'),
 
   drawWidget: function () {
     if (this.get('isLoaded')) {
@@ -196,10 +238,27 @@ App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
    * @returns {Array} result
    */
   addTimeProperties: function (metricPaths) {
-    var toSeconds = Math.round(App.dateTime() / 1000);
-    var fromSeconds = toSeconds - this.get('timeRange');
-    var step = this.get('timeStep');
-    var result = [];
+    var toSeconds,
+      fromSeconds,
+      step = this.get('timeStep'),
+      timeRange = this.get('timeRange'),
+      result = [],
+      targetView = this.get('exportTargetView.isPopup') ? this.get('exportTargetView') : this.get('parentView');
+
+    //if view destroyed then no metrics should be asked
+    if (Em.isNone(targetView)) return result;
+
+    if (timeRange === 0 &&
+      !Em.isNone(targetView.get('customStartTime')) &&
+      !Em.isNone(targetView.get('customEndTime'))) {
+      // Custom start/end time is specified by user
+      toSeconds = targetView.get('customEndTime') / 1000;
+      fromSeconds = targetView.get('customStartTime') / 1000;
+    } else {
+      // Preset time range is specified by user
+      toSeconds = Math.round(App.dateTime() / 1000);
+      fromSeconds = toSeconds - timeRange;
+    }
 
     metricPaths.forEach(function (metricPath) {
       result.push(metricPath + '[' + fromSeconds + ',' + toSeconds + ',' + step + ']');
@@ -216,20 +275,14 @@ App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
 
     noTitleUnderGraph: true,
     inWidget: true,
-    description: function () {
-      return this.get('parentView.content.description');
-    }.property('parentView.content.description'),
-    isPreview: function () {
-      return this.get('parentView.isPreview');
-    }.property('parentView.isPreview'),
-    displayUnit: function () {
-      return this.get('parentView.content.properties.display_unit');
-    }.property('parentView.content.properties.display_unit'),
+    description: Em.computed.alias('parentView.content.description'),
+    isPreview: Em.computed.alias('parentView.isPreview'),
+    displayUnit: Em.computed.alias('parentView.content.properties.display_unit'),
     setYAxisFormatter: function () {
-      var self = this;
-      if (this.get('displayUnit')) {
-        this.set('yAxisFormatter',  function (value) {
-          return App.ChartLinearTimeView.DisplayUnitFormatter(value, self.get('displayUnit'));
+      var displayUnit = this.get('displayUnit');
+      if (displayUnit) {
+        this.set('yAxisFormatter', function (value) {
+          return App.ChartLinearTimeView.DisplayUnitFormatter(value, displayUnit);
         });
       }
     }.observes('displayUnit'),
@@ -239,7 +292,13 @@ App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
      */
     setTimeRange: function () {
       if (this.get('isPopup')) {
-        this.set('parentView.customTimeRange', this.get('timeUnitSeconds'));
+        if (this.get('currentTimeIndex') === CUSTOM_TIME_INDEX) {
+          // Custom start and end time is specified by user
+          this.get('parentView').propertyDidChange('customTimeRange');
+        } else {
+          // Preset time range is specified by user
+          this.set('parentView.customTimeRange', this.get('timeUnitSeconds'));
+        }
       } else {
         this.set('parentView.customTimeRange', null);
       }
@@ -265,9 +324,7 @@ App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
       return this.get('parentView.content.properties.graph_type') === 'STACK' ? 'area' : 'line';
     }.property('parentView.content.properties.graph_type'),
 
-    title: function () {
-      return this.get('parentView.content.widgetName');
-    }.property('parentView.content.widgetName'),
+    title: Em.computed.alias('parentView.content.widgetName'),
 
     transformToSeries: function (seriesData) {
       var seriesArray = [];
@@ -279,15 +336,20 @@ App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
     },
 
     loadData: function () {
-      var self = this;
-      Em.run.next(function () {
-        self._refreshGraph(self.get('parentView.data'))
+      Em.run.next(this, function () {
+        this._refreshGraph(this.get('parentView.data'), this.get('parentView'));
       });
     },
 
     didInsertElement: function () {
+      var self = this;
+      this.$().closest('.graph-widget').on('mouseleave', function () {
+        self.set('parentView.isExportMenuHidden', true);
+      });
       this.setYAxisFormatter();
-      this.loadData();
+      if (!arguments.length || this.get('parentView.data.length')) {
+        this.loadData();
+      }
       var self = this;
       Em.run.next(function () {
         if (self.get('isPreview')) {
@@ -300,5 +362,23 @@ App.GraphWidgetView = Em.View.extend(App.WidgetMixin, {
         }
       });
     }.observes('parentView.data')
-  })
+  }),
+
+  exportGraphData: function (event) {
+    this.set('isExportMenuHidden', true);
+    var data,
+      isCSV = !!event.context,
+      fileType = isCSV ? 'csv' : 'json',
+      fileName = 'data.' + fileType,
+      metrics = this.get('data'),
+      hasData = Em.isArray(metrics) && metrics.some(function (item) {
+        return Em.isArray(item.data);
+      });
+    if (hasData) {
+      data = isCSV ? this.prepareCSV(metrics) : JSON.stringify(metrics, this.jsonReplacer(), 4);
+      fileUtils.downloadTextFile(data, fileType, fileName);
+    } else {
+      App.showAlertPopup(Em.I18n.t('graphs.noData.title'), Em.I18n.t('graphs.noData.tooltip.title'));
+    }
+  }
 });

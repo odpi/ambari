@@ -32,30 +32,32 @@ public interface ServiceComponentHost {
   /**
    * Get the Cluster that this object maps to
    */
-  public long getClusterId();
+  long getClusterId();
 
   /**
    * Get the Cluster that this object maps to
    */
-  public String getClusterName();
+  String getClusterName();
 
   /**
    * Get the Service this object maps to
    * @return Name of the Service
    */
-  public String getServiceName();
+  String getServiceName();
+
+  boolean isClientComponent();
 
   /**
    * Get the ServiceComponent this object maps to
    * @return Name of the ServiceComponent
    */
-  public String getServiceComponentName();
+  String getServiceComponentName();
 
   /**
    * Get the Host this object maps to
    * @return Host's hostname
    */
-  public String getHostName();
+  String getHostName();
 
   /**
    * Get the Host this object maps to
@@ -64,24 +66,31 @@ public interface ServiceComponentHost {
   Host getHost();
 
   /**
+   * Get whether recovery is enabled for
+   * this component or not.
+   * @return True or false.
+   */
+  boolean isRecoveryEnabled();
+
+  /**
    * Send a ServiceComponentHostState event to the StateMachine
    * @param event Event to handle
    * @throws InvalidStateTransitionException
    */
-  public void handleEvent(ServiceComponentHostEvent event)
+  void handleEvent(ServiceComponentHostEvent event)
       throws InvalidStateTransitionException;
 
-  public State getDesiredState();
+  State getDesiredState();
 
-  public void setDesiredState(State state);
+  void setDesiredState(State state);
 
-  public StackId getDesiredStackVersion();
+  StackId getDesiredStackVersion();
 
-  public void setDesiredStackVersion(StackId stackVersion);
+  void setDesiredStackVersion(StackId stackVersion);
 
-  public State getState();
+  State getState();
 
-  public void setState(State state);
+  void setState(State state);
 
   /**
    * Gets the current security state for this ServiceComponent
@@ -90,7 +99,7 @@ public interface ServiceComponentHost {
    *
    * @return the current SecurityState for this ServiceComponent
    */
-  public SecurityState getSecurityState();
+  SecurityState getSecurityState();
 
   /**
    * Sets the current security state for this ServiceComponent
@@ -99,21 +108,21 @@ public interface ServiceComponentHost {
    *
    * @param state the current SecurityState for this ServiceComponent
    */
-  public void setSecurityState(SecurityState state);
+  void setSecurityState(SecurityState state);
 
   /**
    * Gets the version of the component.
    *
    * @return component version
    */
-  public String getVersion();
+  String getVersion();
 
   /**
    * Sets the version of the component from the stack.
    *
    * @param version component version (e.g. 2.2.0.0-2041)
    */
-  public void setVersion(String version);
+  void setVersion(String version);
 
   /**
    * Gets the desired security state for this ServiceComponent
@@ -123,7 +132,7 @@ public interface ServiceComponentHost {
    *
    * @return the desired SecurityState for this ServiceComponent
    */
-  public SecurityState getDesiredSecurityState();
+  SecurityState getDesiredSecurityState();
 
   /**
    * Sets the desired security state for this ServiceComponent
@@ -134,19 +143,44 @@ public interface ServiceComponentHost {
    * @param securityState the desired SecurityState for this ServiceComponent
    * @throws AmbariException if the new state is not an endpoint state
    */
-  public void setDesiredSecurityState(SecurityState securityState) throws AmbariException;
+  void setDesiredSecurityState(SecurityState securityState) throws AmbariException;
 
-  public void setUpgradeState(UpgradeState upgradeState);
+  /**
+   * @param upgradeState the upgrade state
+   */
+  void setUpgradeState(UpgradeState upgradeState);
 
-  public StackId getStackVersion();
+  /**
+   * @return the upgrade state. Valid values:
+   * NONE  - means that component is installed and good to go, no upgrade in progress
+   * IN_PROGRESS - means that component is being upgraded
+   * COMPLETE - means that component has reported a correct new version during upgrade
+   * FAILED - means that failed and component did not get upgraded
+   * VERSION_MISMATCH - means that component reported unexpected version
+   */
+  UpgradeState getUpgradeState();
 
-  public void setStackVersion(StackId stackVersion);
+  StackId getStackVersion();
 
-  public HostComponentAdminState getComponentAdminState();
+  void setStackVersion(StackId stackVersion);
 
-  public void setComponentAdminState(HostComponentAdminState attribute);
+  HostComponentAdminState getComponentAdminState();
 
-  public ServiceComponentHostResponse convertToResponse();
+  void setComponentAdminState(HostComponentAdminState attribute);
+
+  /**
+   * Builds a {@link ServiceComponentHostResponse}.
+   *
+   * @param desiredConfigs
+   *          the desired configurations for the cluster. Obtaining these can be
+   *          expensive and since this method operates on SCH's, it could be
+   *          called 10,000's of times when generating cluster/host responses.
+   *          Therefore, the caller should build these once and pass them in. If
+   *          {@code null}, then this method will retrieve them at runtime,
+   *          incurring a performance penality.
+   * @return
+   */
+  ServiceComponentHostResponse convertToResponse(Map<String, DesiredConfig> desiredConfigs);
 
   boolean isPersisted();
 
@@ -154,62 +188,62 @@ public interface ServiceComponentHost {
 
   void refresh();
 
-  public void debugDump(StringBuilder sb);
+  void debugDump(StringBuilder sb);
 
-  public boolean canBeRemoved();
+  boolean canBeRemoved();
 
-  public void delete() throws AmbariException;
+  void delete() throws AmbariException;
 
   /**
    * Updates the tags that have been recognized by a START action.
    * @param configTags
    */
-  public void updateActualConfigs(Map<String, Map<String, String>> configTags);
+  void updateActualConfigs(Map<String, Map<String, String>> configTags);
 
   /**
    * Gets the actual config tags, if known.
    * @return the actual config map
    */
-  public Map<String, HostConfig> getActualConfigs();
+  Map<String, HostConfig> getActualConfigs();
 
-  public HostState getHostState();
+  HostState getHostState();
 
   /**
    * @param state the maintenance state
    */
-  public void setMaintenanceState(MaintenanceState state);
+  void setMaintenanceState(MaintenanceState state);
 
   /**
    * @return the maintenance state
    */
-  public MaintenanceState getMaintenanceState();
+  MaintenanceState getMaintenanceState();
 
   /**
    * @param procs a list containing a map describing each process
    */
-  public void setProcesses(List<Map<String, String>> procs);
+  void setProcesses(List<Map<String, String>> procs);
 
 
   /**
    * @return the list of maps describing each process
    */
-  public List<Map<String, String>> getProcesses();
+  List<Map<String, String>> getProcesses();
 
   /**
    * @return whether restart required
    */
-  public boolean isRestartRequired();
+  boolean isRestartRequired();
 
   /**
    * @param restartRequired the restartRequired flag
    */
-  public void setRestartRequired(boolean restartRequired);
+  void setRestartRequired(boolean restartRequired);
 
   /**
    * Changes host version state according to state of the components installed on the host.
    * @return The Repository Version Entity with that component in the host
    * @throws AmbariException if host is detached from the cluster
    */
-  public RepositoryVersionEntity recalculateHostVersionState() throws AmbariException;
+  RepositoryVersionEntity recalculateHostVersionState() throws AmbariException;
 
 }

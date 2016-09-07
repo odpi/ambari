@@ -30,8 +30,8 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.configuration.ComponentSSLConfiguration;
 import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.controller.AmbariManagementControllerImpl;
 import org.apache.ambari.server.controller.MaintenanceStateHelper;
 import org.apache.ambari.server.controller.RequestStatusResponse;
 import org.apache.ambari.server.controller.ServiceComponentHostRequest;
@@ -42,7 +42,6 @@ import org.apache.ambari.server.controller.predicate.NotPredicate;
 import org.apache.ambari.server.controller.spi.NoSuchParentResourceException;
 import org.apache.ambari.server.controller.spi.NoSuchResourceException;
 import org.apache.ambari.server.controller.spi.Predicate;
-import org.apache.ambari.server.controller.spi.PropertyProvider;
 import org.apache.ambari.server.controller.spi.Request;
 import org.apache.ambari.server.controller.spi.RequestStatus;
 import org.apache.ambari.server.controller.spi.Resource;
@@ -52,6 +51,10 @@ import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
 import org.apache.ambari.server.orm.dao.HostVersionDAO;
 import org.apache.ambari.server.orm.entities.HostVersionEntity;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
+import org.apache.ambari.server.security.authorization.AuthorizationHelper;
+import org.apache.ambari.server.security.authorization.ResourceType;
+import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.MaintenanceState;
@@ -62,6 +65,7 @@ import org.apache.ambari.server.state.State;
 import org.apache.ambari.server.state.fsm.InvalidStateTransitionException;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostDisableEvent;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostRestoreEvent;
+import org.apache.ambari.server.topology.Setting;
 import org.apache.commons.lang.StringUtils;
 
 import com.google.inject.Inject;
@@ -77,42 +81,38 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
   // ----- Property ID constants ---------------------------------------------
 
   // Host Components
-  protected static final String HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID
+  public static final String HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "cluster_name");
-  protected static final String HOST_COMPONENT_SERVICE_NAME_PROPERTY_ID
+  public static final String HOST_COMPONENT_SERVICE_NAME_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "service_name");
-  protected static final String HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID
+  public static final String HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "component_name");
-  protected static final String HOST_COMPONENT_HOST_NAME_PROPERTY_ID
+  public static final String HOST_COMPONENT_DISPLAY_NAME_PROPERTY_ID
+      = PropertyHelper.getPropertyId("HostRoles", "display_name");
+  public static final String HOST_COMPONENT_HOST_NAME_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "host_name");
-  protected static final String HOST_COMPONENT_STATE_PROPERTY_ID
+  public static final String HOST_COMPONENT_STATE_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "state");
-  protected static final String HOST_COMPONENT_DESIRED_STATE_PROPERTY_ID
+  public static final String HOST_COMPONENT_DESIRED_STATE_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "desired_state");
-  protected static final String HOST_COMPONENT_STACK_ID_PROPERTY_ID
+  public static final String HOST_COMPONENT_STACK_ID_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "stack_id");
-  protected static final String HOST_COMPONENT_DESIRED_STACK_ID_PROPERTY_ID
+  public static final String HOST_COMPONENT_DESIRED_STACK_ID_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "desired_stack_id");
-  protected static final String HOST_COMPONENT_ACTUAL_CONFIGS_PROPERTY_ID
+  public static final String HOST_COMPONENT_ACTUAL_CONFIGS_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "actual_configs");
-  protected static final String HOST_COMPONENT_STALE_CONFIGS_PROPERTY_ID
+  public static final String HOST_COMPONENT_STALE_CONFIGS_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "stale_configs");
-  protected static final String HOST_COMPONENT_DESIRED_ADMIN_STATE_PROPERTY_ID
+  public static final String HOST_COMPONENT_DESIRED_ADMIN_STATE_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "desired_admin_state");
-  protected static final String HOST_COMPONENT_MAINTENANCE_STATE_PROPERTY_ID
+  public static final String HOST_COMPONENT_MAINTENANCE_STATE_PROPERTY_ID
       = "HostRoles/maintenance_state";
-  protected static final String HOST_COMPONENT_HDP_VERSION_PROPERTY_ID
+  public static final String HOST_COMPONENT_HDP_VERSION_PROPERTY_ID
       = PropertyHelper.getPropertyId("HostRoles", "hdp_version");
-  protected static final String HOST_COMPONENT_UPGRADE_STATE_PROPERTY_ID = "HostRoles/upgrade_state";
-
-  //Component name mappings
-  private final Map<String, PropertyProvider> HOST_COMPONENT_PROPERTIES_PROVIDER = new HashMap<String, PropertyProvider>();
-  private static final int HOST_COMPONENT_HTTP_PROPERTY_REQUEST_CONNECT_TIMEOUT = 1500;   //milliseconds
-  private static final int HOST_COMPONENT_HTTP_PROPERTY_REQUEST_READ_TIMEOUT = 10000;  //milliseconds
+  public static final String HOST_COMPONENT_UPGRADE_STATE_PROPERTY_ID = "HostRoles/upgrade_state";
 
   //Parameters from the predicate
-  private static final String QUERY_PARAMETERS_RUN_SMOKE_TEST_ID =
-      "params/run_smoke_test";
+  private static final String QUERY_PARAMETERS_RUN_SMOKE_TEST_ID = "params/run_smoke_test";
   private static Set<String> pkPropertyIds =
       new HashSet<String>(Arrays.asList(new String[]{
           HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID,
@@ -144,25 +144,15 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
                                        @Assisted AmbariManagementController managementController,
                                        Injector injector) {
     super(propertyIds, keyPropertyIds, managementController);
-    ComponentSSLConfiguration configuration = ComponentSSLConfiguration.instance();
-    URLStreamProvider streamProvider = new URLStreamProvider(
-            HOST_COMPONENT_HTTP_PROPERTY_REQUEST_CONNECT_TIMEOUT,
-            HOST_COMPONENT_HTTP_PROPERTY_REQUEST_READ_TIMEOUT,
-            configuration.getTruststorePath(), configuration.getTruststorePassword(), configuration.getTruststoreType());
 
-    HttpProxyPropertyProvider httpPropertyProvider = new HttpProxyPropertyProvider(streamProvider,
-            configuration, injector,
-            PropertyHelper.getPropertyId("HostRoles", "cluster_name"),
-            PropertyHelper.getPropertyId("HostRoles", "host_name"),
-            PropertyHelper.getPropertyId("HostRoles", "component_name"));
-
-    HOST_COMPONENT_PROPERTIES_PROVIDER.put("RESOURCEMANAGER", httpPropertyProvider);
+    setRequiredCreateAuthorizations(EnumSet.of(RoleAuthorization.SERVICE_ADD_DELETE_SERVICES,RoleAuthorization.HOST_ADD_DELETE_COMPONENTS));
+    setRequiredDeleteAuthorizations(EnumSet.of(RoleAuthorization.SERVICE_ADD_DELETE_SERVICES,RoleAuthorization.HOST_ADD_DELETE_COMPONENTS));
   }
 
   // ----- ResourceProvider ------------------------------------------------
 
   @Override
-  public RequestStatus createResources(Request request)
+  protected RequestStatus createResourcesAuthorized(Request request)
       throws SystemException,
       UnsupportedPropertyException,
       ResourceAlreadyExistsException,
@@ -175,7 +165,7 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
 
     createResources(new Command<Void>() {
       @Override
-      public Void invoke() throws AmbariException {
+      public Void invoke() throws AmbariException, AuthorizationException {
         getManagementController().createHostComponents(requests);
         return null;
       }
@@ -235,6 +225,8 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
               response.getServiceName(), requestedIds);
       setResourceProperty(resource, HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID,
               response.getComponentName(), requestedIds);
+      setResourceProperty(resource, HOST_COMPONENT_DISPLAY_NAME_PROPERTY_ID,
+              response.getDisplayName(), requestedIds);
       setResourceProperty(resource, HOST_COMPONENT_HOST_NAME_PROPERTY_ID,
               response.getHostname(), requestedIds);
       setResourceProperty(resource, HOST_COMPONENT_STATE_PROPERTY_ID,
@@ -271,14 +263,6 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
                 response.getMaintenanceState(), requestedIds);
       }
 
-      String componentName = (String) resource.getPropertyValue(HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID);
-      PropertyProvider propertyProvider = HOST_COMPONENT_PROPERTIES_PROVIDER.get(componentName);
-      if (propertyProvider != null) {
-        Set<Resource> resourcesToPopulate = new HashSet<Resource>();
-        resourcesToPopulate.add(resource);
-        propertyProvider.populateResources(resourcesToPopulate, request, predicate);
-      }
-
       resources.add(resource);
     }
     return resources;
@@ -309,22 +293,22 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
   }
 
   @Override
-  public RequestStatus deleteResources(Predicate predicate)
+  protected RequestStatus deleteResourcesAuthorized(Request request, Predicate predicate)
       throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
-    final Set<ServiceComponentHostRequest> requests = new HashSet<ServiceComponentHostRequest>();
+    final Set<ServiceComponentHostRequest> requests = new HashSet<>();
     for (Map<String, Object> propertyMap : getPropertyMaps(predicate)) {
       requests.add(changeRequest(propertyMap));
     }
-    RequestStatusResponse response = modifyResources(new Command<RequestStatusResponse>() {
+    DeleteStatusMetaData deleteStatusMetaData = modifyResources(new Command<DeleteStatusMetaData>() {
       @Override
-      public RequestStatusResponse invoke() throws AmbariException {
+      public DeleteStatusMetaData invoke() throws AmbariException, AuthorizationException {
         return getManagementController().deleteHostComponents(requests);
       }
     });
 
     notifyDelete(Resource.Type.HostComponent, predicate);
 
-    return getRequestStatus(response);
+    return getRequestStatus(null, null, deleteStatusMetaData);
   }
 
   @Override
@@ -347,7 +331,7 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
     return unsupportedProperties;
   }
 
-  public RequestStatusResponse install(String cluster, String hostname) throws  SystemException,
+  public RequestStatusResponse install(String cluster, String hostname, Collection<String> skipInstallForComponents, Collection<String> dontSkipInstallForComponents, boolean skipFailure) throws  SystemException,
       UnsupportedPropertyException, NoSuchParentResourceException {
 
     RequestStageContainer requestStages;
@@ -356,15 +340,20 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
     Map<String, Object> installProperties = new HashMap<String, Object>();
 
     installProperties.put(HOST_COMPONENT_DESIRED_STATE_PROPERTY_ID, "INSTALLED");
-    Map<String, String> requestInfo = new HashMap<String, String>();
+    Map<String, String> requestInfo = new HashMap<>();
     requestInfo.put("context", String.format("Install components on host %s", hostname));
     requestInfo.put("phase", "INITIAL_INSTALL");
+    requestInfo.put(AmbariManagementControllerImpl.SKIP_INSTALL_FOR_COMPONENTS, StringUtils.join
+      (skipInstallForComponents, ";"));
+    requestInfo.put(AmbariManagementControllerImpl.DONT_SKIP_INSTALL_FOR_COMPONENTS, StringUtils.join
+      (dontSkipInstallForComponents, ";"));
+
     Request installRequest = PropertyHelper.getUpdateRequest(installProperties, requestInfo);
 
-    Predicate statePredicate = new EqualsPredicate<String>(HOST_COMPONENT_STATE_PROPERTY_ID, "INIT");
-    Predicate clusterPredicate = new EqualsPredicate<String>(HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID, cluster);
+    Predicate statePredicate = new EqualsPredicate<>(HOST_COMPONENT_STATE_PROPERTY_ID, "INIT");
+    Predicate clusterPredicate = new EqualsPredicate<>(HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID, cluster);
     // single host
-    Predicate hostPredicate = new EqualsPredicate<String>(HOST_COMPONENT_HOST_NAME_PROPERTY_ID, hostname);
+    Predicate hostPredicate = new EqualsPredicate<>(HOST_COMPONENT_HOST_NAME_PROPERTY_ID, hostname);
     //Predicate hostPredicate = new OrPredicate(hostPredicates.toArray(new Predicate[hostPredicates.size()]));
     Predicate hostAndStatePredicate = new AndPredicate(statePredicate, hostPredicate);
     Predicate installPredicate = new AndPredicate(hostAndStatePredicate, clusterPredicate);
@@ -386,15 +375,25 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
     return requestStages.getRequestStatusResponse();
   }
 
+
+  // TODO, revisit this extra method, that appears to be used during Add Hosts
+  // TODO, How do we determine the component list for INSTALL_ONLY during an Add Hosts operation? rwn
   public RequestStatusResponse start(String cluster, String hostName) throws  SystemException,
+    UnsupportedPropertyException, NoSuchParentResourceException {
+
+    return this.start(cluster, hostName, Collections.<String>emptySet(), false);
+  }
+
+  public RequestStatusResponse start(String cluster, String hostName, Collection<String> installOnlyComponents, boolean skipFailure) throws  SystemException,
       UnsupportedPropertyException, NoSuchParentResourceException {
 
-    Map<String, String> requestInfo = new HashMap<String, String>();
+    Map<String, String> requestInfo = new HashMap<>();
     requestInfo.put("context", String.format("Start components on host %s", hostName));
     requestInfo.put("phase", "INITIAL_START");
+    requestInfo.put(Setting.SETTING_NAME_SKIP_FAILURE, Boolean.toString(skipFailure));
 
-    Predicate clusterPredicate = new EqualsPredicate<String>(HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID, cluster);
-    Predicate hostPredicate = new EqualsPredicate<String>(HOST_COMPONENT_HOST_NAME_PROPERTY_ID, hostName);
+    Predicate clusterPredicate = new EqualsPredicate<>(HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID, cluster);
+    Predicate hostPredicate = new EqualsPredicate<>(HOST_COMPONENT_HOST_NAME_PROPERTY_ID, hostName);
     //Predicate hostPredicate = new OrPredicate(hostPredicates.toArray(new Predicate[hostPredicates.size()]));
 
     RequestStageContainer requestStages;
@@ -410,9 +409,34 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
       Predicate notClientPredicate = new NotPredicate(new ClientComponentPredicate());
       Predicate clusterAndClientPredicate = new AndPredicate(clusterPredicate, notClientPredicate);
       Predicate hostAndStatePredicate = new AndPredicate(installedStatePredicate, hostPredicate);
-      Predicate startPredicate = new AndPredicate(clusterAndClientPredicate, hostAndStatePredicate);
+      Predicate startPredicate;
 
-      LOG.info("Starting all non-client components on host: " + hostName);
+      if (installOnlyComponents.isEmpty()) {
+        // all installed components should be started
+        startPredicate = new AndPredicate(clusterAndClientPredicate, hostAndStatePredicate);
+        LOG.info("Starting all non-client components on host: " + hostName);
+      } else {
+        // any INSTALL_ONLY components should not be started
+        List<Predicate> listOfComponentPredicates =
+          new ArrayList<Predicate>();
+
+        for (String installOnlyComponent : installOnlyComponents) {
+          Predicate componentNameEquals = new EqualsPredicate<String>(HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID, installOnlyComponent);
+          // create predicate to filter out the install only component
+          listOfComponentPredicates.add(new NotPredicate(componentNameEquals));
+        }
+
+        Predicate[] arrayOfInstallOnlyPredicates = new Predicate[listOfComponentPredicates.size()];
+        // aggregate Predicate of all INSTALL_ONLY component names
+        Predicate installOnlyComponentsPredicate = new AndPredicate(listOfComponentPredicates.toArray(arrayOfInstallOnlyPredicates));
+
+        // start predicate must now include the INSTALL_ONLY component predicates, in
+        // order to filter out those components for START attempts
+        startPredicate = new AndPredicate(clusterAndClientPredicate, hostAndStatePredicate, installOnlyComponentsPredicate);
+        LOG.info("Starting all non-client components on host: " + hostName + ", except for the INSTALL_ONLY components specified: " + installOnlyComponents);
+      }
+
+
       requestStages = doUpdateResources(null, startRequest, startPredicate, true);
       notifyUpdate(Resource.Type.HostComponent, startRequest, startPredicate);
       try {
@@ -449,7 +473,7 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
   protected synchronized RequestStageContainer updateHostComponents(RequestStageContainer stages,
                                                                     Set<ServiceComponentHostRequest> requests,
                                                                     Map<String, String> requestProperties,
-                                                                    boolean runSmokeTest) throws AmbariException {
+                                                                    boolean runSmokeTest) throws AmbariException, AuthorizationException {
 
     Clusters clusters = getManagementController().getClusters();
 
@@ -471,6 +495,12 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
       validateServiceComponentHostRequest(request);
 
       Cluster cluster = clusters.getCluster(request.getClusterName());
+
+      if(runSmokeTest) {
+        if(!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, cluster.getResourceId(), RoleAuthorization.SERVICE_RUN_SERVICE_CHECK)) {
+          throw new AuthorizationException("The authenticated user is not authorized to run service checks");
+        }
+      }
 
       if (StringUtils.isEmpty(request.getServiceName())) {
         request.setServiceName(getManagementController().findServiceName(cluster, request.getComponentName()));
@@ -552,6 +582,12 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
       if (newState == null) {
         logComponentInfo("Nothing to do for new updateServiceComponentHost", request, oldState, null);
         continue;
+      }
+
+      if(!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, cluster.getResourceId(),
+          EnumSet.of(RoleAuthorization.SERVICE_START_STOP, RoleAuthorization.SERVICE_ADD_DELETE_SERVICES,
+              RoleAuthorization.HOST_ADD_DELETE_COMPONENTS, RoleAuthorization.HOST_ADD_DELETE_HOSTS))) {
+        throw new AuthorizationException("The authenticated user is not authorized to change the state of service components");
       }
 
       // STARTED state is invalid for the client component, but this shouldn't cancel the whole stage
@@ -751,6 +787,12 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
       }
     }
 
+    if (requests.isEmpty()) {
+      String msg = String.format("Skipping updating hosts: no matching requests for %s", predicate);
+      LOG.info(msg);
+      throw new NoSuchResourceException(msg);
+    }
+
     RequestStageContainer requestStages = modifyResources(new Command<RequestStageContainer>() {
       @Override
       public RequestStageContainer invoke() throws AmbariException {
@@ -761,11 +803,16 @@ public class HostComponentResourceProvider extends AbstractControllerResourcePro
             stageContainer = updateHostComponents(stages, requests, request.getRequestInfoProperties(),
                 runSmokeTest);
           } catch (Exception e) {
-            LOG.info("Caught an exception while updating host components, retrying : " + e);
             if (--retriesRemaining == 0) {
-              e.printStackTrace();
-              throw new RuntimeException("Update Host request submission failed: " + e, e);
+              LOG.info("Caught an exception while updating host components, will not try again: {}", e.getMessage(), e);
+              // !!! IllegalArgumentException results in a 400 response, RuntimeException results in 500.
+              if (IllegalArgumentException.class.isInstance(e)) {
+                throw (IllegalArgumentException) e;
+              } else {
+                throw new RuntimeException("Update Host request submission failed: " + e, e);
+              }
             } else {
+              LOG.info("Caught an exception while updating host components, retrying : " + e);
               try {
                 Thread.sleep(250);
               } catch (InterruptedException ie) {

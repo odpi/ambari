@@ -44,8 +44,8 @@ describe('App.ServiceConfigView', function () {
         serviceName: 'TEST',
         configCategories: [
           App.ServiceConfigCategory.create({ name: 'category1', canAddProperty: false}),
-          App.ServiceConfigCategory.create({ name: 'category2', siteFileName: 'xml', canAddProperty: true}),
-          App.ServiceConfigCategory.create({ name: 'category3', siteFileName: 'xml', canAddProperty: false})
+          App.ServiceConfigCategory.create({ name: 'category2', siteFileName: 'category2.xml', canAddProperty: true}),
+          App.ServiceConfigCategory.create({ name: 'category3', siteFileName: 'category3.xml', canAddProperty: false})
         ],
         configs: []
       }
@@ -62,8 +62,8 @@ describe('App.ServiceConfigView', function () {
         serviceName: 'TEST',
         configCategories: [
           App.ServiceConfigCategory.create({ name: 'category1', canAddProperty: true}),
-          App.ServiceConfigCategory.create({ name: 'category2', siteFileName: 'xml', canAddProperty: true}),
-          App.ServiceConfigCategory.create({ name: 'category3', siteFileName: 'xml', canAddProperty: false})
+          App.ServiceConfigCategory.create({ name: 'category2', siteFileName: 'category2.xml', canAddProperty: true}),
+          App.ServiceConfigCategory.create({ name: 'category3', siteFileName: 'category3.xml', canAddProperty: false})
         ],
         configs: []
       }
@@ -71,13 +71,27 @@ describe('App.ServiceConfigView', function () {
   ];
 
   describe('#checkCanEdit', function () {
+    before(function () {
+      sinon.stub(App.config, 'shouldSupportAddingForbidden').withArgs('TEST', 'category2.xml').returns(true).withArgs('TEST', 'category3.xml').returns(false);
+    });
+
+    after(function () {
+      App.config.shouldSupportAddingForbidden.restore();
+    });
+
     testCases.forEach(function (test) {
-      it(test.title, function () {
-        controller.set('selectedService', test.selectedService);
-        controller.set('selectedConfigGroup', test.selectedConfigGroup);
-        view.checkCanEdit();
-        controller.get('selectedService.configCategories').forEach(function (category) {
-          expect(category.get('canAddProperty')).to.equal(test.result[category.get('name')]);
+      describe(test.title, function () {
+
+        beforeEach(function () {
+          controller.set('selectedService', test.selectedService);
+          controller.set('selectedConfigGroup', test.selectedConfigGroup);
+          view.checkCanEdit();
+        });
+        Object.keys(test.result).forEach(function (categoryName) {
+          it(categoryName, function () {
+            var canAddProperty = controller.get('selectedService.configCategories').findProperty('name', categoryName).get('canAddProperty');
+            expect(canAddProperty).to.be.equal(test.result[categoryName]);
+          });
         });
       });
     });

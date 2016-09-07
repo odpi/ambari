@@ -18,14 +18,18 @@
 package org.apache.ambari.server.checks;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.controller.PrereqCheckRequest;
 import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.orm.dao.ClusterVersionDAO;
 import org.apache.ambari.server.orm.dao.HostVersionDAO;
 import org.apache.ambari.server.orm.dao.RepositoryVersionDAO;
+import org.apache.ambari.server.orm.dao.UpgradeDAO;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Config;
@@ -55,10 +59,16 @@ public abstract class AbstractCheckDescriptor {
   Provider<Clusters> clustersProvider;
 
   @Inject
+  Provider<ClusterVersionDAO> clusterVersionDAOProvider;
+
+  @Inject
   Provider<HostVersionDAO> hostVersionDaoProvider;
 
   @Inject
   Provider<RepositoryVersionDAO> repositoryVersionDaoProvider;
+
+  @Inject
+  Provider<UpgradeDAO> upgradeDaoProvider;
 
   @Inject
   Provider<RepositoryVersionHelper> repositoryVersionHelper;
@@ -82,7 +92,7 @@ public abstract class AbstractCheckDescriptor {
 
   /**
    * Tests if the prerequisite check is applicable to given cluster. This
-   * method's defautl logic is to ensure that the cluster stack source and
+   * method's default logic is to ensure that the cluster stack source and
    * target are compatible with the prerequisite check. When overridding this
    * method, call {@code super#isApplicable(PrereqCheckRequest)}.
    *
@@ -94,60 +104,40 @@ public abstract class AbstractCheckDescriptor {
    *           if server error happens
    */
   public boolean isApplicable(PrereqCheckRequest request) throws AmbariException {
-    StackId sourceStackId = getSourceStack();
-    StackId targetStackId = getTargetStack();
-
-    if( null == sourceStackId && null == targetStackId ) {
-      return true;
-    }
-
-    StackId requestSourceStack = request.getSourceStackId();
-    if (null != sourceStackId && null != requestSourceStack
-        && sourceStackId.compareTo(requestSourceStack) > 0) {
-      return false;
-    }
-
-    StackId requestTargetStack = request.getTargetStackId();
-    if (null != targetStackId && null != requestTargetStack
-        && targetStackId.compareTo(requestTargetStack) < 0) {
-      return false;
-    }
-
-    return true;
+    // this is default behaviour
+   return true;
   }
 
   /**
-   * Gets the earliest stack that the upgrade check is compatible with. By
-   * default, all checks will return rolling.upgrade.min.stack since this is the
-   * first stack version that supports automated upgrades.
-   *
-   * @return the earliest stack that the upgrade check is compatible with, or
-   *         {@code null} for all.
+   * Same like {@code isApplicable(PrereqCheckRequest request)}, but with service presence check
+   * @param request
+   *          prerequisite check request
+   * @param requiredServices
+   *          set of services, which need to be present to allow check execution
+   * @param requiredAll
+   *          require all services in the list or at least one need to present
+   * @return true if check should be performed
+   * @throws org.apache.ambari.server.AmbariException
+   *           if server error happens
    */
-  public StackId getSourceStack(){
-    String minStackId = config.getRollingUpgradeMinStack();
-    if(minStackId == null || minStackId.isEmpty()) {
-      return null;
-    }
-    return new StackId(minStackId);
-  }
+  public boolean isApplicable(PrereqCheckRequest request, List<String> requiredServices, boolean requiredAll) throws AmbariException {
+    final Cluster cluster = clustersProvider.get().getCluster(request.getClusterName());
+    Set<String> services = cluster.getServices().keySet();
 
-  /**
-   * Gets the most recent stack that the upgrade check is compatible with. By
-   * default, this will return rolling.upgrade.max.stack, which is typically
-   * set to null to indicate all future stacks are compatible.
-   * If an upgrade check is not compatible with a future stack, then
-   * this method should be overridden.
-   *
-   * @return the most recent stack that the upgrade check is compatible with, or
-   *         {@code null} for all.
-   */
-  public StackId getTargetStack() {
-    String maxStackId = config.getRollingUpgradeMaxStack();
-    if(maxStackId == null || maxStackId.isEmpty()) {
-      return null;
+    // default return value depends on assign inside check block
+    boolean serviceFound = requiredAll && !requiredServices.isEmpty();
+
+    for (String service : requiredServices) {
+      if ( services.contains(service) && !requiredAll) {
+        serviceFound = true;
+        break;
+      } else if (!services.contains(service) && requiredAll) {
+        serviceFound = false;
+        break;
+      }
     }
-    return new StackId(maxStackId);
+
+    return serviceFound;
   }
 
   /**
@@ -291,5 +281,21 @@ public abstract class AbstractCheckDescriptor {
     }
 
     return formatted.toString();
+  }
+
+  /**
+   * Return the optionality flag of the Upgrade Check
+   * @return
+   */
+  public Boolean isRequired(){
+      return getClass().getAnnotation(UpgradeCheck.class).required();
+  }
+  
+  /**
+   * Return a boolean indicating whether or not configs allow bypassing errors during the RU/EU PreChecks.
+   * @return
+   */
+  public boolean isStackUpgradeAllowedToBypassPreChecks() {
+    return config.isUpgradePrecheckBypass();
   }
 }

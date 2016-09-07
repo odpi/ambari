@@ -18,11 +18,11 @@
 
 var App = require('app');
 var batchUtils = require('utils/batch_scheduled_requests');
-var componentsUtils = require('utils/components');
 var hostsManagement = require('utils/hosts');
 var stringUtils = require('utils/string_utils');
+require('utils/configs/add_component_config_initializer');
 
-App.MainHostDetailsController = Em.Controller.extend({
+App.MainHostDetailsController = Em.Controller.extend(App.SupportClientConfigsDownload, App.InstallComponent, App.InstallNewVersion, {
 
   name: 'mainHostDetailsController',
 
@@ -87,9 +87,7 @@ App.MainHostDetailsController = Em.Controller.extend({
    * List of active host components which aren't clients
    * @type {Ember.Enumerable}
    */
-  serviceNonClientActiveComponents: function () {
-    return this.get('serviceActiveComponents').filterProperty('isClient', false);
-  }.property('serviceActiveComponents'),
+  serviceNonClientActiveComponents: Em.computed.filterBy('serviceActiveComponents', 'isClient', false),
 
   /**
    * send command to server to start selected host component
@@ -169,25 +167,11 @@ App.MainHostDetailsController = Em.Controller.extend({
    */
   sendComponentCommandSuccessCallback: function (data, opt, params) {
     var running = (params.HostRoles.state === App.HostComponentStatus.stopped) ? App.HostComponentStatus.stopping : App.HostComponentStatus.starting;
-    console.log('Send request for ' + running + ' successfully');
     params.component.set('workStatus', running);
     if (App.get('testMode')) {
       this.mimicWorkStatusChange(params.component, running, params.HostRoles.state);
     }
     this.showBackgroundOperationsPopup();
-  },
-
-  /**
-   * Default error-callback for ajax-requests in current page
-   * @param {object} request
-   * @param {object} ajaxOptions
-   * @param {string} error
-   * @param {object} opt
-   * @param {object} params
-   * @method ajaxErrorCallback
-   */
-  ajaxErrorCallback: function (request, ajaxOptions, error, opt, params) {
-    return componentsUtils.ajaxErrorCallback(request, ajaxOptions, error, opt, params);
   },
 
   /**
@@ -200,7 +184,7 @@ App.MainHostDetailsController = Em.Controller.extend({
     miscController.loadUsers();
     var interval = setInterval(function () {
       if (miscController.get('dataIsLoaded') && miscController.get('users')) {
-        self.set('content.hdfsUser', miscController.get('users').findProperty('name', 'hdfs_user').get('value'));
+        self.set('hdfsUser', miscController.get('users').findProperty('name', 'hdfs_user').get('value'));
         dfd.resolve();
         clearInterval(interval);
       }
@@ -222,8 +206,8 @@ App.MainHostDetailsController = Em.Controller.extend({
         // too old
         self.getHdfsUser().done(function() {
           var msg = Em.Object.create({
-            confirmMsg: Em.I18n.t('services.service.stop.HDFS.warningMsg.checkPointTooOld') +
-              Em.I18n.t('services.service.stop.HDFS.warningMsg.checkPointTooOld.instructions').format(isNNCheckpointTooOld, self.get('content.hdfsUser')),
+            confirmMsg: Em.I18n.t('services.service.stop.HDFS.warningMsg.checkPointTooOld').format(App.nnCheckpointAgeAlertThreshold) +
+              Em.I18n.t('services.service.stop.HDFS.warningMsg.checkPointTooOld.instructions').format(isNNCheckpointTooOld, self.get('hdfsUser')),
             confirmButton: Em.I18n.t('common.next')
           });
           return App.showConfirmationFeedBackPopup(callback, msg);
@@ -260,7 +244,7 @@ App.MainHostDetailsController = Em.Controller.extend({
       if (!lastCheckpointTime) {
         this.set("isNNCheckpointTooOld", null);
       } else {
-        var time_criteria = 12; // time in hours to define how many hours ago is too old
+        var time_criteria = App.nnCheckpointAgeAlertThreshold; // time in hours to define how many hours ago is too old
         var time_ago = (Math.round(App.dateTime() / 1000) - (time_criteria * 3600)) *1000;
         if (lastCheckpointTime <= time_ago) {
           // too old, set the effected hostName
@@ -302,7 +286,7 @@ App.MainHostDetailsController = Em.Controller.extend({
    * @param callback
    */
   showBackgroundOperationsPopup: function (callback) {
-    App.router.get('applicationController').dataLoading().done(function (initValue) {
+    App.router.get('userSettingsController').dataLoading('show_bg').done(function (initValue) {
       if (initValue) {
         App.router.get('backgroundOperationsController').showPopup();
       }
@@ -332,44 +316,27 @@ App.MainHostDetailsController = Em.Controller.extend({
       bodyClass: Em.View.extend({
         templateName: require('templates/main/host/details/deleteComponentPopup')
       }),
-      isHiveMetastore: function () {
-        return componentName == 'HIVE_METASTORE';
-      }.property(),
-      deleteHiveMetastoreMsg: Em.View.extend({
-        template: Em.Handlebars.compile(Em.I18n.t('hosts.host.deleteComponent.popup.deleteHiveMetastore'))
-      }),
-      isNimbus: function () {
-        return componentName == 'NIMBUS';
-      }.property(),
-      deleteNimbusMsg: Em.View.extend({
-        template: Em.Handlebars.compile(Em.I18n.t('hosts.host.deleteComponent.popup.deleteNimbus'))
-      }),
-      isRangerKMSServer: function () {
-        return componentName == 'RANGER_KMS_SERVER';
-      }.property(),
-      deleteRangerKMSServereMsg: Em.View.extend({
-        template: Em.Handlebars.compile(Em.I18n.t('hosts.host.deleteComponent.popup.deleteRangerKMSServer'))
-      }),
+      isHiveMetastore: componentName == 'HIVE_METASTORE',
+      isWebHCatServer: componentName == 'WEBHCAT_SERVER',
+      isNimbus: componentName == 'NIMBUS',
+      isRangerKMSServer: componentName == 'RANGER_KMS_SERVER',
+      isZkServer: componentName == 'ZOOKEEPER_SERVER',
+
+      deleteHiveMetastoreMsg: Em.I18n.t('hosts.host.deleteComponent.popup.deleteHiveMetastore'),
+      deleteWebHCatServerMsg: Em.I18n.t('hosts.host.deleteComponent.popup.deleteWebHCatServer'),
+      deleteNimbusMsg: Em.I18n.t('hosts.host.deleteComponent.popup.deleteNimbus'),
+      deleteRangerKMSServereMsg: Em.I18n.t('hosts.host.deleteComponent.popup.deleteRangerKMSServer'),
+      lastComponentError: Em.I18n.t('hosts.host.deleteComponent.popup.warning').format(displayName),
+      deleteComponentMsg: Em.I18n.t('hosts.host.deleteComponent.popup.msg1').format(displayName),
+      deleteZkServerMsg: Em.I18n.t('hosts.host.deleteComponent.popup.deleteZooKeeperServer'),
+
       isChecked: false,
-      disablePrimary: function () {
-        return !this.get('isChecked');
-      }.property('isChecked'),
+      disablePrimary: Em.computed.not('isChecked'),
       lastComponent: function () {
         this.set('isChecked', !isLastComponent);
         return isLastComponent;
       }.property(),
-      isZkServer: function () {
-        return componentName == 'ZOOKEEPER_SERVER';
-      }.property(),
-      lastComponentError: Em.View.extend({
-        template: Em.Handlebars.compile(Em.I18n.t('hosts.host.deleteComponent.popup.warning').format(displayName))
-      }),
-      deleteComponentMsg: function () {
-        return Em.I18n.t('hosts.host.deleteComponent.popup.msg1').format(displayName);
-      }.property(),
-      deleteZkServerMsg: Em.View.extend({
-        template: Em.Handlebars.compile(Em.I18n.t('hosts.host.deleteComponent.popup.deleteZooKeeperServer'))
-      }),
+
       onPrimary: function () {
         var popup = this;
         self._doDeleteHostComponent(component, function () {
@@ -444,12 +411,17 @@ App.MainHostDetailsController = Em.Controller.extend({
     if (data.componentName == 'ZOOKEEPER_SERVER') {
       this.set('fromDeleteZkServer', true);
       this.updateStormConfigs();
-      var callback =   function () {
+      self.isServiceMetricsLoaded(function () {
         self.loadConfigs();
-      };
-      self.isServiceMetricsLoaded(callback);
+      });
     } else if (data.componentName == 'HIVE_METASTORE') {
       this.set('deleteHiveMetaStore', true);
+      this.loadConfigs('loadHiveConfigs');
+    } else if (data.componentName == 'WEBHCAT_SERVER') {
+      this.set('deleteWebHCatServer', true);
+      this.loadConfigs('loadWebHCatConfigs');
+    } else if (data.componentName == 'HIVE_SERVER') {
+      this.set('deleteHiveServer', true);
       this.loadConfigs('loadHiveConfigs');
     } else if (data.componentName == 'NIMBUS') {
       this.set('deleteNimbusHost', true);
@@ -468,9 +440,6 @@ App.MainHostDetailsController = Em.Controller.extend({
    * @method _doDeleteHostComponentErrorCallback
    */
   _doDeleteHostComponentErrorCallback: function (xhr, textStatus, errorThrown, data) {
-    console.log('Error deleting host component');
-    console.log(textStatus);
-    console.log(errorThrown);
     this.set('_deletedHostComponentResult', {xhr: xhr, url: data.url, method: 'DELETE'});
   },
 
@@ -529,8 +498,6 @@ App.MainHostDetailsController = Em.Controller.extend({
    * @method upgradeComponentSuccessCallback
    */
   upgradeComponentSuccessCallback: function (data, opt, params) {
-    console.log('Send request for UPGRADE successfully');
-
     if (App.get('testMode')) {
       this.mimicWorkStatusChange(params.component, App.HostComponentStatus.starting, App.HostComponentStatus.started);
     }
@@ -581,7 +548,7 @@ App.MainHostDetailsController = Em.Controller.extend({
       component = event.context,
       hostName = event.selectedHost || this.get('content.hostName'),
       componentName = component.get('componentName'),
-      missedComponents = event.selectedHost ? [] : componentsUtils.checkComponentDependencies(componentName, {
+      missedComponents = event.selectedHost ? [] : this.checkComponentDependencies(componentName, {
         scope: 'host',
         installedComponents: this.get('content.hostComponents').mapProperty('componentName')
       }),
@@ -599,13 +566,19 @@ App.MainHostDetailsController = Em.Controller.extend({
     switch (componentName) {
       case 'ZOOKEEPER_SERVER':
         returnFunc = App.showConfirmationPopup(function () {
-          self.primary(component);
+          self.installHostComponentCall(self.get('content.hostName'), component)
         }, Em.I18n.t('hosts.host.addComponent.' + componentName) + manualKerberosWarning);
         break;
       case 'HIVE_METASTORE':
         returnFunc = App.showConfirmationPopup(function () {
           self.set('hiveMetastoreHost', hostName);
           self.loadConfigs("loadHiveConfigs");
+        }, Em.I18n.t('hosts.host.addComponent.' + componentName) + manualKerberosWarning);
+        break;
+      case 'WEBHCAT_SERVER':
+        returnFunc = App.showConfirmationPopup(function () {
+          self.set('webhcatServerHost', hostName);
+          self.loadConfigs("loadWebHCatConfigs");
         }, Em.I18n.t('hosts.host.addComponent.' + componentName) + manualKerberosWarning);
         break;
       case 'NIMBUS':
@@ -625,33 +598,39 @@ App.MainHostDetailsController = Em.Controller.extend({
     }
     return returnFunc;
   },
+
   /**
    * Send command to server to install client on selected host
-   * @param component
+   * @param {App.HostComponent} component
+   * @param {boolean} isManualKerberos
+   * @returns {*}
    */
   addClientComponent: function (component, isManualKerberos) {
-    var self = this;
-    var message = this.formatClientsMessage(component);
+    var self = this,
+      displayName = this.formatClientsMessage(component);
 
-    return this.showAddComponentPopup(message, isManualKerberos, function () {
-      self.primary(component);
+    return this.showAddComponentPopup(displayName, isManualKerberos, function () {
+      self.installHostComponentCall(self.get('content.hostName'), component);
     });
   },
 
-  showAddComponentPopup: function (message, isManualKerberos, primary) {
+  /**
+   *
+   * @param {string} displayName
+   * @param {boolean} isManualKerberos
+   * @param {Function} primary
+   * @returns {*}
+   */
+  showAddComponentPopup: function (displayName, isManualKerberos, primary) {
     isManualKerberos = isManualKerberos || false;
 
     return App.ModalPopup.show({
       primary: Em.I18n.t('hosts.host.addComponent.popup.confirm'),
       header: Em.I18n.t('popup.confirmation.commonHeader'),
 
-      addComponentMsg: function () {
-        return Em.I18n.t('hosts.host.addComponent.msg').format(message);
-      }.property(),
+      addComponentMsg: Em.I18n.t('hosts.host.addComponent.msg').format(displayName),
 
-      manualKerberosWarning: function () {
-        return isManualKerberos ? Em.I18n.t('hosts.host.manualKerberosWarning') : '';
-      }.property(),
+      manualKerberosWarning: isManualKerberos ? Em.I18n.t('hosts.host.manualKerberosWarning') : '',
 
       bodyClass: Em.View.extend({
         templateName: require('templates/main/host/details/addComponentPopup')
@@ -674,7 +653,7 @@ App.MainHostDetailsController = Em.Controller.extend({
     if (subComponentNames && subComponentNames.length > 0) {
       var dns = [];
       subComponentNames.forEach(function (scn) {
-        dns.push(App.format.role(scn));
+        dns.push(App.format.role(scn, false));
       });
       displayName += " (" + dns.join(", ") + ")";
     }
@@ -682,28 +661,17 @@ App.MainHostDetailsController = Em.Controller.extend({
   },
 
   /**
-   * Send request to add host component
-   * @param {App.HostComponent} component
-   * @method primary
-   */
-  primary: function (component) {
-    var self = this;
-    componentsUtils.installHostComponent(self.get('content.hostName'), component);
-  },
-
-  /**
    * Success callback for install host component request (sent in <code>addNewComponentSuccessCallback</code>)
    * @param {object} data
    * @param {object} opt
    * @param {object} params
-   * @method installNewComponentSuccessCallbƒack
+   * @method installNewComponentSuccessCallback
    */
   installNewComponentSuccessCallback: function (data, opt, params) {
     if (!data || !data.Requests || !data.Requests.id) {
       return false;
     }
     var self = this;
-    console.log('Send request for INSTALLING NEW COMPONENT successfully');
 
     if (App.get('testMode')) {
       this.mimicWorkStatusChange(params.component, App.HostComponentStatus.installing, App.HostComponentStatus.stopped);
@@ -804,11 +772,58 @@ App.MainHostDetailsController = Em.Controller.extend({
    * @method updateZkConfigs
    */
   updateZkConfigs: function (configs) {
-    var zks = this.getZkServerHosts();
     var portValue = configs['zoo.cfg'] && Em.get(configs['zoo.cfg'], 'clientPort');
-    var zkPort = typeof portValue === 'udefined' ? '2181' : portValue;
-    var zksWithPort = this.concatZkNames(zks, zkPort);
-    this.setZKConfigs(configs, zksWithPort, zks);
+    var zkPort = typeof portValue === 'undefined' ? '2181' : portValue;
+    var infraSolrZnode = configs['infra-solr-env'] ? Em.get(configs['infra-solr-env'], 'infra_solr_znode') : '/ambari-solr';
+    var initializer = App.AddZooKeeperComponentsInitializer;
+    var hostComponentsTopology = {
+      masterComponentHosts: []
+    };
+    var masterComponents = this.bootstrapHostsMapping('ZOOKEEPER_SERVER');
+    if (this.get('fromDeleteHost') || this.get('fromDeleteZkServer')) {
+      this.set('fromDeleteHost', false);
+      this.set('fromDeleteZkServer', false);
+      var removedHost = masterComponents.findProperty('hostName', this.get('content.hostName'));
+      if (!Em.isNone(removedHost)) {
+        Em.set(removedHost, 'isInstalled', false);
+      }
+    }
+    var dependencies = {
+      zkClientPort: zkPort,
+      infraSolrZnode: infraSolrZnode
+    };
+    hostComponentsTopology.masterComponentHosts = masterComponents;
+    Em.keys(configs).forEach(function(fileName) {
+      var properties = configs[fileName];
+      Em.keys(properties).forEach(function(propertyName) {
+        var propertyDef = {
+          fileName: fileName,
+          name: propertyName,
+          value: properties[propertyName]
+        };
+        var configProperty = initializer.initialValue(propertyDef, hostComponentsTopology, dependencies);
+        initializer.updateSiteObj(configs[fileName], configProperty);
+      });
+    });
+  },
+
+  /**
+   *
+   * @param {string} componentName
+   * @param {string[]} [hostNames]
+   * @returns {}
+   */
+  bootstrapHostsMapping: function(componentName, hostNames) {
+    if (Em.isNone(hostNames)) {
+      hostNames = App.HostComponent.find().filterProperty('componentName', componentName).mapProperty('hostName');
+    }
+    return hostNames.map(function(hostName) {
+      return {
+        component: componentName,
+        hostName: hostName,
+        isInstalled: true
+      };
+    });
   },
 
   /**
@@ -848,14 +863,39 @@ App.MainHostDetailsController = Em.Controller.extend({
    * @param {object} data
    * @method loadHiveConfigs
    */
-  loadHiveConfigs: function (data) {
-    App.ajax.send({
+  loadWebHCatConfigs: function (data) {
+    return App.ajax.send({
       name: 'admin.get.all_configurations',
       sender: this,
       data: {
-        urlParams: '(type=hive-site&tag=' + data.Clusters.desired_configs['hive-site'].tag + ')|(type=webhcat-site&tag=' +
-        data.Clusters.desired_configs['webhcat-site'].tag + ')|(type=hive-env&tag=' + data.Clusters.desired_configs['hive-env'].tag +
-        ')|(type=core-site&tag=' + data.Clusters.desired_configs['core-site'].tag + ')'
+        webHCat: true,
+        urlParams: [
+          '(type=hive-site&tag=' + data.Clusters.desired_configs['hive-site'].tag + ')',
+          '(type=webhcat-site&tag=' + data.Clusters.desired_configs['webhcat-site'].tag + ')',
+          '(type=hive-env&tag=' + data.Clusters.desired_configs['hive-env'].tag + ')',
+          '(type=core-site&tag=' + data.Clusters.desired_configs['core-site'].tag + ')'
+        ].join('|')
+      },
+      success: 'onLoadHiveConfigs'
+    });
+  },
+
+  /**
+   * Success callback for load configs request
+   * @param {object} data
+   * @method loadHiveConfigs
+   */
+  loadHiveConfigs: function (data) {
+    return App.ajax.send({
+      name: 'admin.get.all_configurations',
+      sender: this,
+      data: {
+        urlParams: [
+          '(type=hive-site&tag=' + data.Clusters.desired_configs['hive-site'].tag + ')',
+          '(type=webhcat-site&tag=' + data.Clusters.desired_configs['webhcat-site'].tag + ')',
+          '(type=hive-env&tag=' + data.Clusters.desired_configs['hive-env'].tag + ')',
+          '(type=core-site&tag=' + data.Clusters.desired_configs['core-site'].tag + ')'
+        ].join('|')
       },
       success: 'onLoadHiveConfigs'
     });
@@ -864,37 +904,58 @@ App.MainHostDetailsController = Em.Controller.extend({
   /**
    * update and save Hive related configs to server
    * @param {object} data
+   * @param {object} opt
+   * @param {object} params
    * @method onLoadHiveConfigs
    */
-  onLoadHiveConfigs: function (data) {
-    var
-      hiveMetastoreHost = this.get('hiveMetastoreHost'),
-      hiveMSHosts = this.getHiveHosts(),
-      hiveMasterHosts = hiveMSHosts.concat(App.HostComponent.find().filterProperty('componentName', 'HIVE_SERVER').mapProperty('hostName')).uniq().sort().join(','),
-      configs = {},
-      attributes = {},
-      port = "",
-      hiveUser = "",
-      webhcatUser = "";
-
+  onLoadHiveConfigs: function (data, opt, params) {
+    var hiveMetastoreHost = this.get('hiveMetastoreHost');
+    var webhcatServerHost = this.get('webhcatServerHost');
+    var port = "";
+    var configs = {};
+    var attributes = {};
+    var userSetup = {};
+    var localDB = {
+      masterComponentHosts: this.getHiveHosts()
+    };
+    var dependencies = {
+      hiveMetastorePort: ""
+    };
+    var initializer = params.webHCat ? App.AddWebHCatComponentsInitializer : App.AddHiveComponentsInitializer;
     data.items.forEach(function (item) {
       configs[item.type] = item.properties;
       attributes[item.type] = item.properties_attributes || {};
     }, this);
 
+
     port = configs['hive-site']['hive.metastore.uris'].match(/:[0-9]{2,4}/);
     port = port ? port[0].slice(1) : "9083";
 
-    hiveUser = configs['hive-env']['hive_user'];
-    webhcatUser = configs['hive-env']['webhcat_user'];
+    dependencies.hiveMetastorePort = port;
 
-    for (var i = 0; i < hiveMSHosts.length; i++) {
-      hiveMSHosts[i] = "thrift://" + hiveMSHosts[i] + ":" + port;
+    if (params.webHCat) {
+      userSetup.webhcatUser = configs['hive-env']['webhcat_user'];
+    } else {
+      userSetup.hiveUser = configs['hive-env']['hive_user'];
     }
-    configs['hive-site']['hive.metastore.uris'] = hiveMSHosts.join(',');
-    configs['webhcat-site']['templeton.hive.properties'] = configs['webhcat-site']['templeton.hive.properties'].replace(/thrift.+[0-9]{2,},/i, hiveMSHosts.join('\\,') + ",");
-    configs['core-site']['hadoop.proxyuser.' + hiveUser + '.hosts'] = hiveMasterHosts;
-    configs['core-site']['hadoop.proxyuser.' + webhcatUser + '.hosts'] = hiveMasterHosts;
+
+    initializer.setup(userSetup);
+
+    ['hive-site', 'webhcat-site', 'hive-env', 'core-site'].forEach(function(fileName) {
+      if (configs[fileName]) {
+        Em.keys(configs[fileName]).forEach(function(propertyName) {
+          var propertyDef = {
+            fileName: fileName,
+            name: propertyName,
+            value: configs[fileName][propertyName]
+          };
+          configs[fileName][propertyName] = Em.get(initializer.initialValue(propertyDef, localDB, dependencies), 'value');
+        });
+      }
+    });
+
+    initializer.cleanup();
+
     var groups = [
       {
         properties: {
@@ -917,7 +978,11 @@ App.MainHostDetailsController = Em.Controller.extend({
         }
       }
     ];
-    this.saveConfigsBatch(groups, this.get('addHiveServer') ? 'HIVE_SERVER' : 'HIVE_METASTORE', hiveMetastoreHost);
+    var params = [groups];
+    var componentName = this.get('addHiveServer') ? 'HIVE_SERVER' : (hiveMetastoreHost ? 'HIVE_METASTORE' : 'WEBHCAT_SERVER');
+    var host = webhcatServerHost || hiveMetastoreHost;
+    params.pushObjects([componentName, host]);
+    this.saveConfigsBatch.apply(this, params);
     this.set('addHiveServer', false);
   },
 
@@ -940,7 +1005,7 @@ App.MainHostDetailsController = Em.Controller.extend({
           "tag": tag,
           "properties": properties[site],
           "properties_attributes": group.properties_attributes[site],
-          "service_config_version_note": Em.I18n.t('hosts.host.configs.save.note').format(App.format.role(componentName))
+          "service_config_version_note": Em.I18n.t('hosts.host.configs.save.note').format(App.format.role(componentName, false))
         });
       }
       if (desiredConfigs.length > 0) {
@@ -971,7 +1036,7 @@ App.MainHostDetailsController = Em.Controller.extend({
       App.router.get('mainServiceInfoConfigsController').loadStep();
     }
     if (params.host) {
-      componentsUtils.installHostComponent(params.host, App.StackServiceComponent.find(params.componentName));
+      this.installHostComponentCall(params.host, App.StackServiceComponent.find(params.componentName));
     }
   },
   /**
@@ -980,22 +1045,55 @@ App.MainHostDetailsController = Em.Controller.extend({
    */
   deleteHiveMetaStore: false,
 
-  getHiveHosts: function () {
-    var
-      hiveHosts = App.HostComponent.find().filterProperty('componentName', 'HIVE_METASTORE').mapProperty('hostName'),
-      hiveMetastoreHost = this.get('hiveMetastoreHost');
+  /**
+   * Delete WebHCat Server is performed
+   *
+   * @type {bool}
+   */
+  deleteWebHCatServer: false,
 
-    if (!!hiveMetastoreHost) {
-      hiveHosts.push(hiveMetastoreHost);
+  getHiveHosts: function () {
+    var self = this;
+    var removePerformed = this.get('fromDeleteHost') || this.get('deleteHiveMetaStore') || this.get('deleteHiveServer') || this.get('deleteWebHCatServer');
+    var hiveMasterComponents = ['WEBHCAT_SERVER', 'HIVE_METASTORE', 'HIVE_SERVER'];
+    var masterComponentsMap = hiveMasterComponents.map(function(componentName) {
+      return self.bootstrapHostsMapping(componentName);
+    }).reduce(function(p,c) {
+      return p.concat(c);
+    });
+
+    if (removePerformed) {
+      self.setProperties({
+        deleteHiveMetaStore: false,
+        deleteHiveServer: false,
+        deleteWebHCatServer: false,
+        fromDeleteHost: false
+      });
+      masterComponentsMap = masterComponentsMap.map(function(masterComponent) {
+        masterComponent.isInstalled = masterComponent.hostName !== self.get('content.hostName');
+        return masterComponent;
+      });
+    }
+
+    if (!!this.get('hiveMetastoreHost')) {
+      masterComponentsMap.push({
+        component: 'HIVE_METASTORE',
+        hostName: this.get('hiveMetastoreHost'),
+        isInstalled: !removePerformed
+      });
       this.set('hiveMetastoreHost', '');
     }
 
-    if (this.get('fromDeleteHost') || this.get('deleteHiveMetaStore')) {
-      this.set('deleteHiveMetaStore', false);
-      this.set('fromDeleteHost', false);
-      return hiveHosts.without(this.get('content.hostName'));
+    if (!!this.get('webhcatServerHost')) {
+      masterComponentsMap.push({
+        component: 'WEBHCAT_SERVER',
+        hostName: this.get('webhcatServerHost'),
+        isInstalled: !removePerformed
+      });
+      this.set('webhcatServerHost', '');
     }
-    return hiveHosts.sort();
+
+    return masterComponentsMap;
   },
 
   /**
@@ -1134,7 +1232,6 @@ App.MainHostDetailsController = Em.Controller.extend({
    * @method refreshComponentConfigsSuccessCallback
    */
   refreshComponentConfigsSuccessCallback: function () {
-    console.log('Send request for refresh configs successfully');
     this.showBackgroundOperationsPopup();
   },
 
@@ -1232,9 +1329,19 @@ App.MainHostDetailsController = Em.Controller.extend({
     if (services.someProperty('serviceName', 'STORM')) {
       urlParams.push('(type=storm-site&tag=' + data.Clusters.desired_configs['storm-site'].tag + ')');
     }
-    if ((services.someProperty('serviceName', 'YARN') && App.get('isHadoop22Stack')) || App.get('isRMHaEnabled')) {
+    if (services.someProperty('serviceName', 'YARN')) {
       urlParams.push('(type=yarn-site&tag=' + data.Clusters.desired_configs['yarn-site'].tag + ')');
       urlParams.push('(type=zoo.cfg&tag=' + data.Clusters.desired_configs['zoo.cfg'].tag + ')');
+    }
+    if (services.someProperty('serviceName', 'ACCUMULO')) {
+      urlParams.push('(type=accumulo-site&tag=' + data.Clusters.desired_configs['accumulo-site'].tag + ')');
+    }
+    if (services.someProperty('serviceName', 'KAFKA')) {
+      urlParams.push('(type=kafka-broker&tag=' + data.Clusters.desired_configs['kafka-broker'].tag + ')');
+    }
+    if (services.someProperty('serviceName', 'ATLAS')) {
+      urlParams.push('(type=application-properties&tag=' + data.Clusters.desired_configs['application-properties'].tag + ')');
+      urlParams.push('(type=infra-solr-env&tag=' + data.Clusters.desired_configs['infra-solr-env'].tag + ')');
     }
     return urlParams;
   },
@@ -1253,7 +1360,6 @@ App.MainHostDetailsController = Em.Controller.extend({
     }, this);
 
     this.updateZkConfigs(configs);
-
     var groups = [
       {
         properties: {
@@ -1266,7 +1372,8 @@ App.MainHostDetailsController = Em.Controller.extend({
         }
       }
     ];
-    if ((App.Service.find().someProperty('serviceName', 'YARN') && App.get('isHadoop22Stack')) || App.get('isRMHaEnabled')) {
+    var installedServiceNames = App.Service.find().mapProperty('serviceName');
+    if (installedServiceNames.contains('YARN')) {
       groups.push(
         {
           properties: {
@@ -1278,62 +1385,55 @@ App.MainHostDetailsController = Em.Controller.extend({
         }
       );
     }
+    if (installedServiceNames.contains('HBASE')) {
+      groups.push(
+        {
+          properties: {
+            'hbase-site': configs['hbase-site']
+          },
+          properties_attributes: {
+            'hbase-site': attributes['hbase-site']
+          }
+        }
+      );
+    }
+    if (installedServiceNames.contains('ACCUMULO')) {
+      groups.push(
+        {
+          properties: {
+            'accumulo-site': configs['accumulo-site']
+          },
+          properties_attributes: {
+            'accumulo-site': attributes['accumulo-site']
+          }
+        }
+      );
+    }
+    if (installedServiceNames.contains('KAFKA')) {
+      groups.push(
+        {
+          properties: {
+            'kafka-broker': configs['kafka-broker']
+          },
+          properties_attributes: {
+            'kafka-broker': attributes['kafka-broker']
+          }
+        }
+      );
+    }
+    if (installedServiceNames.contains('ATLAS')) {
+      groups.push(
+        {
+          properties: {
+            'application-properties': configs['application-properties']
+          },
+          properties_attributes: {
+            'application-properties': attributes['application-properties']
+          }
+        }
+      );
+    }
     this.saveConfigsBatch(groups, 'ZOOKEEPER_SERVER');
-  },
-  /**
-   *
-   * Set new values for some configs (based on available ZooKeeper Servers)
-   * @param configs {object}
-   * @param zksWithPort {string}
-   * @param zks {array}
-   * @return {Boolean}
-   */
-  setZKConfigs: function (configs, zksWithPort, zks) {
-    if (typeof configs !== 'object' || !Array.isArray(zks)) return false;
-    if (App.get('isHaEnabled')) {
-      App.config.updateHostsListValue(configs['core-site'], 'ha.zookeeper.quorum', zksWithPort);
-    }
-    if (configs['hbase-site']) {
-      App.config.updateHostsListValue(configs['hbase-site'], 'hbase.zookeeper.quorum', zks.join(','));
-    }
-    if (configs['accumulo-site']) {
-      App.config.updateHostsListValue(configs['accumulo-site'], 'instance.zookeeper.host', zksWithPort);
-    }
-    if (configs['webhcat-site']) {
-      App.config.updateHostsListValue(configs['webhcat-site'], 'templeton.zookeeper.hosts', zksWithPort);
-    }
-    if (configs['hive-site']) {
-      App.config.updateHostsListValue(configs['hive-site'], 'hive.cluster.delegation.token.store.zookeeper.connectString', zksWithPort);
-    }
-    if (configs['storm-site']) {
-      configs['storm-site']['storm.zookeeper.servers'] = JSON.stringify(zks).replace(/"/g, "'");
-    }
-    if (App.get('isRMHaEnabled')) {
-      App.config.updateHostsListValue(configs['yarn-site'], 'yarn.resourcemanager.zk-address', zksWithPort);
-    }
-    if (App.get('isHadoop22Stack')) {
-      if (configs['hive-site']) {
-        App.config.updateHostsListValue(configs['hive-site'], 'hive.zookeeper.quorum', zksWithPort);
-      }
-      if (configs['yarn-site']) {
-        App.config.updateHostsListValue(configs['yarn-site'], 'hadoop.registry.zk.quorum', zksWithPort);
-        App.config.updateHostsListValue(configs['yarn-site'], 'yarn.resourcemanager.zk-address', zksWithPort);
-      }
-    }
-    return true;
-  },
-  /**
-   * concatenate URLs to ZOOKEEPER hosts with port "2181",
-   * as value of config divided by comma
-   * @param zks {array}
-   * @param port {string}
-   */
-  concatZkNames: function (zks, port) {
-    var zks_with_port = '';
-    zks.forEach(function (zk) {
-      zks_with_port += zk + ':' + port + ',';
-    });
-    return zks_with_port.slice(0, -1);
   },
 
   /**
@@ -1349,21 +1449,6 @@ App.MainHostDetailsController = Em.Controller.extend({
   fromDeleteZkServer: false,
 
   /**
-   * Get list of hostnames where ZK Server is installed
-   * @returns {string[]}
-   * @method getZkServerHosts
-   */
-  getZkServerHosts: function () {
-    var zks = App.HostComponent.find().filterProperty('componentName', 'ZOOKEEPER_SERVER').mapProperty('hostName');
-    if (this.get('fromDeleteHost') || this.get('fromDeleteZkServer')) {
-      this.set('fromDeleteHost', false);
-      this.set('fromDeleteZkServer', false);
-      return zks.without(this.get('content.hostName'));
-    }
-    return zks;
-  },
-
-  /**
    * Send command to server to install selected host component
    * @param {Object} event
    * @method installComponent
@@ -1377,30 +1462,33 @@ App.MainHostDetailsController = Em.Controller.extend({
     return App.ModalPopup.show({
       primary: Em.I18n.t('hosts.host.installComponent.popup.confirm'),
       header: Em.I18n.t('popup.confirmation.commonHeader'),
-      installComponentMessage: function () {
-        return Em.I18n.t('hosts.host.installComponent.msg').format(displayName);
-      }.property(),
+      installComponentMessage: Em.I18n.t('hosts.host.installComponent.msg').format(displayName),
       bodyClass: Em.View.extend({
         templateName: require('templates/main/host/details/installComponentPopup')
       }),
       onPrimary: function () {
-        this.hide();
+        var _this = this;
+        App.get('router.mainAdminKerberosController').getSecurityType(function () {
+          App.get('router.mainAdminKerberosController').getKDCSessionState(function () {
+            _this.hide();
 
-        App.ajax.send({
-          name: 'common.host.host_component.update',
-          sender: self,
-          data: {
-            hostName: self.get('content.hostName'),
-            serviceName: component.get('service.serviceName'),
-            componentName: componentName,
-            component: component,
-            context: Em.I18n.t('requestInfo.installHostComponent') + " " + displayName,
-            HostRoles: {
-              state: 'INSTALLED'
-            }
-          },
-          success: 'installComponentSuccessCallback',
-          error: 'ajaxErrorCallback'
+            App.ajax.send({
+              name: 'common.host.host_component.update',
+              sender: self,
+              data: {
+                hostName: self.get('content.hostName'),
+                serviceName: component.get('service.serviceName'),
+                componentName: componentName,
+                component: component,
+                context: Em.I18n.t('requestInfo.installHostComponent') + " " + displayName,
+                HostRoles: {
+                  state: 'INSTALLED'
+                }
+              },
+              success: 'installComponentSuccessCallback',
+              error: 'ajaxErrorCallback'
+            });
+          })
         });
       }
     });
@@ -1414,7 +1502,6 @@ App.MainHostDetailsController = Em.Controller.extend({
    * @method installComponentSuccessCallback
    */
   installComponentSuccessCallback: function (data, opt, params) {
-    console.log('Send request for REINSTALL COMPONENT successfully');
     if (App.get('testMode')) {
       this.mimicWorkStatusChange(params.component, App.HostComponentStatus.installing, App.HostComponentStatus.stopped);
     }
@@ -1582,9 +1669,7 @@ App.MainHostDetailsController = Em.Controller.extend({
   showHbaseActiveWarning: function () {
     return App.ModalPopup.show({
       header: Em.I18n.t('common.warning'),
-      message: function () {
-        return Em.I18n.t('hostPopup.recommendation.beforeDecommission').format(App.format.components["HBASE_REGIONSERVER"]);
-      }.property(),
+      message: Em.I18n.t('hostPopup.recommendation.beforeDecommission').format(App.format.components["HBASE_REGIONSERVER"]),
       bodyClass: Ember.View.extend({
         template: Em.Handlebars.compile('<div class="alert alert-warning">{{message}}</div>')
       }),
@@ -1682,7 +1767,7 @@ App.MainHostDetailsController = Em.Controller.extend({
       }
     });
     App.ajax.send({
-      name: 'host.host_component.recommission_and_restart',
+      name: 'common.batch.request_schedules',
       sender: this,
       data: {
         intervalTimeSeconds: 1,
@@ -1702,7 +1787,6 @@ App.MainHostDetailsController = Em.Controller.extend({
    * @method decommissionErrorCallback
    */
   decommissionErrorCallback: function (request, ajaxOptions, error) {
-    console.log('ERROR: ' + error);
   },
 
   /**
@@ -1716,7 +1800,6 @@ App.MainHostDetailsController = Em.Controller.extend({
       this.showBackgroundOperationsPopup();
       return true;
     } else {
-      console.log('cannot get request id from ', data);
       return false;
     }
   },
@@ -1791,7 +1874,7 @@ App.MainHostDetailsController = Em.Controller.extend({
       id++;
     }
     App.ajax.send({
-      name: 'host.host_component.recommission_and_restart',
+      name: 'common.batch.request_schedules',
       sender: this,
       data: {
         intervalTimeSeconds: 1,
@@ -2002,7 +2085,6 @@ App.MainHostDetailsController = Em.Controller.extend({
    */
   getHostComponentsInfo: function () {
     var componentsOnHost = this.get('content.hostComponents');
-    var allComponents = App.HostComponent.find();
     var stoppedStates = [App.HostComponentStatus.stopped,
       App.HostComponentStatus.install_failed,
       App.HostComponentStatus.upgrade_failed,
@@ -2017,17 +2099,16 @@ App.MainHostDetailsController = Em.Controller.extend({
       unknownComponents: [],
       toDecommissionComponents: []
     };
-    var self = this;
     if (componentsOnHost && componentsOnHost.get('length') > 0) {
       componentsOnHost.forEach(function (cInstance) {
         if (cInstance.get('componentName') === 'ZOOKEEPER_SERVER') {
           container.zkServerInstalled = true;
         }
-        if (allComponents.filterProperty('componentName', cInstance.get('componentName')).get('length') === 1) {
+        if (this.getTotalComponent(cInstance) === 1) {
           container.lastComponents.push(cInstance.get('displayName'));
         }
         var workStatus = cInstance.get('workStatus');
-        if (cInstance.get('isMaster') && !cInstance.get('isDeletable')) {
+        if (cInstance.get('isMaster')) {
           container.masterComponents.push(cInstance.get('displayName'));
         }
         if (stoppedStates.indexOf(workStatus) < 0) {
@@ -2042,7 +2123,7 @@ App.MainHostDetailsController = Em.Controller.extend({
         if (App.get('components.decommissionAllowed').contains(cInstance.get('componentName')) && !cInstance.get('view.isComponentRecommissionAvailable')) {
           container.toDecommissionComponents.push(cInstance.get('displayName'));
         }
-      });
+      }, this);
     }
     return container;
   },
@@ -2084,9 +2165,7 @@ App.MainHostDetailsController = Em.Controller.extend({
     App.ModalPopup.show({
       header: Em.I18n.t('hosts.cant.do.popup.title'),
       type: type,
-      showBodyEnd: function () {
-        return this.get('type') === 'runningList' || this.get('type') === 'masterList';
-      }.property(),
+      showBodyEnd: Em.computed.existsIn('type', ['runningList', 'masterList']),
       container: container,
       components: function(){
         var container = this.get('container');
@@ -2101,13 +2180,11 @@ App.MainHostDetailsController = Em.Controller.extend({
       }.property('type'),
       componentsStr: function () {
         return this.get('components').join(", ");
-      }.property(),
-      componentsBody: function () {
-        return Em.I18n.t('hosts.cant.do.popup.' + type + '.body').format(this.get('components').length);
-      }.property(),
+      }.property('components.[]'),
+      componentsBody: Em.computed.i18nFormat('hosts.cant.do.popup.' + type + '.body', 'components.length'),
       componentsBodyEnd: function () {
         if (this.get('showBodyEnd')) {
-          return Em.I18n.t('hosts.cant.do.popup.' + type + '.body.end').format(App.get('components.decommissionAllowed').map(function(c){return App.format.role(c)}).join(", "));
+          return Em.I18n.t('hosts.cant.do.popup.' + type + '.body.end').format(App.get('components.decommissionAllowed').map(function(c){return App.format.role(c, false)}).join(", "));
         }
         return '';
       }.property(),
@@ -2127,9 +2204,7 @@ App.MainHostDetailsController = Em.Controller.extend({
     var self = this;
     return App.ModalPopup.show({
       header: Em.I18n.t('hosts.delete.popup.title'),
-      deletePopupBody: function () {
-        return Em.I18n.t('hosts.delete.popup.body').format(self.get('content.publicHostName'));
-      }.property(),
+      deletePopupBody: Em.I18n.t('hosts.delete.popup.body').format(self.get('content.publicHostName')),
       lastComponent: function () {
         if (container.lastComponents && container.lastComponents.length) {
           this.set('isChecked', false);
@@ -2139,9 +2214,7 @@ App.MainHostDetailsController = Em.Controller.extend({
           return false;
         }
       }.property(),
-      disablePrimary: function () {
-        return !this.get('isChecked');
-      }.property('isChecked'),
+      disablePrimary: Em.computed.not('isChecked'),
       isChecked: false,
       lastComponentError: Em.View.extend({
         template: Em.Handlebars.compile(Em.I18n.t('hosts.delete.popup.body.msg4').format(container.lastComponents))
@@ -2214,7 +2287,7 @@ App.MainHostDetailsController = Em.Controller.extend({
       else {
         completeCallback();
         deleteError.xhr.responseText = "{\"message\": \"" + deleteError.xhr.statusText + "\"}";
-        App.ajax.defaultErrorHandler(deleteError.xhr, deleteError.url, deleteError.method, deleteError.xhr.status);
+        App.ajax.defaultErrorHandler(deleteError.xhr, deleteError.url, deleteError.type, deleteError.xhr.status);
       }
     });
   },
@@ -2228,9 +2301,6 @@ App.MainHostDetailsController = Em.Controller.extend({
     App.router.get('clusterController').getAllHostNames();
   },
   deleteHostErrorCallback: function (xhr, textStatus, errorThrown, opt) {
-    console.log('Error deleting host.');
-    console.log(textStatus);
-    console.log(errorThrown);
     xhr.responseText = "{\"message\": \"" + xhr.statusText + "\"}";
     var self = this;
     var callback =   function () {
@@ -2246,10 +2316,20 @@ App.MainHostDetailsController = Em.Controller.extend({
    */
   restartAllStaleConfigComponents: function () {
     var self = this;
-    return App.showConfirmationPopup(function () {
-      var staleComponents = self.get('content.componentsWithStaleConfigs');
-      batchUtils.restartHostComponents(staleComponents, Em.I18n.t('rollingrestart.context.allWithStaleConfigsOnSelectedHost').format(self.get('content.hostName')), "HOST");
-    });
+    var staleComponents = self.get('content.componentsWithStaleConfigs');
+    if (staleComponents.someProperty('componentName', 'NAMENODE') &&
+      this.get('content.hostComponents').filterProperty('componentName', 'NAMENODE').someProperty('workStatus', App.HostComponentStatus.started)) {
+      this.checkNnLastCheckpointTime(function () {
+        App.showConfirmationPopup(function () {
+          batchUtils.restartHostComponents(staleComponents, Em.I18n.t('rollingrestart.context.allWithStaleConfigsOnSelectedHost').format(self.get('content.hostName')), "HOST");
+        });
+      });
+    } else {
+      return App.showConfirmationPopup(function () {
+        batchUtils.restartHostComponents(staleComponents, Em.I18n.t('rollingrestart.context.allWithStaleConfigsOnSelectedHost').format(self.get('content.hostName')), "HOST");
+      });
+    }
+
   },
 
   /**
@@ -2286,29 +2366,30 @@ App.MainHostDetailsController = Em.Controller.extend({
   },
 
   toggleMaintenanceMode: function (event) {
-    var self = this;
-    var state = event.context.get('passiveState') === "ON" ? "OFF" : "ON";
-    var message = Em.I18n.t('passiveState.turn' + state.toCapital() + 'For').format(event.context.get('displayName'));
+    var state, message, self = this;
+    if (event.context.get('isImpliedState')) return null;
+    state = event.context.get('passiveState') === "ON" ? "OFF" : "ON";
+    message = Em.I18n.t('passiveState.turn' + state.toCapital() + 'For').format(event.context.get('displayName'));
     return App.showConfirmationPopup(function () {
       self.updateComponentPassiveState(event.context, state, message);
     });
   },
 
   downloadClientConfigs: function (event) {
-    componentsUtils.downloadClientConfigs.call(this, {
+    this.downloadClientConfigsCall({
       hostName: event.context.get('hostName'),
       componentName: event.context.get('componentName'),
       displayName: event.context.get('displayName')
     });
   },
 
-  installClients: function (event) {
+  installClients: function (components) {
     var clientsToInstall = [],
       clientsToAdd = [],
       missedComponents = [],
       dependentComponents = [],
       self = this;
-    event.context.forEach(function (component) {
+    components.forEach(function (component) {
       if (['INIT', 'INSTALL_FAILED'].contains(component.get('workStatus'))) {
         clientsToInstall.push(component);
       } else if (typeof component.get('workStatus') == 'undefined') {
@@ -2316,7 +2397,7 @@ App.MainHostDetailsController = Em.Controller.extend({
       }
     });
     clientsToAdd.forEach(function (component, index, array) {
-      var dependencies = componentsUtils.checkComponentDependencies(component.get('componentName'), {
+      var dependencies = this.checkComponentDependencies(component.get('componentName'), {
         scope: 'host',
         installedComponents: this.get('content.hostComponents').mapProperty('componentName')
       }).reject(function (componentName) {
@@ -2348,8 +2429,8 @@ App.MainHostDetailsController = Em.Controller.extend({
             self.showAddComponentPopup(message, isManualKerberos, function () {
               sendInstallCommand();
               clientsToAdd.forEach(function (component) {
-                this.primary(component);
-              }, self);
+                self.installHostComponentCall(self.get('content.hostName'), component);
+              });
             });
           } else {
             sendInstallCommand();
@@ -2357,6 +2438,42 @@ App.MainHostDetailsController = Em.Controller.extend({
         });
       }.bind(this));
     }
+  },
+
+  /**
+   * Check if all required components are installed on host.
+   * Available options:
+   *  scope: 'host' - dependency level `host`,`cluster` or `*`.
+   *  hostName: 'example.com' - host name to search installed components
+   *  installedComponents: ['A', 'B'] - names of installed components
+   *
+   * By default scope level is `*`
+   * For host level dependency you should specify at least `hostName` or `installedComponents` attribute.
+   *
+   * @param {String} componentName
+   * @param {Object} opt - options. Allowed options are `hostName`, `installedComponents`, `scope`.
+   * @return {Array} - names of missed components
+   */
+  checkComponentDependencies: function (componentName, opt) {
+    opt = opt || {};
+    opt.scope = opt.scope || '*';
+    var installedComponents;
+    var dependencies = App.StackServiceComponent.find(componentName).get('dependencies');
+    dependencies = opt.scope === '*' ? dependencies : dependencies.filterProperty('scope', opt.scope);
+    if (dependencies.length == 0) return [];
+    switch (opt.scope) {
+      case 'host':
+        Em.assert("You should pass at least `hostName` or `installedComponents` to options.", opt.hostName || opt.installedComponents);
+        installedComponents = opt.installedComponents || App.HostComponent.find().filterProperty('hostName', opt.hostName).mapProperty('componentName').uniq();
+        break;
+      default:
+        // @todo: use more appropriate value regarding installed components
+        installedComponents = opt.installedComponents || App.HostComponent.find().mapProperty('componentName').uniq();
+        break;
+    }
+    return dependencies.filter(function (dependency) {
+      return !installedComponents.contains(dependency.componentName);
+    }).mapProperty('componentName');
   },
 
   /**
@@ -2385,9 +2502,11 @@ App.MainHostDetailsController = Em.Controller.extend({
 
   executeCustomCommandSuccessCallback  : function(data, ajaxOptions, params) {
     if (data.Requests.id) {
-      App.router.get('backgroundOperationsController').showPopup();
-    } else {
-      console.warn('Error during execution of ' + params.command + ' custom command on' + params.componentName);
+      App.router.get('userSettingsController').dataLoading('show_bg').done(function (initValue) {
+        if (initValue) {
+          App.router.get('backgroundOperationsController').showPopup();
+        }
+      });
     }
   },
   executeCustomCommandErrorCallback : function(data) {
@@ -2399,53 +2518,6 @@ App.MainHostDetailsController = Em.Controller.extend({
       } catch (err) {}
     }
     App.showAlertPopup(Em.I18n.t('services.service.actions.run.executeCustomCommand.error'), error);
-    console.warn('Error during executing custom command');
-  },
-
-  /**
-   * show popup confirmation of version installation
-   * @param event
-   */
-  installVersionConfirmation: function (event) {
-    var self = this;
-
-    return App.showConfirmationPopup(function () {
-        self.installVersion(event);
-      },
-      Em.I18n.t('hosts.host.stackVersions.install.confirmation').format(event.context.get('displayName'))
-    );
-  },
-
-  /**
-   * install HostStackVersion on host
-   * @param {object} event
-   */
-  installVersion: function (event) {
-    App.ajax.send({
-      name: 'host.stack_versions.install',
-      sender: this,
-      data: {
-        hostName: this.get('content.hostName'),
-        version: event.context
-      },
-      success: 'installVersionSuccessCallback'
-    });
-  },
-
-  /**
-   * success callback of <code>installVersion</code>
-   * on success set version status to INSTALLING
-   * @param {object} data
-   * @param {object} opt
-   * @param {object} params
-   */
-  installVersionSuccessCallback: function (data, opt, params) {
-    App.HostStackVersion.find(params.version.get('id')).set('status', 'INSTALLING');
-    App.db.set('repoVersionInstall', 'id', [data.Requests.id]);
-    App.clusterStatus.setClusterStatus({
-      wizardControllerName: this.get('name'),
-      localdb: App.db.data
-    });
   },
 
   /**

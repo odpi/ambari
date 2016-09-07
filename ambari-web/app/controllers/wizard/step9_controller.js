@@ -106,13 +106,15 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @type {bool}
    */
   isSubmitDisabled: function () {
-    var validStates = ['STARTED', 'START FAILED'];
+    var validStates = ['STARTED', 'START FAILED', 'START_SKIPPED'];
     var controllerName = this.get('content.controllerName');
     if (controllerName == 'addHostController' || controllerName == 'addServiceController') {
       validStates.push('INSTALL FAILED');
     }
-    return !validStates.contains(this.get('content.cluster.status'));
+    return !validStates.contains(this.get('content.cluster.status')) || App.get('router.btnClickInProgress');
   }.property('content.cluster.status'),
+
+  isNextButtonDisabled: Em.computed.or('App.router.nextBtnClickInProgress', 'isSubmitDisabled'),
 
   /**
    * Observer function: Enables previous steps link if install task failed in installer wizard.
@@ -134,9 +136,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * Computed property to determine if the Retry button should be made visible on the page.
    * @type {bool}
    */
-  showRetry: function () {
-    return this.get('content.cluster.status') == 'INSTALL FAILED';
-  }.property('content.cluster.status'),
+  showRetry: Em.computed.equal('content.cluster.status', 'INSTALL FAILED'),
 
   /**
    * Observer function: Calls {hostStatusUpdates} function once with change in a host status from any registered hosts.
@@ -270,7 +270,6 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     }
     var needPolling = false;
     var clusterStatus = this.get('content.cluster.status');
-    console.log('navigateStep: clusterStatus = ' + clusterStatus);
     if (this.get('content.cluster.isCompleted') === false) {
       if (clusterStatus !== 'INSTALL FAILED' && clusterStatus !== 'START FAILED') {
         needPolling = true;
@@ -303,7 +302,6 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method loadStep
    */
   loadStep: function () {
-    console.log("TRACE: Loading step9: Install, Start and Test");
     this.clearStep();
     this.loadHosts();
   },
@@ -366,7 +364,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method displayMessage
    */
   displayMessage: function (task) {
-    var role = App.format.role(task.role);
+    var role = App.format.role(task.role, false);
     /* istanbul ignore next */
     switch (task.command) {
       case 'INSTALL':
@@ -425,6 +423,8 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
             return role + Em.I18n.t('installer.step9.serviceStatus.stop.failed');
         }
         break;
+      case 'CUSTOM_COMMAND':
+        role = App.format.commandDetail(task.command_detail, task.request_input);
       case 'EXECUTE' :
       case 'SERVICE_CHECK' :
         switch (task.status) {
@@ -525,10 +525,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   launchStartServicesSuccessCallback: function (jsonData) {
     var clusterStatus = {};
     if (jsonData) {
-      console.log("TRACE: Step9 -> In success function for the startService call");
-      console.log("TRACE: Step9 -> value of the received data is: " + jsonData);
       var requestId = jsonData.Requests.id;
-      console.log('requestId is: ' + requestId);
       clusterStatus = {
         status: 'INSTALLED',
         requestId: requestId,
@@ -539,7 +536,6 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       this.saveClusterStatus(clusterStatus);
     }
     else {
-      console.log('ERROR: Error occurred in parsing JSON data');
       this.hostHasClientsOnly(true);
       clusterStatus = {
         status: 'STARTED',
@@ -593,7 +589,6 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method launchStartServicesErrorCallback
    */
   launchStartServicesErrorCallback: function (jqXHR, ajaxOptions, error, opt) {
-    console.log("ERROR");
     this.set('startCallFailed', true);
     var clusterStatus = {
       status: 'INSTALL FAILED',
@@ -606,7 +601,17 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     });
     this.set('progress', '100');
 
-    App.ajax.defaultErrorHandler(jqXHR, opt.url, opt.method, jqXHR.status);
+    console.log("Error starting installed services: ", jqXHR, ajaxOptions, error, opt);
+    App.ModalPopup.show({
+      encodeBody: false,
+      primary: Em.I18n.t('ok'),
+      header: Em.I18n.t('installer.step9.service.start.header'),
+      secondaryClass: "hide",
+      body: Em.I18n.t('installer.step9.service.start.failed'),
+      primaryClass: 'btn-success',
+      onPrimary: function() { this.hide(); },
+      onClose: function() { this.hide(); }
+    });
   },
 
   /**
@@ -616,7 +621,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   onSuccessPerHost: function (actions, contentHost) {
     var status = this.get('content.cluster.status');
     if (actions.everyProperty('Tasks.status', 'COMPLETED') && 
-        (status === 'INSTALLED' || status === 'STARTED') ) {
+        (status === 'INSTALLED' || status === 'STARTED') || App.get('supports.skipComponentStartAfterInstall')) {
       contentHost.set('status', 'success');
     }
   },
@@ -690,6 +695,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     var completedActions = 0;
     var queuedActions = 0;
     var inProgressActions = 0;
+    var installProgressFactor = App.get('supports.skipComponentStartAfterInstall') ? 100 : 33;
     actions.forEach(function (action) {
       completedActions += +(['COMPLETED', 'FAILED', 'ABORTED', 'TIMEDOUT'].contains(action.Tasks.status));
       queuedActions += +(action.Tasks.status === 'QUEUED');
@@ -703,7 +709,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
      */
     switch (this.get('content.cluster.status')) {
       case 'PENDING':
-        progress = actionsPerHost ? (Math.ceil(((queuedActions * 0.09) + (inProgressActions * 0.35) + completedActions ) / actionsPerHost * 33)) : 33;
+        progress = actionsPerHost ? (Math.ceil(((queuedActions * 0.09) + (inProgressActions * 0.35) + completedActions ) / actionsPerHost * installProgressFactor)) : installProgressFactor;
         break;
       case 'INSTALLED':
         progress = actionsPerHost ? (33 + Math.floor(((queuedActions * 0.09) + (inProgressActions * 0.35) + completedActions ) / actionsPerHost * 67)) : 100;
@@ -841,25 +847,30 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
         this.get('hosts').forEach(function (host) {
           host.set('progress', '100');
         });
-        this.isAllComponentsInstalled().done(function(){
+        this.isAllComponentsInstalled().done(function () {
           self.changeParseHostInfo(false);
         });
         return;
+      }
+      if (App.get('supports.skipComponentStartAfterInstall')) {
+        clusterStatus.status = 'START_SKIPPED';
+        clusterStatus.isCompleted = true;
+        this.saveClusterStatus(clusterStatus);
+        this.get('hosts').forEach(function (host) {
+          host.set('status', 'success');
+          host.set('message', Em.I18n.t('installer.step9.host.status.success'));
+          host.set('progress', '100');
+        });
+        this.set('progress', '100');
+        self.saveInstalledHosts(self);
+        this.changeParseHostInfo(true);
       } else {
         this.set('progress', '34');
-        if (this.get('content.controllerName') === 'installerController') {
-          this.isAllComponentsInstalled().done(function(){
-            self.saveInstalledHosts(self);
-            self.changeParseHostInfo(true);
-          });
-          return;
-        } else {
-          this.launchStartServices(function () {
-            self.saveInstalledHosts(self);
-            self.changeParseHostInfo(true);
-          });
-          return;
-        }
+        this.isAllComponentsInstalled().done(function () {
+          self.saveInstalledHosts(self);
+          self.changeParseHostInfo(true);
+        });
+        return;
       }
     }
     this.changeParseHostInfo(false);
@@ -891,11 +902,9 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method setParseHostInfo
    */
   setParseHostInfo: function (polledData) {
-    console.log('TRACE: Entering host info function');
     var self = this;
     var totalProgress = 0;
     var tasksData = polledData.tasks || [];
-    console.log("The value of tasksData is: ", tasksData);
     var requestId = this.get('content.cluster.requestId');
     tasksData.setEach('Tasks.request_id', requestId);
     if (polledData.Requests && polledData.Requests.id && polledData.Requests.id != requestId) {
@@ -924,11 +933,10 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
           _host.set('isNoTasksForInstall', true);
           _host.set('status', 'pending');
         }
-        if (this.get('content.cluster.status') === 'INSTALLED' || this.get('content.cluster.status') === 'FAILED') {
+        if (this.get('content.cluster.status') === 'INSTALLED' || this.get('content.cluster.status') === 'FAILED' || App.get('supports.skipComponentStartAfterInstall')) {
           _host.set('progress', '100');
           _host.set('status', 'success');
         }
-        console.log("INFO: No task is hosted on the host");
       } else {
         _host.set('isNoTasksForInstall', false);
       }
@@ -945,7 +953,6 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     this.set('logTasksChangesCounter', this.get('logTasksChangesCounter') + 1);
     totalProgress = Math.floor(totalProgress / this.get('hosts.length'));
     this.set('progress', totalProgress.toString());
-    console.log("INFO: right now the progress is: " + this.get('progress'));
     this.setFinishState(tasksData);
   },
 
@@ -979,7 +986,6 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
     var requestId = this.get('currentOpenTaskRequestId');
     var clusterName = this.get('content.cluster.name');
     if (!taskId) {
-      console.log('taskId is null.');
       return;
     }
     App.ajax.send({
@@ -1043,8 +1049,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
         numPolls: this.get('numPolls'),
         callback: this.getLogsByRequest,
         args: [polling, requestId],
-        timeout: 3000,
-        errorLogMessage: 'Install services all retries failed'
+        timeout: 3000
       },
       success: 'reloadSuccessCallback',
       error: 'reloadErrorCallback'
@@ -1061,8 +1066,6 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   reloadSuccessCallback: function (data, opt, params) {
     var parsedData = jQuery.parseJSON(data);
     this._super();
-    console.log("TRACE: In success function for the GET logs data");
-    console.log("TRACE: Step9 -> The value is: ", parsedData);
     this.set('isPolling', params.polling);
     this.setParseHostInfo(parsedData);
   },
@@ -1077,9 +1080,11 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method reloadErrorCallback
    */
   reloadErrorCallback: function (jqXHR, ajaxOptions, error, opt, params) {
-    this._super(jqXHR, ajaxOptions, error, opt, params);
     if (jqXHR.status) {
+      this.closeReloadPopup();
       this.loadLogData(true);
+    } else {
+      this._super(jqXHR, ajaxOptions, error, opt, params);
     }
   },
 
@@ -1102,21 +1107,17 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    */
   isAllComponentsInstalled: function () {
     var dfd = $.Deferred();
-    if (this.get('content.controllerName') !== 'installerController' && this.get('content.controllerName') !== 'addHostController') {
+    App.ajax.send({
+      name: 'wizard.step9.installer.get_host_status',
+      sender: this,
+      data: {
+        cluster: this.get('content.cluster.name')
+      },
+      success: 'isAllComponentsInstalledSuccessCallback',
+      error: 'isAllComponentsInstalledErrorCallback'
+    }).complete(function () {
       dfd.resolve();
-    } else {
-      App.ajax.send({
-        name: 'wizard.step9.installer.get_host_status',
-        sender: this,
-        data: {
-          cluster: this.get('content.cluster.name')
-        },
-        success: 'isAllComponentsInstalledSuccessCallback',
-        error: 'isAllComponentsInstalledErrorCallback'
-      }).complete(function(){
-          dfd.resolve();
-      });
-    }
+    });
     return dfd.promise();
   },
 
@@ -1131,19 +1132,28 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       isStartError: true,
       isCompleted: false
     };
+    var usedHostWithHeartbeatLost = false;
     var hostsWithHeartbeatLost = [];
+    var usedHosts = this.get('content.masterComponentHosts').filterProperty('isInstalled', false).mapProperty('hostName');
+    this.get('content.slaveComponentHosts').forEach(function(component) {
+      usedHosts = usedHosts.concat(component.hosts.filterProperty('isInstalled', false).mapProperty('hostName'));
+    });
+    usedHosts = usedHosts.uniq();
     jsonData.items.filterProperty('Hosts.host_state', 'HEARTBEAT_LOST').forEach(function (host) {
       var hostComponentObj = {hostName: host.Hosts.host_name};
       var componentArr = [];
       host.host_components.forEach(function (_hostComponent) {
-        var componentName = App.format.role(_hostComponent.HostRoles.component_name);
+        var componentName = App.format.role(_hostComponent.HostRoles.component_name, false);
         componentArr.pushObject(componentName);
       }, this);
       hostComponentObj.componentNames = stringUtils.getFormattedStringFromArray(componentArr);
       hostsWithHeartbeatLost.pushObject(hostComponentObj);
+      if (!usedHostWithHeartbeatLost && usedHosts.contains(host.Hosts.host_name)) {
+        usedHostWithHeartbeatLost = true;
+      }
     }, this);
     this.set('hostsWithHeartbeatLost', hostsWithHeartbeatLost);
-    if (hostsWithHeartbeatLost.length) {
+    if (usedHostWithHeartbeatLost) {
       this.get('hosts').forEach(function (host) {
         if (hostsWithHeartbeatLost.someProperty(('hostName'), host.get('name'))) {
           host.set('status', 'heartbeat_lost');
@@ -1155,9 +1165,13 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       this.set('progress', '100');
       this.saveClusterStatus(clusterStatus);
     } else if (this.get('content.cluster.status') === 'PENDING' && this.get('isPolling')) {
-      this.launchStartServices();
+      if (App.get('supports.skipComponentStartAfterInstall')) {
+        this.set('progress', '100');
+        this.changeParseHostInfo(true);
+      } else {
+        this.launchStartServices();
+      }
     }
-
   },
 
   /**

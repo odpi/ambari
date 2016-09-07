@@ -33,6 +33,13 @@ App.SplashController = Ember.ObjectController.extend({
     var url = App.getNamespaceUrl() + '/resources/pig/help/';
     var self = this;
     var processResponse = function(name, data) {
+
+      if( data != undefined ){
+          data = data;
+      } else {
+        data = Ember.Object.create( {trace: null, message: "Server Error", status: "500"});
+      }
+
       model.set(name + 'Test', data.status == 200);
 
       if (data.status != 200) {
@@ -50,9 +57,9 @@ App.SplashController = Ember.ObjectController.extend({
       }
       model.set(name + 'TestDone', true);
       var percent = model.get('percent');
-      model.set('percent', percent + 33.33);
+      model.set('percent', percent + 25);
     };
-    var promises = ['storage', 'webhcat', 'hdfs'].map(function(name) {
+    var promises = ['storage', 'webhcat', 'hdfs', 'userhome'].map(function(name) {
       return Ember.$.getJSON('/' + url + name + 'Status')
                .then(
                  function(data) {
@@ -68,5 +75,10 @@ App.SplashController = Ember.ObjectController.extend({
   },
   progressBarStyle: function() {
     return 'width: ' + this.get("model").get("percent") + '%;';
-  }.property("model.percent")
+  }.property("model.percent"),
+
+  allTestsCompleted: function(){
+    return this.get("model").get("hdfsTestDone") && this.get("model").get("webhcatTestDone") && this.get("model").get("storageTestDone") && this.get("model").get("userhomeTestDone");
+  }.property('model.hdfsTestDone', 'model.webhcatTestDone', 'model.storageTestDone', 'model.userhomeTestDone')
+
 });

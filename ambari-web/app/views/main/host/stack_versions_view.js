@@ -27,24 +27,18 @@ App.MainHostStackVersionsView = App.TableView.extend({
   /**
    * @type {Ember.Object}
    */
-  host: function () {
-    return App.router.get('mainHostDetailsController.content');
-  }.property('App.router.mainHostDetailsController.content'),
+  host: Em.computed.alias('App.router.mainHostDetailsController.content'),
 
   /**
    * @type {Ember.Array}
    */
-  content: function () {
-    return this.get('host.stackVersions').filterProperty('isVisible', true);
-  }.property('host.stackVersions.length'),
+  content: Em.computed.filterBy('host.stackVersions', 'isVisible', true),
 
   /**
    * return filtered number of all content number information displayed on the page footer bar
    * @returns {string}
    */
-  filteredContentInfo: function () {
-    return this.t('hosts.host.stackVersions.table.filteredInfo').format(this.get('filteredCount'), this.get('totalCount'));
-  }.property('filteredCount', 'totalCount'),
+  filteredContentInfo: Em.computed.i18nFormat('hosts.host.stackVersions.table.filteredInfo', 'filteredCount', 'totalCount'),
 
   /**
    * @type {Ember.View}
@@ -173,6 +167,9 @@ App.MainHostStackVersionsView = App.TableView.extend({
         placement: "top",
         title: Em.I18n.t('hosts.host.stackVersions.outOfSync.tooltip')
       });
+    },
+    willDestroyElement: function () {
+      $(this.get('element')).tooltip('destroy');
     }
   }),
 

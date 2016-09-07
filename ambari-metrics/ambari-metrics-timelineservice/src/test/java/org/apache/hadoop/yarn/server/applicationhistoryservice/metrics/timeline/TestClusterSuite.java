@@ -18,11 +18,15 @@
 package org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline;
 
 
+import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.ITClusterAggregator;
+import org.apache.hadoop.yarn.server.applicationhistoryservice.metrics.timeline.aggregators.ITMetricAggregator;
+import org.junit.Ignore;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
 import static org.junit.runners.Suite.SuiteClasses;
 
+@Ignore
 @RunWith(Suite.class)
 @SuiteClasses({ITMetricAggregator.class, ITClusterAggregator.class, ITPhoenixHBaseAccessor.class})
 public class TestClusterSuite {

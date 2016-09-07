@@ -19,6 +19,7 @@
 package org.apache.ambari.server.api.handlers;
 
 import org.apache.ambari.server.api.services.Request;
+import org.apache.ambari.server.api.services.RequestBody;
 import org.apache.ambari.server.api.services.ResultImpl;
 import org.apache.ambari.server.api.services.ResultStatus;
 import org.apache.ambari.server.api.services.Result;
@@ -29,6 +30,7 @@ import org.apache.ambari.server.controller.spi.Predicate;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.TemporalInfo;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,6 +55,13 @@ public class ReadHandler implements RequestHandler {
     query.setSortRequest(request.getSortRequest());
     query.setRenderer(request.getRenderer());
 
+    // If the request body exists, copy the requstInfoProperties from it.  This map should contain
+    // the _directives_ specified in the request.
+    RequestBody body = request.getBody();
+    if(body != null) {
+      query.setRequestInfoProps(body.getRequestInfoProperties());
+    }
+
     try {
       addFieldsToQuery(request, query);
     } catch (IllegalArgumentException e) {
@@ -67,6 +76,8 @@ public class ReadHandler implements RequestHandler {
 
       result = query.execute();
       result.setResultStatus(new ResultStatus(ResultStatus.STATUS.OK));
+    } catch (AuthorizationException e) {
+      result = new ResultImpl(new ResultStatus(ResultStatus.STATUS.FORBIDDEN, e.getMessage()));
     } catch (SystemException e) {
       result = new ResultImpl(new ResultStatus(ResultStatus.STATUS.SERVER_ERROR, e));
     } catch (NoSuchParentResourceException e) {

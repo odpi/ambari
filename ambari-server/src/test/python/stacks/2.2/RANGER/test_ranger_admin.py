@@ -33,7 +33,7 @@ class TestRangerAdmin(RMFTestCase):
                    classname = "RangerAdmin",
                    command = "configure",
                    config_file="ranger-admin-default.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assert_configure_default()
@@ -44,7 +44,7 @@ class TestRangerAdmin(RMFTestCase):
                    classname = "RangerAdmin",
                    command = "start",
                    config_file="ranger-admin-default.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assert_configure_default()
@@ -60,7 +60,7 @@ class TestRangerAdmin(RMFTestCase):
                    classname = "RangerAdmin",
                    command = "stop",
                    config_file="ranger-admin-default.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Execute', '/usr/bin/ranger-admin-stop',
@@ -74,7 +74,7 @@ class TestRangerAdmin(RMFTestCase):
                    classname = "RangerAdmin",
                    command = "configure",
                    config_file="ranger-admin-secured.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assert_configure_secured()
@@ -85,7 +85,7 @@ class TestRangerAdmin(RMFTestCase):
                    classname = "RangerAdmin",
                    command = "start",
                    config_file="ranger-admin-secured.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assert_configure_secured()
@@ -101,7 +101,7 @@ class TestRangerAdmin(RMFTestCase):
                    classname = "RangerAdmin",
                    command = "stop",
                    config_file="ranger-admin-secured.json",
-                   hdp_stack_version = self.STACK_VERSION,
+                   stack_version = self.STACK_VERSION,
                    target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Execute', '/usr/bin/ranger-admin-stop',
@@ -114,7 +114,7 @@ class TestRangerAdmin(RMFTestCase):
     self.assertResourceCalled('Execute', 'mysql -u root --password=aa -h localhost  -s -e "select version();"',logoutput = True,
                               environment = {})
     self.assertResourceCalled('File', '/tmp/mysql-connector-java.jar',
-        content = DownloadSource('http://c6401.ambari.apache.org:8080/resources//mysql-jdbc-driver.jar'),
+        content = DownloadSource('http://c6401.ambari.apache.org:8080/resources//mysql-connector-java.jar'),
         mode = 0644
     )
     self.assertResourceCalled('Execute', ('cp',
@@ -130,6 +130,15 @@ class TestRangerAdmin(RMFTestCase):
     self.assertResourceCalled('ModifyPropertiesFile', '/usr/hdp/current/ranger-admin/install.properties',
         properties = self.getConfig()['configurations']['admin-properties'],
     )
+    custom_config=dict()
+    custom_config['unix_user'] = "ranger"
+    custom_config['unix_group'] = "ranger"
+    self.assertResourceCalled('ModifyPropertiesFile', '/usr/hdp/current/ranger-admin/install.properties',
+        properties = custom_config,
+    )
+    self.assertResourceCalled('ModifyPropertiesFile', '/usr/hdp/current/ranger-admin/install.properties',
+        properties = {'SQL_CONNECTOR_JAR': '/usr/share/java/mysql-connector-java.jar'}
+    )
     self.assertResourceCalled('Execute', 'cd /usr/hdp/current/ranger-admin && ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E /usr/hdp/current/ranger-admin/setup.sh',
         logoutput = True,
         environment = {'JAVA_HOME': u'/usr/jdk64/jdk1.7.0_45'},
@@ -141,12 +150,16 @@ class TestRangerAdmin(RMFTestCase):
         mode = 0744,
         properties = self.getConfig()['configurations']['ranger-site']
     )
-      
+    self.assertResourceCalled('Directory', '/var/log/ranger/admin',
+        owner = custom_config['unix_user'],
+        group = custom_config['unix_group']
+    )
+
   def assert_configure_secured(self):
     self.assertResourceCalled('Execute', 'mysql -u root --password=rootpassword -h localhost  -s -e "select version();"',logoutput = True,
                               environment = {})
     self.assertResourceCalled('File', '/tmp/mysql-connector-java.jar',
-        content = DownloadSource('http://c6401.ambari.apache.org:8080/resources//mysql-jdbc-driver.jar'),
+        content = DownloadSource('http://c6401.ambari.apache.org:8080/resources//mysql-connector-java.jar'),
         mode = 0644
     )
     self.assertResourceCalled('Execute', ('cp',
@@ -162,6 +175,15 @@ class TestRangerAdmin(RMFTestCase):
     self.assertResourceCalled('ModifyPropertiesFile', '/usr/hdp/current/ranger-admin/install.properties',
         properties = self.getConfig()['configurations']['admin-properties'],
     )
+    custom_config=dict()
+    custom_config['unix_user'] = "ranger"
+    custom_config['unix_group'] = "ranger"
+    self.assertResourceCalled('ModifyPropertiesFile', '/usr/hdp/current/ranger-admin/install.properties',
+        properties = custom_config,
+    )
+    self.assertResourceCalled('ModifyPropertiesFile', '/usr/hdp/current/ranger-admin/install.properties',
+        properties = {'SQL_CONNECTOR_JAR': '/usr/share/java/mysql-connector-java.jar'}
+    )
     self.assertResourceCalled('Execute', 'cd /usr/hdp/current/ranger-admin && ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E /usr/hdp/current/ranger-admin/setup.sh',
         logoutput = True,
         environment = {'JAVA_HOME': u'/usr/jdk64/jdk1.7.0_45'},
@@ -173,9 +195,13 @@ class TestRangerAdmin(RMFTestCase):
         mode = 0744,
         properties = self.getConfig()['configurations']['ranger-site']
     )
+    self.assertResourceCalled('Directory', '/var/log/ranger/admin',
+        owner = custom_config['unix_user'],
+        group = custom_config['unix_group']
+    )
 
 
-  def test_pre_rolling_upgrade_23(self, ):
+  def test_pre_upgrade_restart_23(self, ):
     config_file = self.get_src_folder()+"/test/python/stacks/2.2/configs/ranger-admin-upgrade.json"
     with open(config_file, "r") as f:
       json_content = json.load(f)
@@ -184,20 +210,20 @@ class TestRangerAdmin(RMFTestCase):
     mocks_dict = {}
     self.executeScript(self.COMMON_SERVICES_PACKAGE_DIR + "/scripts/ranger_usersync.py",
                        classname = "RangerAdmin",
-                       command = "pre_rolling_restart",
+                       command = "pre_upgrade_restart",
                        config_dict = json_content,
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES,
-                       call_mocks = [(0, None), (0, None)],
+                       call_mocks = [(0, None, ''), (0, None)],
                        mocks_dict = mocks_dict)
 
-    self.assertResourceCalled("Execute", ('hdp-select', 'set', 'ranger-admin', '2.3.0.0-1234'), sudo=True)
+    self.assertResourceCalledIgnoreEarlier("Execute", ('ambari-python-wrap', '/usr/bin/hdp-select', 'set', 'ranger-admin', '2.3.0.0-1234'), sudo=True)
 
     self.assertEquals(1, mocks_dict['call'].call_count)
     self.assertEquals(1, mocks_dict['checked_call'].call_count)
     self.assertEquals(
-      ('conf-select', 'set-conf-dir', '--package', 'ranger-admin', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'set-conf-dir', '--package', 'ranger-admin', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['checked_call'].call_args_list[0][0][0])
     self.assertEquals(
-      ('conf-select', 'create-conf-dir', '--package', 'ranger-admin', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
+      ('ambari-python-wrap', '/usr/bin/conf-select', 'create-conf-dir', '--package', 'ranger-admin', '--stack-version', '2.3.0.0-1234', '--conf-version', '0'),
        mocks_dict['call'].call_args_list[0][0][0])

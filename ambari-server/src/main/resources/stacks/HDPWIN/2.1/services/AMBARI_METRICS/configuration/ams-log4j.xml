@@ -17,9 +17,7 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-
-<configuration supports_final="false">
-
+<configuration supports_final="false" supports_adding_forbidden="true">
   <property>
     <name>content</name>
     <description>Custom log4j.properties</description>
@@ -54,6 +52,9 @@
       log4j.appender.file.layout=org.apache.log4j.PatternLayout
       log4j.appender.file.layout.ConversionPattern=%d{ABSOLUTE} %5p [%t] %c{1}:%L - %m%n
     </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
   </property>
-
 </configuration>

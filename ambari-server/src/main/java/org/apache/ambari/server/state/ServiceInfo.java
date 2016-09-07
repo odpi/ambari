@@ -18,7 +18,28 @@
 
 package org.apache.ambari.server.state;
 
+import com.google.common.base.Function;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Multimaps;
+import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.stack.Validable;
+import org.apache.ambari.server.state.stack.MetricDefinition;
+import org.apache.ambari.server.state.stack.StackRoleCommandOrder;
+import org.codehaus.jackson.annotate.JsonIgnore;
+import org.codehaus.jackson.map.annotate.JsonFilter;
+
+import javax.xml.bind.Unmarshaller;
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlElementWrapper;
+import javax.xml.bind.annotation.XmlElements;
+import javax.xml.bind.annotation.XmlTransient;
 import java.io.File;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -29,23 +50,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlElement;
-import javax.xml.bind.annotation.XmlElementWrapper;
-import javax.xml.bind.annotation.XmlElements;
-import javax.xml.bind.annotation.XmlTransient;
-
-import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.stack.Validable;
-import org.apache.ambari.server.state.stack.MetricDefinition;
-import org.codehaus.jackson.annotate.JsonIgnore;
-import org.codehaus.jackson.map.annotate.JsonFilter;
-
 @XmlAccessorType(XmlAccessType.FIELD)
 @JsonFilter("propertiesfilter")
 public class ServiceInfo implements Validable{
 
+  public static final AbstractMap.SimpleEntry<String, String> DEFAULT_SERVICE_INSTALLABLE_PROPERTY = new AbstractMap.SimpleEntry("installable", "true");
+  public static final AbstractMap.SimpleEntry<String, String> DEFAULT_SERVICE_MANAGED_PROPERTY = new AbstractMap.SimpleEntry("managed", "true");
+  public static final AbstractMap.SimpleEntry<String, String> DEFAULT_SERVICE_MONITORED_PROPERTY = new AbstractMap.SimpleEntry("monitored", "true");
   /**
    * Format version. Added at schema ver 2
    */
@@ -57,6 +68,8 @@ public class ServiceInfo implements Validable{
   private String version;
   private String comment;
   private String serviceType;
+
+  @XmlTransient
   private List<PropertyInfo> properties;
 
   @XmlElementWrapper(name="components")
@@ -83,7 +96,7 @@ public class ServiceInfo implements Validable{
 
   @JsonIgnore
   private Boolean monitoringService;
-  
+
   @JsonIgnore
   @XmlElement(name = "restartRequiredAfterChange")
   private Boolean restartRequiredAfterChange;
@@ -117,7 +130,13 @@ public class ServiceInfo implements Validable{
 
   @XmlTransient
   private Map<String, Map<String, List<MetricDefinition>>> metrics = null;
-  
+
+  @XmlTransient
+  private File advisorFile = null;
+
+  @XmlTransient
+  private String advisorName = null;
+
   @XmlTransient
   private File alertsFile = null;
 
@@ -126,12 +145,23 @@ public class ServiceInfo implements Validable{
 
   @XmlTransient
   private File widgetsDescriptorFile = null;
-  
+
+  private StackRoleCommandOrder roleCommandOrder;
+
   @XmlTransient
   private boolean valid = true;
 
+  @XmlElementWrapper(name = "properties")
+  @XmlElement(name="property")
+  private List<ServicePropertyInfo> servicePropertyList = Lists.newArrayList();
+
+
+
+  @XmlTransient
+  private Map<String, String> servicePropertyMap = ImmutableMap.copyOf(ensureMandatoryServiceProperties(Maps.<String, String>newHashMap()));
+
   /**
-   * 
+   *
    * @return valid xml flag
    */
   @Override
@@ -140,7 +170,7 @@ public class ServiceInfo implements Validable{
   }
 
   /**
-   * 
+   *
    * @param valid set validity flag
    */
   @Override
@@ -150,20 +180,20 @@ public class ServiceInfo implements Validable{
 
   @XmlTransient
   private Set<String> errorSet = new HashSet<String>();
-  
+
   @Override
-  public void setErrors(String error) {
+  public void addError(String error) {
     errorSet.add(error);
   }
 
   @Override
-  public Collection getErrors() {
+  public Collection<String> getErrors() {
     return errorSet;
-  }   
-  
+  }
+
   @Override
-  public void setErrors(Collection error) {
-    this.errorSet.addAll(error);
+  public void addErrors(Collection<String> errors) {
+    this.errorSet.addAll(errors);
   }
   /**
    * Internal list of os-specific details (loaded from xml). Added at schema ver 2
@@ -172,7 +202,7 @@ public class ServiceInfo implements Validable{
   @XmlElementWrapper(name="osSpecifics")
   @XmlElements(@XmlElement(name="osSpecific"))
   private List<ServiceOsSpecific> serviceOsSpecifics;
-  
+
   @JsonIgnore
   @XmlElement(name="configuration-dir")
   private String configDir = AmbariMetaInfo.SERVICE_CONFIG_FOLDER_NAME;
@@ -189,6 +219,17 @@ public class ServiceInfo implements Validable{
   @XmlTransient
   private volatile Map<String, ThemeInfo> themesMap;
 
+  @JsonIgnore
+  @XmlElement(name = "quickLinksConfigurations-dir")
+  private String quickLinksConfigurationsDir = AmbariMetaInfo.SERVICE_QUICKLINKS_CONFIGURATIONS_FOLDER_NAME;
+
+  @JsonIgnore
+  @XmlElementWrapper(name = "quickLinksConfigurations")
+  @XmlElements(@XmlElement(name = "quickLinksConfiguration"))
+  private List<QuickLinksConfigurationInfo> quickLinksConfigurations;
+
+  @XmlTransient
+  private volatile Map<String, QuickLinksConfigurationInfo> quickLinksConfigurationsMap;
 
   /**
    * Map of of os-specific details that is exposed (and initialised from list)
@@ -209,7 +250,7 @@ public class ServiceInfo implements Validable{
   @XmlElementWrapper(name="customCommands")
   @XmlElements(@XmlElement(name="customCommand"))
   private List<CustomCommandDefinition> customCommands;
-  
+
   @XmlElementWrapper(name="requiredServices")
   @XmlElement(name="service")
   private List<String> requiredServices = new ArrayList<String>();
@@ -222,6 +263,12 @@ public class ServiceInfo implements Validable{
    */
   @XmlTransient
   private String servicePackageFolder;
+
+  /**
+   * Stores the path to the upgrades folder which contains the upgrade xmls for the given service.
+   */
+  @XmlTransient
+  private File serviceUpgradesFolder;
 
   public boolean isDeleted() {
     return isDeleted;
@@ -254,7 +301,7 @@ public class ServiceInfo implements Validable{
   public void setDisplayName(String displayName) {
     this.displayName = displayName;
   }
-  
+
   public String getServiceType() {
 	return serviceType;
   }
@@ -349,17 +396,34 @@ public String getVersion() {
     return client;
   }
 
+  public File getAdvisorFile() {
+    return advisorFile;
+  }
+
+  public void setAdvisorFile(File advisorFile) {
+    this.advisorFile = advisorFile;
+  }
+
+  public String getAdvisorName() {
+    return advisorName;
+  }
+
+  public void setAdvisorName(String advisorName) {
+    this.advisorName = advisorName;
+  }
+
   @Override
   public String toString() {
     StringBuilder sb = new StringBuilder();
     sb.append("Service name:");
     sb.append(name);
     sb.append("\nService type:");
-    sb.append(serviceType); 
+    sb.append(serviceType);
     sb.append("\nversion:");
     sb.append(version);
     sb.append("\ncomment:");
     sb.append(comment);
+
     //for (PropertyInfo property : getProperties()) {
     //  sb.append("\tProperty name=" + property.getName() +
     //"\nproperty value=" + property.getValue() + "\ndescription=" + property.getDescription());
@@ -442,7 +506,7 @@ public String getVersion() {
    * This can be used in determining if a property is stale.
 
    * @param type the config type
-   * @param keyNames the names of all the config keys for the given type 
+   * @param keyNames the names of all the config keys for the given type
    * @return <code>true</code> if the config is stale
    */
   public boolean hasDependencyAndPropertyFor(String type, Collection<String> keyNames) {
@@ -456,7 +520,7 @@ public String getVersion() {
       if (keys != null && keys.contains(staleCheck))
         return true;
     }
-    
+
     return false;
   }
 
@@ -528,6 +592,14 @@ public String getVersion() {
     this.servicePackageFolder = servicePackageFolder;
   }
 
+  public File getServiceUpgradesFolder() {
+    return serviceUpgradesFolder;
+  }
+
+  public void setServiceUpgradesFolder(File serviceUpgradesFolder) {
+    this.serviceUpgradesFolder = serviceUpgradesFolder;
+  }
+
   /**
    * Exposes (and initializes on first use) map of os-specific details.
    * @return  map of OS specific details keyed by family
@@ -579,7 +651,7 @@ public String getVersion() {
   public void setMetricsFile(File file) {
     metricsFile = file;
   }
-  
+
   /**
    * @return the metrics file, or <code>null</code> if none exists
    */
@@ -593,14 +665,14 @@ public String getVersion() {
   public Map<String, Map<String, List<MetricDefinition>>> getMetrics() {
     return metrics;
   }
-  
+
   /**
    * @param map the metrics for this service
    */
   public void setMetrics(Map<String, Map<String, List<MetricDefinition>>> map) {
     metrics = map;
   }
-  
+
   /**
    * @return the configuration directory name
    */
@@ -659,6 +731,14 @@ public String getVersion() {
 
   public void setWidgetsDescriptorFile(File widgetsDescriptorFile) {
     this.widgetsDescriptorFile = widgetsDescriptorFile;
+  }
+
+  public StackRoleCommandOrder getRoleCommandOrder() {
+    return roleCommandOrder;
+  }
+
+  public void setRoleCommandOrder(StackRoleCommandOrder roleCommandOrder) {
+    this.roleCommandOrder = roleCommandOrder;
   }
 
   /**
@@ -746,4 +826,141 @@ public String getVersion() {
   public void setThemesMap(Map<String, ThemeInfo> themesMap) {
     this.themesMap = themesMap;
   }
+
+  //Quick links configurations
+  public String getQuickLinksConfigurationsDir() {
+    return quickLinksConfigurationsDir;
+  }
+
+  public void setQuickLinksConfigurationsDir(String quickLinksConfigurationsDir) {
+    this.quickLinksConfigurationsDir = quickLinksConfigurationsDir;
+  }
+
+  public List<QuickLinksConfigurationInfo> getQuickLinksConfigurations() {
+    return quickLinksConfigurations;
+  }
+
+  public void setQuickLinksConfigurations(List<QuickLinksConfigurationInfo> quickLinksConfigurations) {
+    this.quickLinksConfigurations = quickLinksConfigurations;
+  }
+
+  public Map<String, QuickLinksConfigurationInfo> getQuickLinksConfigurationsMap() {
+    if (quickLinksConfigurationsMap == null) {
+      synchronized (this) {
+      }
+      if (quickLinksConfigurationsMap == null) {
+        Map<String, QuickLinksConfigurationInfo> tmp = new TreeMap<String, QuickLinksConfigurationInfo>();
+        if (quickLinksConfigurations != null) {
+          for (QuickLinksConfigurationInfo quickLinksConfiguration : quickLinksConfigurations) {
+            tmp.put(quickLinksConfiguration.getFileName(), quickLinksConfiguration);
+          }
+        }
+        quickLinksConfigurationsMap = tmp;
+      }
+    }
+    return quickLinksConfigurationsMap;
+  }
+
+  public void setQuickLinksConfigurationsMap(Map<String, QuickLinksConfigurationInfo> quickLinksConfigurationsMap) {
+    this.quickLinksConfigurationsMap = quickLinksConfigurationsMap;
+  }
+
+  public List<ServicePropertyInfo> getServicePropertyList() {
+    return servicePropertyList;
+  }
+
+  public void setServicePropertyList(List<ServicePropertyInfo> servicePropertyList) {
+    this.servicePropertyList = servicePropertyList;
+    afterServicePropertyListSet();
+  }
+
+  private void afterServicePropertyListSet(){
+    validateServiceProperties();
+    buildServiceProperties();
+  }
+
+
+  /**
+   * Returns the service properties defined in the xml service definition.
+   * @return Service property map
+   */
+  public Map<String, String> getServiceProperties()  {
+    return servicePropertyMap;
+  }
+
+  /**
+   * Constructs the map that stores the service properties defined in the xml service definition.
+   * The keys are the property names and values the property values.
+   * It ensures that missing required service properties are added with default values.
+   */
+  private void buildServiceProperties() {
+    if (isValid()) {
+      Map<String, String> properties = Maps.newHashMap();
+      for (ServicePropertyInfo property : getServicePropertyList()) {
+        properties.put(property.getName(), property.getValue());
+      }
+      servicePropertyMap = ImmutableMap.copyOf(ensureMandatoryServiceProperties(properties));
+    }
+    else
+      servicePropertyMap = ImmutableMap.of();
+
+
+  }
+
+  private Map<String, String> ensureMandatoryServiceProperties(Map<String, String> properties) {
+    return ensureVisibilityServiceProperties(properties);
+  }
+
+  private Map<String, String> ensureVisibilityServiceProperties(Map<String, String> properties) {
+    if (!properties.containsKey(DEFAULT_SERVICE_INSTALLABLE_PROPERTY.getKey()))
+      properties.put(DEFAULT_SERVICE_INSTALLABLE_PROPERTY.getKey(), DEFAULT_SERVICE_INSTALLABLE_PROPERTY.getValue());
+
+    if (!properties.containsKey(DEFAULT_SERVICE_MANAGED_PROPERTY.getKey()))
+      properties.put(DEFAULT_SERVICE_MANAGED_PROPERTY.getKey(), DEFAULT_SERVICE_MANAGED_PROPERTY.getValue());
+
+
+    if (!properties.containsKey(DEFAULT_SERVICE_MONITORED_PROPERTY.getKey()))
+      properties.put(DEFAULT_SERVICE_MONITORED_PROPERTY.getKey(), DEFAULT_SERVICE_MONITORED_PROPERTY.getValue());
+
+    return properties;
+  }
+
+  void afterUnmarshal(Unmarshaller unmarshaller, Object parent) {
+    afterServicePropertyListSet();
+  }
+
+
+  private void validateServiceProperties() {
+    // Verify if there are duplicate service properties by name
+    Multimap<String, ServicePropertyInfo> servicePropsByName = Multimaps.index(
+      getServicePropertyList(),
+      new Function<ServicePropertyInfo, String>() {
+        @Override
+        public String apply(ServicePropertyInfo servicePropertyInfo) {
+          return servicePropertyInfo.getName();
+        }
+      }
+
+    );
+
+    for (String propertyName: servicePropsByName.keySet()) {
+      if (servicePropsByName.get(propertyName).size() > 1) {
+        setValid(false);
+        addError("Duplicate service property with name '" + propertyName + "' found in " + getName() + ":" + getVersion() + " service definition !");
+      }
+    }
+
+    for (ComponentInfo component : getComponents()) {
+      int primaryLogs = 0;
+      for (LogDefinition log : component.getLogs()) {
+        primaryLogs += log.isPrimary() ? 1 : 0;
+      }
+
+      if (primaryLogs > 1) {
+        setValid(false);
+        addError("More than one primary log exists for the component " + component.getName());
+      }
+    }
+  }
+
 }

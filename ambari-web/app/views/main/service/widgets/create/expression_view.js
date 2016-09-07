@@ -43,7 +43,7 @@ App.WidgetWizardExpressionView = Em.View.extend({
    * @type {Array}
    * @const
    */
-  AGGREGATE_FUNCTIONS: ['avg', 'sum', 'min', 'max'],
+  AGGREGATE_FUNCTIONS: ['avg', 'sum', 'min', 'max', 'rate'],
 
   /**
    * @type {RegExp}
@@ -96,9 +96,8 @@ App.WidgetWizardExpressionView = Em.View.extend({
 
   /**
    * add operator to expression data
-   * @param event
    */
-  addNumber: function (event) {
+  addNumber: function () {
     var data = this.get('expression.data');
     var lastId = (data.length > 0) ? Math.max.apply(this, data.mapProperty('id')) : 0;
 
@@ -201,13 +200,8 @@ App.AddNumberExpressionView = Em.TextField.extend({
  */
 App.AddMetricExpressionView = Em.View.extend({
   templateName: require('templates/main/service/widgets/create/step2_add_metric'),
-  controller: function () {
-    return this.get('parentView.controller');
-  }.property('parentView.controller'),
-  elementId: function () {
-    var expressionId = "_" + this.get('parentView').get('expression.id');
-    return 'add-metric-menu' + expressionId;
-  }.property(),
+  controller: Em.computed.alias('parentView.controller'),
+  elementId: Em.computed.format('add-metric-menu_{0}','parentView.expression.id'),
   didInsertElement: function () {
     //prevent dropdown closing on click select
     $('html').on('click.dropdown', '.dropdown-menu li', function (e) {
@@ -318,25 +312,26 @@ App.AddMetricExpressionView = Em.View.extend({
     if (this.get('controller.filteredMetrics')) {
       this.get('controller.filteredMetrics').forEach(function (metric) {
         var service = servicesMap[metric.service_name];
+        if (!service) {
+          service = {
+              count: 0,
+              components: {}
+          };
+          servicesMap[metric.service_name] = service;
+        }
+
         var componentId = masterNames.contains(metric.component_name) ? metric.component_name + '_' + metric.level : metric.component_name;
-        if (service) {
-          service.count++;
-          if (service.components[componentId]) {
-            service.components[componentId].count++;
-            service.components[componentId].metrics.push(metric.name);
-          } else {
-            service.components[componentId] = {
-              component_name: metric.component_name,
-              level: metric.level,
-              count: 1,
-              hostComponentCriteria: metric.host_component_criteria,
-              metrics: [metric.name]
-            };
-          }
+        service.count++;
+        if (service.components[componentId]) {
+          service.components[componentId].count++;
+          service.components[componentId].metrics.push(metric.name);
         } else {
-          servicesMap[metric.service_name] = {
+          service.components[componentId] = {
+            component_name: metric.component_name,
+            level: metric.level,
             count: 1,
-            components: {}
+            hostComponentCriteria: metric.host_component_criteria,
+            metrics: [metric.name]
           };
         }
       }, this);
@@ -366,9 +361,7 @@ App.AddMetricExpressionView = Em.View.extend({
           id: componentId + expressionId,
           aggregatorId: componentId + expressionId + '_aggregator',
           serviceName: serviceName,
-          showAggregateSelect: function () {
-            return this.get('level') === 'COMPONENT';
-          }.property('level'),
+          showAggregateSelect: Em.computed.equal('level', 'COMPONENT'),
           selectedMetric: null,
           selectedAggregation: Em.I18n.t('dashboard.widgets.wizard.step2.aggregateFunction.scanOps'),
           isAddEnabled: function () {
@@ -431,7 +424,7 @@ App.InputCursorTextfieldView = Ember.TextField.extend({
     });
   }.observes('parentView.expression.data.length'),
 
-  focusOut: function(evt) {
+  focusOut: function() {
     this.saveNumber();
   },
 
@@ -451,7 +444,7 @@ App.InputCursorTextfieldView = Ember.TextField.extend({
           isOperator: true
         }));
         this.set('value', '');
-      } else if (value && value == 'm') {
+      } else if (value && value === 'm') {
         // open add metric menu
         var expressionId = "_" + parentView.get('expression.id');
         $('#add-metric-menu' + expressionId + '> div > a').click();
@@ -465,22 +458,19 @@ App.InputCursorTextfieldView = Ember.TextField.extend({
   }.observes('value'),
 
   keyDown: function (event) {
-    if ((event.keyCode == 8 || event.which == 8) && !this.get('value')) { // backspace
+    if ((event.keyCode === 8 || event.which === 8) && !this.get('value')) { // backspace
       var data = this.get('parentView.expression.data');
       if (data.length >= 1) {
         data.removeObject(data[data.length - 1]);
       }
-    } else if (event.keyCode == 13) { //Enter
+    } else if (event.keyCode === 13) { //Enter
       this.saveNumber();
     }
   },
 
   saveNumber: function() {
-    var number_utils = require("utils/number_utils");
-    var value = this.get('value');
-    if (number_utils.isPositiveNumber(value))  {
-      var parentView = this.get('parentView');
-      var data = parentView.get('expression.data');
+    if (number_utils.isPositiveNumber(this.get('value')))  {
+      var data = this.get('parentView.expression.data');
       var lastId = (data.length > 0) ? Math.max.apply(this, data.mapProperty('id')) : 0;
       data.pushObject(Em.Object.create({
         id: ++lastId,

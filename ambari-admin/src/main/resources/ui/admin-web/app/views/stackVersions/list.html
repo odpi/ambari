@@ -19,12 +19,12 @@
 <div id="stack-versions">
   <div class="clearfix">
     <ol class="breadcrumb pull-left">
-      <li class="active">Versions</li>
+      <li class="active">{{'common.versions' | translate}}</li>
     </ol>
     <div class="pull-right top-margin-4">
       <a href="#/stackVersions/create" class="btn btn-primary">
         <span class="glyphicon glyphicon-plus"></span>
-        Register Version
+        {{'versions.register.title' | translate}}
       </a>
     </div>
   </div>
@@ -32,50 +32,70 @@
   <table class="table table-striped table-hover">
     <thead>
     <tr>
-      <th class="col-medium">
-        <label>Name</label>
-        <input type="text" class="form-control" ng-change="resetPagination()" ng-model="filter.version" placeholder="Any">
+      <th class="col-small">
+        <label>{{'common.stack' | translate}}</label>
+        <select class="form-control"
+                ng-change="resetPagination()"
+                ng-model="filter.stack.current"
+                ng-options="item.label for item in filter.stack.options track by item.value"
+          ></select>
+      </th>
+      <th class="col-medium text-search-container">
+        <label>{{'common.name' | translate}}</label>
+        <input type="text" class="form-control" ng-change="resetPagination()" ng-model="filter.name" placeholder="{{'common.any' | translate}}">
+        <button type="button" class="close clearfilter" ng-show="filter.name" ng-click="filter.name=''; resetPagination()"><span aria-hidden="true">&times;</span><span class="sr-only">{{'common.controls.close' | translate}}</span></button>
+      </th>
+      <th class="col-medium text-search-container">
+        <label>{{'common.version' | translate}}</label>
+        <input type="text" class="form-control" ng-change="resetPagination()" ng-model="filter.version" placeholder="{{'common.any' | translate}}">
+        <button type="button" class="close clearfilter" ng-show="filter.version" ng-click="filter.version=''; resetPagination()"><span aria-hidden="true">&times;</span><span class="sr-only">{{'common.controls.close' | translate}}</span></button>
       </th>
       <th class="col-small">
-        <label>Cluster</label>
+        <label>{{'common.cluster' | translate}}</label>
         <select class="form-control"
                 ng-change="resetPagination()"
                 ng-model="filter.cluster.current"
-                ng-options="item.label for item in filter.cluster.options"
+                ng-options="item.label for item in filter.cluster.options track by item.value"
           ></select>
       </th>
-      <th></th>
+      <th class="col-small"></th>
     </tr>
     </thead>
     <tbody>
     <tr ng-repeat="repo in repos">
+      <td class="col-small">
+        <span>{{repo.stack_name}}-{{repo.stack_version}}</span>
+      </td>
       <td class="col-medium">
         <a href="#/stackVersions/{{repo.stack_name}}/{{repo.repository_version}}/edit">{{repo.display_name}}</a>
       </td>
+      <td class="col-medium">
+        <span>{{repo.repository_version}}</span>
+      </td>
       <td class="col-small">
-        <a href="/#/main/admin/stack/versions" ng-show="repo.cluster">
+        <a href="{{fromSiteRoot('/#/main/admin/stack/versions')}}" ng-show="repo.cluster">
           {{repo.cluster}}
         </a>
         <span ng-show="!repo.cluster">
-          None
+          {{'common.none' | translate}}
         </span>
       </td>
       <td class="verison-label-row">
         <div ng-show="repo.status == 'current'">
-          <span class="label {{'status-' + repo.status}}">Current:&nbsp;{{repo.currentHosts}}/{{repo.totalHosts}}</span>
+          <span class="label {{'status-' + repo.status}}">{{'versions.current' | translate}}:&nbsp;{{repo.currentHosts}}/{{repo.totalHosts}}</span>
         </div>
         <div ng-show="repo.status == 'installed'">
-          <span class="label {{'status-' + repo.status}}">Installed:&nbsp;{{repo.installedHosts}}/{{repo.totalHosts}}</span>
+          <span class="label {{'status-' + repo.status}}">{{'versions.installed' | translate}}:&nbsp;{{repo.installedHosts}}/{{repo.totalHosts}}</span>
         </div>
         <div ng-show="!repo.cluster">
           <div class="btn-group display-inline-block" dropdown is-open="viewsdropdown.isopen" ng-mouseover="viewsdropdown.isopen=true" ng-mouseout="viewsdropdown.isopen=false" ng-init="viewsdropdown.isopen=false">
             <a class="btn dropdown-toggle">
-              <span>Install on...</span>
+              <span>{{'versions.installOn' | translate}}</span>
             </a>
             <ul class="dropdown-menu" ng-show="viewsdropdown.isopen">
               <li ng-repeat="cluster in dropDownClusters">
                 <a href="javascript:void(null)" ng-click="goToCluster()">
-                    <span>{{cluster.Clusters.cluster_name}}</span>
+                  <span>{{cluster.Clusters.cluster_name}}</span>
                 </a>
               </li>
             </ul>
@@ -86,12 +106,12 @@
     </tbody>
   </table>
   <div class="alert alert-info col-sm-12" ng-show="!repos.length">
-    No version to display.
+    {{'common.alerts.nothingToDisplay' | translate: '{term: getConstant("version")}'}}
   </div>
   <div class="col-sm-12 table-bar">
     <div class="pull-left filtered-info">
-      <span>{{tableInfo.showed}} of {{tableInfo.total}} versions showing - </span>
-      <a href ng-click="clearFilters()">clear filters</a>
+      <span>{{'common.filterInfo' | translate: '{showed: tableInfo.showed, total: tableInfo.total, term: getConstant("versions")}'}}</span>
+      <span ng-show="isNotEmptyFilter">- <a href ng-click="clearFilters()">{{'common.controls.clearFilters' | translate}}</a></span>
     </div>
     <div class="pull-right left-margin">
       <pagination class="paginator"

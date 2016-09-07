@@ -22,9 +22,7 @@ App.StackVersion = DS.Model.extend({
   clusterName: DS.attr('string'),
   stack: DS.attr('string'),
   version: DS.attr('string'),
-  name: function() {
-    return this.get('stack') + " " + this.get('version');
-  }.property('stack', 'version'),
+  name: Em.computed.concat(' ', 'stack', 'version'),
   state: DS.attr('string'),
   repositoryVersion: DS.belongsTo('App.RepositoryVersion'),
   notInstalledHosts: DS.attr('array'),
@@ -37,21 +35,13 @@ App.StackVersion = DS.Model.extend({
   upgradeFailedHosts: DS.attr('array'),
   currentHosts: DS.attr('array'),
 
-  noInstalledHosts:  function() {
-    return this.get('installedHosts.length') == 0;
-  }.property('installedHosts.length'),
+  noInstalledHosts:  Em.computed.empty('installedHosts'),
 
-  noCurrentHosts: function() {
-    return this.get('currentHosts.length') == 0;
-  }.property('currentHosts.length'),
+  noCurrentHosts: Em.computed.empty('currentHosts'),
 
-  noInitHosts: function() {
-    return this.get('notInstalledHosts.length') == 0;
-  }.property('notInstalledHosts.length'),
+  noInitHosts: Em.computed.empty('notInstalledHosts'),
 
-  isCurrent: function() {
-    return this.get('state') === 'CURRENT';
-  }.property('state')
+  isCurrent: Em.computed.equal('state', 'CURRENT')
 });
 
 App.StackVersion.FIXTURES = [];

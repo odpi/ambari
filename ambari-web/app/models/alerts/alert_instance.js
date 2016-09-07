@@ -17,7 +17,7 @@
  */
 
 var App = require('app');
-var dateUtils = require('utils/date');
+var dateUtils = require('utils/date/date');
 
 App.AlertInstance = DS.Model.extend({
   id: DS.attr('number'),
@@ -31,25 +31,32 @@ App.AlertInstance = DS.Model.extend({
   hostName: DS.attr('string'),
   scope: DS.attr('string'),
   originalTimestamp: DS.attr('number'),
+  originalRawTimestamp: DS.attr('number'),
   latestTimestamp: DS.attr('number'),
   maintenanceState: DS.attr('string'),
   instance: DS.attr('string'),
   state: DS.attr('string'),
   text: DS.attr('string'),
+  repeatTolerance: DS.attr('number'),
+  repeatToleranceRemaining: DS.attr('number'),
   notification: DS.hasMany('App.AlertNotification'),
 
   /**
-   * Status icon markup
+   * @type {boolean}
+   */
+  isMaintenanceStateOn: Em.computed.equal('maintenanceState', 'ON'),
+
+  /**
    * @type {string}
    */
-  status: function () {
-    var isMaintenanceStateOn = this.get('maintenanceState') === 'ON';
-    var state = this.get('state');
-    var stateClass = isMaintenanceStateOn ? 'PENDING' : state;
-    var shortState = this.get('shortState')[state];
-    var maintenanceIcon = isMaintenanceStateOn ? '<span class="icon-medkit"></span> ' : '';
-    return '<div class="label alert-state-single-host alert-state-' + stateClass + '">' + maintenanceIcon + shortState + '</div>';
-  }.property('state'),
+  shortStateMsg: Em.computed.getByKey('shortState', 'state'),
+
+  /**
+   * @type {string}
+   */
+  stateClass: function () {
+    return 'alert-state-' + (this.get('isMaintenanceStateOn') ? 'PENDING' : this.get('state'));
+  }.property('isMaintenanceStateOn'),
 
   /**
    * For alerts we will have processes which are not typical
@@ -89,7 +96,7 @@ App.AlertInstance = DS.Model.extend({
    * @type {string}
    */
   lastTriggeredAgoFormatted: function () {
-    var lastTriggered = this.get('originalTimestamp');
+    var lastTriggered = this.get('originalRawTimestamp');
     return lastTriggered ? $.timeago(new Date(lastTriggered)) : '';
   }.property('originalTimestamp'),
 
@@ -106,7 +113,7 @@ App.AlertInstance = DS.Model.extend({
    * @type {string}
    */
   lastTriggeredForFormatted: function () {
-    var lastTriggered = this.get('originalTimestamp');
+    var lastTriggered = this.get('originalRawTimestamp');
     var previousSuffixAgo = $.timeago.settings.strings.suffixAgo;
     var previousPrefixAgo = $.timeago.settings.strings.prefixAgo;
     $.timeago.settings.strings.suffixAgo = null;
@@ -123,18 +130,14 @@ App.AlertInstance = DS.Model.extend({
   */  
   escapeSpecialCharactersFromTooltip: function () {
     var displayedText = this.get('text');
-    return  displayedText.replace(/[<>]/g, '');
+    return displayedText.replace(/[<>]/g, '');
   }.property('text'),
 
   /**
    * Formatted lastChecked and lastTriggered timestamp
    * @returns {string}
    */
-  statusChangedAndLastCheckedFormatted: function () {
-    var lastCheckedFormatted = this.get('lastCheckedFormatted');
-    var lastTriggeredFormatted = this.get('lastTriggeredFormatted');
-    return Em.I18n.t('models.alert_definition.triggered.checked').format(lastTriggeredFormatted, lastCheckedFormatted);
-  }.property('lastCheckedFormatted', 'lastTriggeredFormatted'),
+  statusChangedAndLastCheckedFormatted: Em.computed.i18nFormat('models.alert_definition.triggered.checked', 'lastTriggeredFormatted', 'lastCheckedFormatted'),
 
   /**
    * List of css-classes for alert instance status
@@ -144,14 +147,20 @@ App.AlertInstance = DS.Model.extend({
     'DISABLED': 'icon-off'
   },
 
+  repeatToleranceReceived: function () {
+    return this.get('repeatTolerance') - this.get('repeatToleranceRemaining');
+  }.property('repeatToleranceRemaining', 'repeatTolerance'),
+
+  retryText: function () {
+    return this.get('state') === 'OK' ? '' : Em.I18n.t('models.alert_definition.check.retry').format(this.get('repeatToleranceReceived'), this.get('repeatTolerance'));
+  }.property('state','repeatToleranceRemaining', 'repeatTolerance'),
+
   /**
    * Define if definition serviceName is Ambari
    * Used in some logic in templates to distinguish definitions with Ambari serviceName
    * @returns {boolean}
    */
-  isAmbariServiceName: function () {
-    return this.get('serviceName') === 'AMBARI';
-  }.property('serviceName'),
+  isAmbariServiceName: Em.computed.equal('serviceName', 'AMBARI'),
 
   shortState: {
     'CRITICAL': 'CRIT',

@@ -34,8 +34,10 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
     'stopAllServices',
     'restoreHBaseConfigs',
     'restoreAccumuloConfigs',
+    'restoreHawqConfigs',
     'stopFailoverControllers',
     'deleteFailoverControllers',
+    'deletePXF',
     'stopStandbyNameNode',
     'stopNameNode',
     'restoreHDFSConfigs',
@@ -47,29 +49,35 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   ],
 
   loadStep: function () {
-    console.warn('func: loadStep');
-    this.initData();
-    this.clearStep();
-    this.loadTasks();
-    this.addObserver('tasks.@each.status', this, 'onTaskStatusChange');
-    this.onTaskStatusChange();
+    var self = this;
+    this.initData().done(function () {
+      self.clearStep();
+      self.loadTasks();
+      self.addObserver('tasks.@each.status', self, 'onTaskStatusChange');
+      self.onTaskStatusChange();
+    });
   },
 
   initData: function () {
-    console.warn('func: initData');
-    this.loadMasterComponentHosts();
-    this.loadFailedTask();
-    this.loadHdfsClientHosts();
+    var self = this,
+      dfd = $.Deferred();
+    this.loadMasterComponentHosts().done(function () {
+      self.loadFailedTask();
+      self.loadHdfsClientHosts();
+      dfd.resolve();
+    });
+    return dfd.promise();
   },
 
   setCommandsAndTasks: function(tmpTasks) {
-    console.warn('func: setCommandsAndTasks');
     var fTask = this.get('failedTask');
-    var index = [
+    var commandsArray = [
       'deleteSNameNode',
       'startAllServices',
       'reconfigureHBase',
       'reconfigureAccumulo',
+      'reconfigureHawq',
+      'installPXF',
       'startZKFC',
       'installZKFC',
       'startSecondNameNode',
@@ -81,9 +89,10 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
       'installJournalNodes',
       'installNameNode',
       'stopAllServices'
-    ].indexOf(fTask.command);
+    ];
+    var index = commandsArray.indexOf(fTask.command);
 
-    if(index > 6){
+    if(index > commandsArray.indexOf('startSecondNameNode')){
       --index;
     }
     var newCommands = this.get('commands').splice(index);
@@ -93,6 +102,10 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
       newTasks[i].id = i;
     }
     this.set('tasks', newTasks);
+    var pxfTask = this.get('tasks').findProperty('command', 'deletePXF');
+    if (!App.Service.find().someProperty('serviceName', 'PXF') && pxfTask) {
+      this.get('tasks').splice(pxfTask.get('id'), 1);
+    }
     var hbaseTask = this.get('tasks').findProperty('command', 'restoreHBaseConfigs');
     if (!App.Service.find().someProperty('serviceName', 'HBASE') && hbaseTask) {
       this.get('tasks').splice(hbaseTask.get('id'), 1);
@@ -101,10 +114,13 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
     if (!App.Service.find().someProperty('serviceName', 'ACCUMULO') && accumuloTask) {
       this.get('tasks').splice(accumuloTask.get('id'), 1);
     }
+    var hawqTask = this.get('tasks').findProperty('command', 'restoreHawqConfigs');
+    if (!App.Service.find().someProperty('serviceName', 'HAWQ') && hawqTask) {
+      this.get('tasks').splice(hawqTask.get('id'), 1);
+    }
   },
 
   clearStep: function () {
-    console.warn('func: clearStep');
     this.set('isSubmitDisabled', true);
     this.set('tasks', []);
     this.set('logs', []);
@@ -131,22 +147,18 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   onTaskStatusChange: function () {
-    console.warn('func: onTaskStatusChange');
     if (!this.get('tasks').someProperty('status', 'IN_PROGRESS') && !this.get('tasks').someProperty('status', 'QUEUED') && !this.get('tasks').someProperty('status', 'FAILED')) {
       var nextTask = this.get('tasks').findProperty('status', 'PENDING');
       if (nextTask) {
-        console.warn('func: onTaskStatusChange1');
         this.set('status', 'IN_PROGRESS');
         this.setTaskStatus(nextTask.get('id'), 'QUEUED');
         this.set('currentTaskId', nextTask.get('id'));
         this.runTask(nextTask.get('id'));
       } else {
-        console.warn('func: onTaskStatusChange2');
         this.set('status', 'COMPLETED');
         this.set('isSubmitDisabled', false);
       }
     } else if (this.get('tasks').someProperty('status', 'FAILED')) {
-      console.warn('func: onTaskStatusChange3');
       this.set('status', 'FAILED');
       this.get('tasks').findProperty('status', 'FAILED').set('showRetry', true);
       this.get('tasks').findProperty('status', 'FAILED').set('showSkip', true);
@@ -157,7 +169,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
     var statuses = this.get('tasks').mapProperty('status');
     var logs = this.get('tasks').mapProperty('hosts');
     var requestIds = this.get('currentRequestIds');
-    console.warn('func: onTaskStatusChange4',statuses,logs,requestIds);
     this.saveTasksStatuses(statuses);
     this.saveRequestIds(requestIds);
     this.saveLogs(logs);
@@ -170,7 +181,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   skipTask: function () {
-    console.warn('func: skipTask');
     var task = this.get('tasks').findProperty('status', 'FAILED');
     task.set('showRetry', false);
     task.set('showSkip', false);
@@ -178,7 +188,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   retryTask: function () {
-    console.warn('func: retryTask');
     var task = this.get('tasks').findProperty('status', 'FAILED');
     task.set('showRetry', false);
     task.set('showSkip', false);
@@ -186,7 +195,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   onTaskCompleted: function () {
-    console.warn('func: onTaskCompleted');
     var curTaskStatus = this.getTaskStatus(this.get('currentTaskId'));
     if (curTaskStatus != 'FAILED' && curTaskStatus != 'TIMEDOUT' && curTaskStatus != 'ABORTED') {
       this.setTaskStatus(this.get('currentTaskId'), 'COMPLETED');
@@ -194,12 +202,10 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   getTaskStatus: function (taskId) {
-    console.warn('func: getTaskStatus');
     return this.get('tasks').findProperty('id', taskId).get('status');
   },
 
   loadFailedTask: function(){
-    console.warn('func: loadFailedTask');
     var failedTask = App.db.getHighAvailabilityWizardFailedTask();
     this.set('failedTask', failedTask);
   },
@@ -212,7 +218,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   stopAllServices: function(){
-    console.warn('func: stopAllServices');
     App.ajax.send({
       name: 'common.services.update',
       data: {
@@ -227,7 +232,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
     });
   },
   restoreHBaseConfigs: function(){
-    console.warn('func: restoreHBaseConfigs');
     this.loadConfigTag("hbaseSiteTag");
     var hbaseSiteTag = this.get("content.hbaseSiteTag");
     App.ajax.send({
@@ -241,7 +245,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
     });
   },
   restoreAccumuloConfigs: function(){
-    console.warn('func: restoreAccumuloConfigs');
     this.loadConfigTag("accumuloSiteTag");
     var accumuloSiteTag = this.get("content.accumuloSiteTag");
     App.ajax.send({
@@ -254,53 +257,92 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
       error: 'onTaskError'
     });
   },
+  restoreHawqConfigs: function(){
+    var tags = ['hawqSiteTag', 'hdfsClientTag'];
+    tags.forEach(function (tagName) {
+      var tag = this.get("content." + tagName);
+      App.ajax.send({
+        name: 'admin.high_availability.load_hawq_configs',
+        sender: this,
+        data: {
+          tagName: tag
+        },
+        success: 'onLoadHawqConfigs',
+        error: 'onTaskError'
+      });
+    }, this);
+  },
+
+  deletePXF: function(){
+    var secondNameNodeHost = this.get('content.masterComponentHosts').filterProperty('component', 'NAMENODE').findProperty('isInstalled', false).mapProperty('hostName');
+    var pxfComponent = this.getSlaveComponentHosts().findProperty('componentName', 'PXF');
+    var dataNodeComponent = this.getSlaveComponentHosts().findProperty('componentName', 'DATANODE');
+
+    var host, i;
+
+    // check if PXF is already installed on the host assigned for additional NameNode
+    var pxfComponentInstalled = false;
+    for(i = 0; i < pxfComponent.hosts.length; i++) {
+      host = pxfComponent.hosts[i];
+      if (host.hostName === secondNameNodeHost) {
+        pxfComponentInstalled = true;
+        break;
+      }
+    }
+
+    // check if DATANODE is already installed on the host assigned for additional NameNode
+    var dataNodeComponentInstalled = false;
+    for(i = 0; i < dataNodeComponent.hosts.length; i++) {
+      host = dataNodeComponent.hosts[i];
+      if (host.hostName === secondNameNodeHost) {
+        dataNodeComponentInstalled = true;
+        break;
+      }
+    }
+
+    // if no DATANODE exists on that host, remove PXF
+    if (!dataNodeComponentInstalled && pxfComponentInstalled) {
+      this.updateComponent('PXF', secondNameNodeHost, "PXF", "Stop");
+      this.checkBeforeDelete('PXF', secondNameNodeHost);
+    }
+  },
 
   stopFailoverControllers: function(){
-    console.warn('func: stopFailoverControllers');
     var hostNames = this.get('content.masterComponentHosts').filterProperty('component', 'NAMENODE').mapProperty('hostName');
     this.updateComponent('ZKFC', hostNames, "HDFS", "Stop");
   },
   deleteFailoverControllers: function(){
-    console.warn('func: deleteFailoverControllers');
     var hostNames = this.get('content.masterComponentHosts').filterProperty('component', 'NAMENODE').mapProperty('hostName');
     this.checkBeforeDelete('ZKFC', hostNames);
   },
   stopStandbyNameNode: function(){
-    console.warn('func: stopStandbyNameNode');
     var hostName = this.get('content.masterComponentHosts').filterProperty('component', 'NAMENODE').findProperty('isInstalled', false).hostName;
     this.updateComponent('NAMENODE', hostName, "HDFS", "Stop");
   },
   stopNameNode: function(){
-    console.warn('func: stopNameNode');
     var hostName = this.get('content.masterComponentHosts').filterProperty('component', 'NAMENODE').findProperty('isInstalled', true).hostName;
     this.updateComponent('NAMENODE', hostName, "HDFS", "Stop");
   },
   restoreHDFSConfigs: function(){
-    console.warn('func: restoreHDFSConfigs');
     this.unInstallHDFSClients();
   },
   enableSecondaryNameNode: function(){
-    console.warn('func: enableSecondaryNameNode');
     var hostName = this.get('content.masterComponentHosts').findProperty('component', 'SECONDARY_NAMENODE').hostName;
     this.updateComponent('SECONDARY_NAMENODE', hostName, "HDFS", "Install", hostName.length);
   },
   stopJournalNodes: function(){
-    console.warn('func: stopJournalNodes');
     var hostNames = this.get('content.masterComponentHosts').filterProperty('component', 'JOURNALNODE').mapProperty('hostName');
     this.updateComponent('JOURNALNODE', hostNames, "HDFS", "Stop");
   },
   deleteJournalNodes: function(){
-    console.warn('func: deleteJournalNodes');
     var hostNames = this.get('content.masterComponentHosts').filterProperty('component', 'JOURNALNODE').mapProperty('hostName');
     this.unInstallComponent('JOURNALNODE', hostNames);
   },
   deleteAdditionalNameNode: function(){
-    console.warn('func: deleteAdditionalNameNode');
     var hostNames = this.get('content.masterComponentHosts').filterProperty('component', 'NAMENODE').findProperty('isInstalled', false).mapProperty('hostName');
     this.unInstallComponent('NAMENODE', hostNames);
   },
   startAllServices: function(){
-    console.warn('func: startAllServices');
     App.ajax.send({
       name: 'common.services.update',
       data: {
@@ -316,10 +358,9 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   onLoadHbaseConfigs: function (data) {
-    console.warn('func: onLoadHbaseConfigs');
     var hbaseSiteProperties = data.items.findProperty('type', 'hbase-site').properties;
     App.ajax.send({
-      name: 'admin.high_availability.save_configs',
+      name: 'admin.save_configs',
       sender: this,
       data: {
         siteName: 'hbase-site',
@@ -330,10 +371,9 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
     });
   },
   onLoadAccumuloConfigs: function (data) {
-    console.warn('func: onLoadAccumuloConfigs');
     var accumuloSiteProperties = data.items.findProperty('type', 'accumulo-site').properties;
     App.ajax.send({
-      name: 'admin.high_availability.save_configs',
+      name: 'admin.save_configs',
       sender: this,
       data: {
         siteName: 'accumulo-site',
@@ -344,8 +384,20 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
     });
   },
 
+  onLoadHawqConfigs: function (data) {
+    var hawqSiteProperties = data.items.findProperty('type', 'hawq-site').properties;
+    App.ajax.send({
+      name: 'admin.save_configs',
+      sender: this,
+      data: {
+        siteName: 'hawq-site',
+        properties: hawqSiteProperties
+      },
+      success: 'onTaskCompleted',
+      error: 'onTaskError'
+    });
+  },
   onDeletedHDFSClient: function () {
-    console.warn('func: onDeletedHDFSClient');
     var deletedHdfsClients = this.get('deletedHdfsClients');
     var hostName = this.get("content.hdfsClientHostNames");
     var notDeletedHdfsClients = hostName.length - deletedHdfsClients;
@@ -370,10 +422,9 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   onLoadConfigs: function (data) {
-    console.warn('func: onLoadConfigs');
     this.set('configsSaved', false);
     App.ajax.send({
-      name: 'admin.high_availability.save_configs',
+      name: 'admin.save_configs',
       sender: this,
       data: {
         siteName: 'hdfs-site',
@@ -383,7 +434,7 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
       error: 'onTaskError'
     });
     App.ajax.send({
-      name: 'admin.high_availability.save_configs',
+      name: 'admin.save_configs',
       sender: this,
       data: {
         siteName: 'core-site',
@@ -395,7 +446,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   onHdfsConfigsSaved: function () {
-    console.warn('func: onHdfsConfigsSaved');
     if (!this.get('configsSaved')) {
       this.set('configsSaved', true);
       return;
@@ -404,7 +454,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   unInstallHDFSClients: function () {
-    console.warn('func: unInstallHDFSClients');
     var hostName = this.get("content.hdfsClientHostNames");
     for (var i = 0; i < hostName.length; i++) {
       App.ajax.send({
@@ -421,7 +470,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   unInstallComponent: function (componentName, hostName) {
-    console.warn('func: unInstallComponent');
     if (!(hostName instanceof Array)) {
       hostName = [hostName];
     }
@@ -443,7 +491,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   checkBeforeDelete: function (componentName, hostName){
-    console.warn('func: checkBeforeDelete');
     this.set('hostsToPerformDel', []);
     if (!(hostName instanceof Array)) {
       hostName = [hostName];
@@ -465,7 +512,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   checkResult: function () {
-    console.warn('func: checkResult');
     var callback = arguments[2].callback;
     var hostName = arguments[2].hostName;
     var componentName = arguments[2].componentName;
@@ -494,7 +540,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   deleteComponent: function (componentName, hostName) {
-    console.warn('func: deleteComponent');
     if (!(hostName instanceof Array)) {
       hostName = [hostName];
     }
@@ -514,7 +559,6 @@ App.HighAvailabilityRollbackController = App.HighAvailabilityProgressPageControl
   },
 
   onDeleteComplete: function () {
-    console.warn('func: onDeleteComplete');
     var leftOp = this.get('numOfDelOperations');
     if(leftOp > 1){
       this.set('numOfDelOperations', leftOp-1);

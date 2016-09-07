@@ -26,76 +26,7 @@ require('utils/host_progress_popup');
 
 describe('App.HostPopup', function () {
 
-  var services = [
-    {
-      displayName: "Start service WebHCat",
-      hosts: [
-        {
-          logTasks: [
-            {
-              Tasks: {
-                command: "START",
-                host_name: "ip-10-12-123-90.ec2.internal",
-                role: "WEBHCAT_SERVER",
-                status: "QUEUED"
-              },
-              href: "http://ec2-54-224-233-43.compute-1.amazonaws.com:8080/api/v1/clusters/mycluster/requests/23/tasks/94"
-            }
-          ],
-          name: "ip-10-12-123-90.ec2.internal",
-          publicName: "ip-10-12-123-90.ec2.internal",
-          serviceName: "Start service WebHCat"
-        }
-      ],
-      isRunning: false
-    },
-    {
-      displayName: "Start service Hive/HCat",
-      hosts: [
-        {
-          logTasks: [
-            {
-              Tasks: {
-                command: "INSTALL",
-                host_name: "ip-10-12-123-90.ec2.internal",
-                status: "COMPLETED"
-              },
-              href: "http://ec2-54-224-233-43.compute-1.amazonaws.com:8080/api/v1/clusters/mycluster/requests/15/tasks/76"
-            }
-          ],
-          name: "ip-10-12-123-90.ec2.internal",
-          publicName: "ip-10-12-123-90.ec2.internal",
-          serviceName: "Start service Hive/HCat"
-        },
-        {
-          logTasks: [
-            {
-              Tasks: {
-                command: "START",
-                host_name: "ip-10-33-7-23.ec2.internal",
-                status: "COMPLETED"
-              },
-              href: "http://ec2-54-224-233-43.compute-1.amazonaws.com:8080/api/v1/clusters/mycluster/requests/15/tasks/78"
-            },
-            {
-              Tasks: {
-                command: "START",
-                host_name: "ip-10-33-7-23.ec2.internal",
-                status: "COMPLETED"
-              },
-              href: "http://ec2-54-224-233-43.compute-1.amazonaws.com:8080/api/v1/clusters/mycluster/requests/15/tasks/79"
-            }
-          ],
-          name: "ip-10-33-7-23.ec2.internal",
-          publicName: "ip-10-33-7-23.ec2.internal",
-          serviceName: "Start service Hive/HCat"
-        }
-      ],
-      isRunning: false
-    }
-  ];
-
-  var test_tasks = [
+  var testTasks = [
     {
       t: [
         {
@@ -346,17 +277,17 @@ describe('App.HostPopup', function () {
   });
 
   describe('#getStatus', function() {
-    test_tasks.forEach(function(test_task) {
-      it(test_task.m, function() {
-        expect(App.HostPopup.getStatus(test_task.t)[0]).to.equal(test_task.r);
+    testTasks.forEach(function(testTask) {
+      it(testTask.m, function() {
+        expect(App.HostPopup.getStatus(testTask.t)[0]).to.equal(testTask.r);
       });
     });
   });
 
   describe('#getProgress', function() {
-    test_tasks.forEach(function(test_task) {
-      it(test_task.m, function() {
-        expect(App.HostPopup.getProgress(test_task.t)).to.equal(test_task.p);
+    testTasks.forEach(function(testTask) {
+      it(testTask.m, function() {
+        expect(App.HostPopup.getProgress(testTask.t)).to.equal(testTask.p);
       });
     });
   });
@@ -371,11 +302,9 @@ describe('App.HostPopup', function () {
 
   describe('#abortRequest', function () {
     beforeEach(function () {
-      sinon.stub(App.ajax, 'send', Em.K);
       sinon.spy(App, 'showConfirmationPopup');
     });
     afterEach(function () {
-      App.ajax.send.restore();
       App.showConfirmationPopup.restore();
     });
     it('should show confirmation popup', function () {
@@ -453,6 +382,7 @@ describe('App.HostPopup', function () {
     beforeEach(function (){
       sinon.stub(App.HostPopup, "get").returns(true);
       sinon.spy(App.HostPopup, "set");
+      this.stub = sinon.stub(App.router, "get");
     });
 
     afterEach(function (){
@@ -462,18 +392,130 @@ describe('App.HostPopup', function () {
     });
 
     it("should display '2 Background Operations Running' when there are 2 background operations running", function(){
-      sinon.stub(App.router, "get").returns(2);
+      this.stub.returns(2);
       App.HostPopup.setBackgroundOperationHeader(false);
 
       expect(App.HostPopup.set.calledWith("popupHeaderName", "2 Background Operations Running")).to.be.true;
     });
 
     it("should display '1 Background Operation Running' when there is 1 background operation running", function(){
-      sinon.stub(App.router, "get").returns(1);
+      this.stub.returns(1);
       App.HostPopup.setBackgroundOperationHeader(false);
 
       expect(App.HostPopup.set.calledWith("popupHeaderName", "1 Background Operation Running")).to.be.true;
     });
   });
+
+  describe('#_getHostsMap', function () {
+
+    Em.A([
+      {
+        inputData: [
+          {name: 's1', hostsMap: {h1: {}, h2: {}}},
+          {name: 's2'}
+        ],
+        isBackgroundOperations: true,
+        currentServiceId: null,
+        serviceName: 's1',
+        m: '`currentServiceId` is null, `serviceName` exists, `isBackgroundOperations` true, `hostsMap` exists',
+        e: {h1: {}, h2: {}}
+      },
+      {
+        inputData: [
+          {name: 's1', hosts: [
+            {name: 'h1'},
+            {name: 'h2'}
+          ]},
+          {name: 's2'}
+        ],
+        isBackgroundOperations: true,
+        currentServiceId: null,
+        serviceName: 's1',
+        m: '`currentServiceId` is null, `serviceName` exists, `isBackgroundOperations` true, `hosts` exists',
+        e: {h1: {name: 'h1'}, h2: {name: 'h2'}}
+      },
+      {
+        inputData: [
+          {id: 1, hostsMap: {h1: {}, h2: {}}},
+          {id: 2}
+        ],
+        isBackgroundOperations: true,
+        currentServiceId: 1,
+        serviceName: 's1',
+        m: '`currentServiceId` is 1, `serviceName` exists, `isBackgroundOperations` true, `hostsMap` exists',
+        e: {h1: {}, h2: {}}
+      },
+      {
+        inputData: [
+          {id: 1, hosts: [
+            {name: 'h1'},
+            {name: 'h2'}
+          ]},
+          {id: 2}
+        ],
+        isBackgroundOperations: true,
+        currentServiceId: 1,
+        serviceName: 's1',
+        m: '`currentServiceId` is 1, `serviceName` exists, `isBackgroundOperations` true, `hosts` exists',
+        e: {h1: {name: 'h1'}, h2: {name: 'h2'}}
+      },
+
+      {
+        inputData: [
+          {name: 's1', hostsMap: {h1: {}, h2: {}}},
+          {name: 's2'}
+        ],
+        isBackgroundOperations: false,
+        currentServiceId: null,
+        serviceName: 's1',
+        m: '`currentServiceId` is null, `serviceName` exists, `isBackgroundOperations` false, `hostsMap` exists',
+        e: {h1: {}, h2: {}}
+      },
+      {
+        inputData: [
+          {name: 's1', hosts: [
+            {name: 'h1'},
+            {name: 'h2'}
+          ]},
+          {name: 's2'}
+        ],
+        isBackgroundOperations: false,
+        currentServiceId: null,
+        serviceName: 's1',
+        m: '`currentServiceId` is null, `serviceName` exists, `isBackgroundOperations` false, `hosts` exists',
+        e: {h1: {name: 'h1'}, h2: {name: 'h2'}}
+      },
+      {
+        inputData: [
+          {name: 's1', hostsMap: {h1: {}, h2: {}}}
+        ],
+        isBackgroundOperations: false,
+        currentServiceId: 1,
+        serviceName: 's1',
+        m: '`currentServiceId` is 1, `serviceName` exists, `isBackgroundOperations` false, `hostsMap` exists',
+        e: {h1: {}, h2: {}}
+      },
+      {
+        inputData: [
+          {name: 's1', hostsMap: {h1: {}, h2: {}}}
+        ],
+        isBackgroundOperations: false,
+        currentServiceId: 1,
+        serviceName: 's1',
+        m: '`currentServiceId` is 1, `serviceName` exists, `isBackgroundOperations` false, `hosts` exists',
+        e: {h1: {}, h2: {}}
+      }
+    ]).forEach(function (test) {
+
+      it(test.m, function () {
+        App.HostPopup.setProperties(test);
+        expect(App.HostPopup._getHostsMap()).to.eql(test.e);
+      });
+
+    });
+
+  });
+
+
 
 });

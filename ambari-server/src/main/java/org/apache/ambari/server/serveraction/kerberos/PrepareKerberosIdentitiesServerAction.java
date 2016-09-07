@@ -33,8 +33,10 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 
 /**
@@ -93,11 +95,14 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
       actionLog.writeStdOut(String.format("Processing %d components", schCount));
     }
 
-    processServiceComponentHosts(cluster, kerberosDescriptor, schToProcess, identityFilter, dataDirectory, kerberosConfigurations);
+    Map<String, Set<String>> propertiesToBeRemoved = new HashMap<>();
+    processServiceComponentHosts(cluster, kerberosDescriptor, schToProcess, identityFilter, dataDirectory,
+      kerberosConfigurations, null, propertiesToBeRemoved, true, "true".equalsIgnoreCase(getCommandParameterValue(commandParameters,
+        KerberosServerAction.INCLUDE_AMBARI_IDENTITY)));
 
-    if("true".equalsIgnoreCase(getCommandParameterValue(commandParameters, UPDATE_CONFIGURATIONS))) {
+    if ("true".equalsIgnoreCase(getCommandParameterValue(commandParameters, UPDATE_CONFIGURATIONS))) {
       processAuthToLocalRules(cluster, kerberosDescriptor, schToProcess, kerberosConfigurations, getDefaultRealm(commandParameters));
-      processConfigurationChanges(dataDirectory, kerberosConfigurations);
+      processConfigurationChanges(dataDirectory, kerberosConfigurations, propertiesToBeRemoved);
     }
 
     return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", actionLog.getStdOut(), actionLog.getStdErr());
@@ -113,7 +118,7 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
   }
 
   /**
-   * Calls {@link KerberosHelper#getServiceComponentHostsToProcess(Cluster, KerberosDescriptor, Map, Collection, KerberosHelper.Command)}
+   * Calls {@link KerberosHelper#getServiceComponentHostsToProcess(Cluster, KerberosDescriptor, Map, Collection, Collection, KerberosHelper.Command)}
    * with no filter on ServiceComponentHosts
    * <p/>
    * The <code>shouldProcessCommand</code> implementation passed to KerberosHelper#getServiceComponentHostsToProcess
@@ -121,10 +126,9 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
    *
    * @param cluster            the cluster
    * @param kerberosDescriptor the current Kerberos descriptor
-   * @param identityFilter     a list of identities to include, or all if null
-   * @return the list of ServiceComponentHosts to process
+   * @param identityFilter     a list of identities to include, or all if null  @return the list of ServiceComponentHosts to process
    * @throws AmbariException
-   * @see KerberosHelper#getServiceComponentHostsToProcess(Cluster, KerberosDescriptor, Map, Collection, KerberosHelper.Command)
+   * @see KerberosHelper#getServiceComponentHostsToProcess(Cluster, KerberosDescriptor, Map, Collection, Collection, KerberosHelper.Command)
    */
   protected List<ServiceComponentHost> getServiceComponentHostsToProcess(Cluster cluster,
                                                                          KerberosDescriptor kerberosDescriptor,
@@ -133,7 +137,7 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
     return kerberosHelper.getServiceComponentHostsToProcess(cluster,
         kerberosDescriptor,
         getServiceComponentFilter(),
-        identityFilter,
+        getHostFilter(), identityFilter,
         new KerberosHelper.Command<Boolean, ServiceComponentHost>() {
           @Override
           public Boolean invoke(ServiceComponentHost sch) throws AmbariException {
@@ -156,7 +160,7 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
   }
 
   /**
-   * Conditionally calls {@link KerberosHelper#setAuthToLocalRules(KerberosDescriptor, Cluster, String, Map, Map)}
+   * Conditionally calls {@link KerberosHelper#setAuthToLocalRules(KerberosDescriptor, String, Map, Map, Map)}
    * if there are ServiceComponentHosts to process
    *
    * @param cluster                cluster instance
@@ -165,7 +169,7 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
    * @param kerberosConfigurations the Kerberos-specific configuration map
    * @param defaultRealm           the default realm
    * @throws AmbariException
-   * @see KerberosHelper#setAuthToLocalRules(KerberosDescriptor, Cluster, String, Map, Map)
+   * @see KerberosHelper#setAuthToLocalRules(KerberosDescriptor, String, Map, Map, Map)
    */
   protected void processAuthToLocalRules(Cluster cluster, KerberosDescriptor kerberosDescriptor,
                                          List<ServiceComponentHost> schToProcess,
@@ -174,7 +178,19 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
       throws AmbariException {
     if (!schToProcess.isEmpty()) {
       actionLog.writeStdOut("Creating auth-to-local rules");
-      kerberosHelper.setAuthToLocalRules(kerberosDescriptor, cluster, defaultRealm,
+
+      Map<String,Set<String>> services = new HashMap<String, Set<String>>();
+      for(ServiceComponentHost sch: schToProcess) {
+        Set<String> components = services.get(sch.getServiceName());
+        if(components == null) {
+          components = new HashSet<String>();
+          services.put(sch.getServiceName(), components);
+        }
+
+        components.add(sch.getServiceComponentName());
+      }
+
+      kerberosHelper.setAuthToLocalRules(kerberosDescriptor, defaultRealm, services,
           kerberosHelper.calculateConfigurations(cluster, null, kerberosDescriptor.getProperties()),
           kerberosConfigurations);
     }
@@ -188,10 +204,12 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
    *
    * @param dataDirectory          the directory in which to write the configuration changes data file
    * @param kerberosConfigurations the Kerberos-specific configuration map
+   * @param propertiesToBeRemoved
    * @throws AmbariException
    */
   protected void processConfigurationChanges(String dataDirectory,
-                                             Map<String, Map<String, String>> kerberosConfigurations)
+                                             Map<String, Map<String, String>> kerberosConfigurations,
+                                             Map<String, Set<String>> propertiesToBeRemoved)
       throws AmbariException {
     actionLog.writeStdOut("Determining configuration changes");
 
@@ -210,7 +228,7 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
       actionLog.writeStdOut(String.format("Writing configuration changes metadata file to %s", configFile.getAbsolutePath()));
       try {
         kerberosConfDataFileWriter = kerberosConfigDataFileWriterFactory.createKerberosConfigDataFileWriter(configFile);
-
+        // add properties to be set
         for (Map.Entry<String, Map<String, String>> entry : kerberosConfigurations.entrySet()) {
           String type = entry.getKey();
           Map<String, String> properties = entry.getValue();
@@ -221,6 +239,22 @@ public class PrepareKerberosIdentitiesServerAction extends AbstractPrepareKerber
                   configTypeEntry.getKey(),
                   configTypeEntry.getValue(),
                   KerberosConfigDataFileWriter.OPERATION_TYPE_SET);
+            }
+          }
+        }
+        // add properties to be removed
+        if (propertiesToBeRemoved != null) {
+          for (Map.Entry<String, Set<String>> entry : propertiesToBeRemoved.entrySet()) {
+            String type = entry.getKey();
+            Set<String> properties = entry.getValue();
+
+            if (properties != null) {
+              for (String property : properties) {
+                kerberosConfDataFileWriter.addRecord(type,
+                  property,
+                  "",
+                  KerberosConfigDataFileWriter.OPERATION_TYPE_REMOVE);
+              }
             }
           }
         }

@@ -36,10 +36,25 @@ App.MainConfigHistoryView = App.TableView.extend(App.TableServerViewMixin, {
    * return filtered number of all content number information displayed on the page footer bar
    * @returns {String}
    */
-  filteredContentInfo: function () {
-    return this.t('tableView.filters.filteredConfigVersionInfo').format(this.get('filteredCount'), this.get('totalCount'));
-  }.property('filteredCount', 'totalCount'),
+  filteredContentInfo: Em.computed.i18nFormat('tableView.filters.filteredConfigVersionInfo', 'filteredCount', 'totalCount'),
 
+  willInsertElement: function () {
+    var
+      controllerName = this.get('controller.name'),
+      savedSortConditions = App.db.getSortingStatuses(controllerName) || [];
+
+    if (savedSortConditions.everyProperty('status', 'sorting')) {
+      savedSortConditions.push({
+        name: "createTime",
+        status: "sorting_desc"
+      });
+      App.db.setSortingStatuses(controllerName, savedSortConditions);
+    }
+    if (!this.get('controller.showFilterConditionsFirstLoad')) {
+      this.clearFilterConditionsFromLocalStorage();
+    }
+    this._super();
+  },
   didInsertElement: function () {
     this.addObserver('startIndex', this, 'updatePagination');
     this.addObserver('displayLength', this, 'updatePagination');
@@ -78,7 +93,6 @@ App.MainConfigHistoryView = App.TableView.extend(App.TableServerViewMixin, {
   modifiedSort: sort.fieldView.extend({
     column: 3,
     name: 'createTime',
-    status: 'sorting_desc',
     displayName: Em.I18n.t('dashboard.configHistory.table.created.title')
   }),
   authorSort: sort.fieldView.extend({
@@ -101,7 +115,7 @@ App.MainConfigHistoryView = App.TableView.extend(App.TableServerViewMixin, {
           value: '',
           label: Em.I18n.t('common.all')
         }
-      ].concat(App.Service.find().map(function (service) {
+      ].concat(App.StackService.find().map(function (service) {
         return {
           value: service.get('serviceName'),
           label: service.get('displayName')
@@ -174,7 +188,12 @@ App.MainConfigHistoryView = App.TableView.extend(App.TableServerViewMixin, {
     },
     didInsertElement: function () {
       App.tooltip(this.$("[rel='Tooltip']"), {html: false});
-    }
+    },
+
+    // Define if show plain text label or link
+    isServiceLinkDisabled: function () {
+      return this.get('content.serviceName') === 'KERBEROS' && !App.Service.find().someProperty('serviceName', 'KERBEROS') || this.get('content.isConfigGroupDeleted');
+    }.property('content.serviceName', 'content.isConfigGroupDeleted')
   }),
 
   /**
@@ -186,6 +205,18 @@ App.MainConfigHistoryView = App.TableView.extend(App.TableServerViewMixin, {
     this.get('controller').load().done(function () {
       self.refreshDone.apply(self);
     });
+  },
+
+  /**
+   * Clear all filter values, update filter conditions in the localStorage and update table data with API-request
+   *
+   * @method clearFilters
+   * @override
+   */
+  clearFilters: function () {
+    this._super();
+    this.saveAllFilterConditions();
+    this.refresh();
   },
 
   /**

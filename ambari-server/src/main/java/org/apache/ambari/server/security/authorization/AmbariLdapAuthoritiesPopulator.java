@@ -32,7 +32,6 @@ import org.apache.ambari.server.orm.entities.UserEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ldap.core.DirContextOperations;
-import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.ldap.userdetails.LdapAuthoritiesPopulator;
 
@@ -60,6 +59,8 @@ public class AmbariLdapAuthoritiesPopulator implements LdapAuthoritiesPopulator 
 
   @Override
   public Collection<? extends GrantedAuthority> getGrantedAuthorities(DirContextOperations userData, String username) {
+    username = AuthorizationHelper.resolveLoginAliasToUserName(username);
+
     log.info("Get authorities for user " + username + " from local DB");
 
     UserEntity user;
@@ -71,7 +72,7 @@ public class AmbariLdapAuthoritiesPopulator implements LdapAuthoritiesPopulator 
       return Collections.emptyList();
     }
     if(!user.getActive()){
-      throw new DisabledException("User is disabled");
+      throw new InvalidUsernamePasswordCombinationException();
     }
     // get all of the privileges for the user
     List<PrincipalEntity> principalEntities = new LinkedList<PrincipalEntity>();

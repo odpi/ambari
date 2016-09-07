@@ -17,6 +17,8 @@
  */
 package org.apache.ambari.server.orm.entities;
 
+import java.util.Objects;
+
 import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.EnumType;
@@ -45,13 +47,17 @@ import org.apache.ambari.server.state.AlertState;
 @Table(name = "alert_history")
 @TableGenerator(name = "alert_history_id_generator", table = "ambari_sequences", pkColumnName = "sequence_name", valueColumnName = "sequence_value", pkColumnValue = "alert_history_id_seq", initialValue = 0)
 @NamedQueries({
-    @NamedQuery(name = "AlertHistoryEntity.findAll", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory"),
-    @NamedQuery(name = "AlertHistoryEntity.findAllInCluster", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId"),
-    @NamedQuery(name = "AlertHistoryEntity.findAllInClusterWithState", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertState IN :alertStates"),
-    @NamedQuery(name = "AlertHistoryEntity.findAllInClusterBetweenDates", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertTimestamp BETWEEN :startDate AND :endDate"),
-    @NamedQuery(name = "AlertHistoryEntity.findAllInClusterBeforeDate", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertTimestamp <= :beforeDate"),
-    @NamedQuery(name = "AlertHistoryEntity.findAllInClusterAfterDate", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertTimestamp >= :afterDate"),
-    @NamedQuery(name = "AlertHistoryEntity.removeByDefinitionId", query = "DELETE FROM AlertHistoryEntity alertHistory WHERE alertHistory.alertDefinition.definitionId = :definitionId") })
+  @NamedQuery(name = "AlertHistoryEntity.findAll", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory"),
+  @NamedQuery(name = "AlertHistoryEntity.findAllInCluster", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId"),
+  @NamedQuery(name = "AlertHistoryEntity.findAllInClusterWithState", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertState IN :alertStates"),
+  @NamedQuery(name = "AlertHistoryEntity.findAllInClusterBetweenDates", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertTimestamp BETWEEN :startDate AND :endDate"),
+  @NamedQuery(name = "AlertHistoryEntity.findAllInClusterBeforeDate", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertTimestamp <= :beforeDate"),
+  @NamedQuery(name = "AlertHistoryEntity.findAllIdsInClusterBeforeDate", query = "SELECT alertHistory.alertId FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertTimestamp <= :beforeDate"),
+  @NamedQuery(name = "AlertHistoryEntity.findAllInClusterAfterDate", query = "SELECT alertHistory FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertTimestamp >= :afterDate"),
+  @NamedQuery(name = "AlertHistoryEntity.removeByDefinitionId", query = "DELETE FROM AlertHistoryEntity alertHistory WHERE alertHistory.alertDefinitionId = :definitionId"),
+  @NamedQuery(name = "AlertHistoryEntity.removeInClusterBeforeDate", query = "DELETE FROM AlertHistoryEntity alertHistory WHERE alertHistory.clusterId = :clusterId AND alertHistory.alertTimestamp <= :beforeDate"),
+  @NamedQuery(name = "AlertHistoryEntity.findHistoryIdsByDefinitionId", query = "SELECT alertHistory.alertId FROM AlertHistoryEntity alertHistory WHERE alertHistory.alertDefinitionId = :definitionId ORDER BY alertHistory.alertId")
+})
 public class AlertHistoryEntity {
 
   @Id
@@ -94,6 +100,9 @@ public class AlertHistoryEntity {
   @ManyToOne
   @JoinColumn(name = "alert_definition_id", nullable = false)
   private AlertDefinitionEntity alertDefinition;
+
+  @Column(name = "alert_definition_id", nullable = false, insertable = false, updatable = false, length = 10)
+  private Long alertDefinitionId;
 
   /**
    * Constructor.
@@ -324,10 +333,45 @@ public class AlertHistoryEntity {
    */
   public void setAlertDefinition(AlertDefinitionEntity alertDefinition) {
     this.alertDefinition = alertDefinition;
+    alertDefinitionId = alertDefinition.getDefinitionId();
   }
 
   /**
-   *
+   * Get parent alert definition id
+   * @return definition id
+   */
+  public Long getAlertDefinitionId() {
+    return alertDefinitionId;
+  }
+
+  /**
+   * Set parent alert definition id
+   * @param alertDefinitionId definition id
+   */
+  public void setAlertDefinitionId(Long alertDefinitionId) {
+    this.alertDefinitionId = alertDefinitionId;
+  }
+
+  /**
+   * Gets the equality to another historical alert entry based on the following criteria:
+   * <ul>
+   * <li>{@link #alertId}
+   * <li>{@link #clusterId}
+   * <li>{@link #alertInstance}
+   * <li>{@link #alertLabel}
+   * <li>{@link #alertState}
+   * <li>{@link #alertText}
+   * <li>{@link #alertTimestamp}
+   * <li>{@link #serviceName}
+   * <li>{@link #componentName}
+   * <li>{@link #hostName}
+   * <li>{@link #alertDefinition}
+   * </ul>
+   * <p/>
+   * However, since we're guaranteed that {@link #alertId} is unique among persisted entities, we
+   * can return the hashCode based on this value if it is set.
+   * <p/>
+   * {@inheritDoc}
    */
   @Override
   public boolean equals(Object object) {
@@ -341,20 +385,43 @@ public class AlertHistoryEntity {
 
     AlertHistoryEntity that = (AlertHistoryEntity) object;
 
-    if (alertId != null ? !alertId.equals(that.alertId) : that.alertId != null) {
-      return false;
+    // use the unique ID if it exists
+    if( null != alertId ){
+      return Objects.equals(alertId, that.alertId);
     }
 
-    return true;
+    return Objects.equals(alertId, that.alertId) &&
+        Objects.equals(clusterId, that.clusterId) &&
+        Objects.equals(alertInstance, that.alertInstance) &&
+        Objects.equals(alertLabel, that.alertLabel) &&
+        Objects.equals(alertState, that.alertState) &&
+        Objects.equals(alertText, that.alertText) &&
+        Objects.equals(alertTimestamp, that.alertTimestamp) &&
+        Objects.equals(serviceName, that.serviceName) &&
+        Objects.equals(componentName, that.componentName) &&
+        Objects.equals(hostName, that.hostName) &&
+        Objects.equals(alertDefinition, that.alertDefinition);
   }
 
   /**
-   *
+   * Gets a hash to uniquely identify this historical alert instance. Since historical entries
+   * have no real uniqueness properties, we need to rely on a combination of the fields of this
+   * entity.
+   * <p/>
+   * However, since we're guaranteed that {@link #alertId} is unique among persisted entities, we
+   * can return the hashCode based on this value if it is set.
+   * <p/>
+   * {@inheritDoc}
    */
   @Override
   public int hashCode() {
-    int result = null != alertId ? alertId.hashCode() : 0;
-    return result;
+    // use the unique ID if it exists
+    if( null != alertId ){
+      return alertId.hashCode();
+    }
+
+    return Objects.hash(alertId, clusterId, alertInstance, alertLabel, alertState, alertText,
+        alertTimestamp, serviceName, componentName, hostName, alertDefinition);
   }
 
   /**

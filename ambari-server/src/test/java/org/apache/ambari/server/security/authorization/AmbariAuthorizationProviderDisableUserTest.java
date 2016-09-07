@@ -21,76 +21,78 @@ package org.apache.ambari.server.security.authorization;
 import org.apache.ambari.server.orm.dao.MemberDAO;
 import org.apache.ambari.server.orm.dao.PrivilegeDAO;
 import org.apache.ambari.server.orm.dao.UserDAO;
+import org.apache.ambari.server.orm.entities.PrincipalEntity;
 import org.apache.ambari.server.orm.entities.UserEntity;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
-import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.crypto.password.StandardPasswordEncoder;
 
 public class AmbariAuthorizationProviderDisableUserTest {
 
+  private Users users;
+
   private UserDAO userDAO;
   
   private PasswordEncoder encoder = new StandardPasswordEncoder();
-  
-  private DaoAuthenticationProvider daoProvider;
+
+  private AmbariLocalUserProvider alup;
 
   private AmbariLdapAuthoritiesPopulator ldapPopulator;
 
   @Before
   public void setUp() {
     userDAO = Mockito.mock(UserDAO.class);
-    
+    users = Mockito.mock(Users.class);
+
     createUser("activeUser", true);
     createUser("disabledUser", false);
     
     MemberDAO memberDao = Mockito.mock(MemberDAO.class);
     PrivilegeDAO privilegeDao = Mockito.mock(PrivilegeDAO.class);
     AuthorizationHelper authorizationHelper = new AuthorizationHelper();
-    
-    AmbariLocalUserDetailsService uds = new AmbariLocalUserDetailsService(null,null,authorizationHelper,userDAO,memberDao,privilegeDao);
-    daoProvider = new DaoAuthenticationProvider();
-    daoProvider.setUserDetailsService(uds);
-    daoProvider.setPasswordEncoder(encoder);
+
+    alup = new AmbariLocalUserProvider(userDAO, users, encoder);
     
     ldapPopulator = new AmbariLdapAuthoritiesPopulator(authorizationHelper, userDAO, memberDao, privilegeDao);
     
   }
   
   @Test public void testDisabledUserViaDaoProvider(){
-    try{
-      daoProvider.authenticate(new UsernamePasswordAuthenticationToken("disabledUser","pwd"));
+    try {
+      alup.authenticate(new UsernamePasswordAuthenticationToken("disabledUser","pwd"));
       Assert.fail("Disabled user passes authentication");
-    }catch(DisabledException e){
+    } catch (InvalidUsernamePasswordCombinationException e){
       //expected
-      Assert.assertEquals("User is disabled", e.getMessage());//UI depends on this
+      Assert.assertEquals(InvalidUsernamePasswordCombinationException.MESSAGE, e.getMessage());//UI depends on this
     }
-    Authentication auth = daoProvider.authenticate(new UsernamePasswordAuthenticationToken("activeUser","pwd"));
+    Authentication auth = alup.authenticate(new UsernamePasswordAuthenticationToken("activeUser","pwd"));
     Assert.assertNotNull(auth);
     Assert.assertTrue(auth.isAuthenticated());
   }
 
   @Test public void testDisabledUserViaLdapProvider(){
-    try{
+    try {
       ldapPopulator.getGrantedAuthorities(null, "disabledUser");
       Assert.fail("Disabled user passes authentication");
-    }catch(DisabledException e){
+    } catch (InvalidUsernamePasswordCombinationException e) {
       //expected
-      Assert.assertEquals("User is disabled", e.getMessage());//UI depends on this
+      Assert.assertEquals(InvalidUsernamePasswordCombinationException.MESSAGE, e.getMessage());//UI depends on this
     }
   }
   
   private void createUser(String login, boolean isActive) {
+    PrincipalEntity principalEntity = new PrincipalEntity();
     UserEntity activeUser = new UserEntity();
+    activeUser.setUserId(1);
     activeUser.setActive(isActive);
     activeUser.setUserName(login);
     activeUser.setUserPassword(encoder.encode("pwd"));
+    activeUser.setPrincipal(principalEntity);
     Mockito.when(userDAO.findLocalUserByName(login)).thenReturn(activeUser);
     Mockito.when(userDAO.findLdapUserByName(login)).thenReturn(activeUser);
   }

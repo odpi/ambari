@@ -18,32 +18,46 @@ limitations under the License.
 
 """
 import os
+import re
 from resource_management.core.logger import Logger
-from resource_management.core.resources.system import File, Directory, Execute
-from resource_management.core.source import DownloadSource, InlineTemplate
+from resource_management.core.resources.system import File, Directory, Execute, Link
+from resource_management.core.source import DownloadSource, InlineTemplate, Template
 from resource_management.libraries.resources.xml_config import XmlConfig
 from resource_management.libraries.resources.modify_properties_file import ModifyPropertiesFile
+from resource_management.libraries.resources.properties_file import PropertiesFile
 from resource_management.core.exceptions import Fail
+from resource_management.libraries.functions.decorator import retry
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.is_empty import is_empty
 from resource_management.core.utils import PasswordString
 from resource_management.core.shell import as_sudo
+from resource_management.libraries.functions import solr_cloud_util
+from ambari_commons.constants import UPGRADE_TYPE_NON_ROLLING, UPGRADE_TYPE_ROLLING
 
 # This file contains functions used for setup/configure of Ranger Admin and Ranger Usersync.
 # The design is to mimic what is done by the setup.sh script bundled by Ranger component currently.
 
-def ranger(name=None, rolling_upgrade=False):
+def ranger(name=None, upgrade_type=None):
   """
   parameter name: name of ranger service component
   """
   if name == 'ranger_admin':
-    setup_ranger_admin(rolling_upgrade=rolling_upgrade)
+    setup_ranger_admin(upgrade_type=upgrade_type)
 
   if name == 'ranger_usersync':
-    setup_usersync()
+    setup_usersync(upgrade_type=upgrade_type)
 
-def setup_ranger_admin(rolling_upgrade=False):
+  if name == 'ranger_tagsync':
+    setup_tagsync(upgrade_type=upgrade_type)
+
+def setup_ranger_admin(upgrade_type=None):
   import params
+
+  if upgrade_type is None:
+    if params.restart_type.lower() == "rolling_upgrade":
+      upgrade_type = UPGRADE_TYPE_ROLLING
+    elif params.restart_type.lower() == "nonrolling_upgrade":
+      upgrade_type = UPGRADE_TYPE_NON_ROLLING
 
   ranger_home = params.ranger_home
   ranger_conf = params.ranger_conf
@@ -51,12 +65,10 @@ def setup_ranger_admin(rolling_upgrade=False):
   Directory(ranger_conf,
     owner = params.unix_user,
     group = params.unix_group,
-    recursive = True
+    create_parents = True
   )
 
-  if rolling_upgrade:
-    ranger_home = format("/usr/hdp/{version}/ranger-admin")
-    ranger_conf = format("/usr/hdp/{version}/ranger-admin/conf")
+  copy_jdbc_connector()
 
   File(format("/usr/lib/ambari-agent/{check_db_connection_jar_name}"),
     content = DownloadSource(format("{jdk_location}{check_db_connection_jar_name}")),
@@ -65,10 +77,10 @@ def setup_ranger_admin(rolling_upgrade=False):
 
   cp = format("{check_db_connection_jar}")
   if params.db_flavor.lower() == 'sqla':
-    cp = cp + os.pathsep + format("{ranger_home}/ews/lib/{jdbc_jar_name}")
+    cp = cp + os.pathsep + format("{ranger_home}/ews/lib/sajdbc4.jar")
   else:
     cp = cp + os.pathsep + format("{driver_curl_target}")
-  cp = cp + os.pathsep + format("{ranger_home}/ews/webapp/WEB-INF/lib/*")
+  cp = cp + os.pathsep + format("{ranger_home}/ews/lib/*")
 
   db_connection_check_command = format(
     "{java_home}/bin/java -cp {cp} org.apache.ambari.server.DBConnectionVerification '{ranger_jdbc_connection_url}' {ranger_db_user} {ranger_db_password!p} {ranger_jdbc_driver}")
@@ -84,7 +96,7 @@ def setup_ranger_admin(rolling_upgrade=False):
     only_if=format("ls {ranger_home}/ews/webapp/WEB-INF/classes/conf"),
     sudo=True)
 
-  if rolling_upgrade:
+  if upgrade_type is not None:
     src_file = format('{ranger_home}/ews/webapp/WEB-INF/classes/conf.dist/ranger-admin-default-site.xml')
     dst_file = format('{ranger_home}/conf/ranger-admin-default-site.xml')
     Execute(('cp', '-f', src_file, dst_file), sudo=True)
@@ -94,15 +106,59 @@ def setup_ranger_admin(rolling_upgrade=False):
 
     Execute(('cp', '-f', src_file, dst_file), sudo=True)
 
-  Execute(('chown','-R',format('{unix_user}:{unix_group}'), format('{ranger_home}/')), sudo=True)
+  Directory(format('{ranger_home}/'),
+            owner = params.unix_user,
+            group = params.unix_group,
+            recursive_ownership = True,
+  )
+
+  Directory(params.ranger_pid_dir,
+    mode=0755,
+    owner = params.unix_user,
+    group = params.user_group,
+    cd_access = "a",
+    create_parents=True
+  )
 
   Directory(params.admin_log_dir,
     owner = params.unix_user,
-    group = params.unix_group
+    group = params.unix_group,
+    create_parents = True,
+    cd_access='a',
+    mode=0755
   )
 
-  File(params.ranger_admin_default_file, owner=params.unix_user, group=params.unix_group)
-  File(params.security_app_context_file, owner=params.unix_user, group=params.unix_group)
+  File(format('{ranger_conf}/ranger-admin-env-logdir.sh'),
+    content = format("export RANGER_ADMIN_LOG_DIR={admin_log_dir}"),
+    owner = params.unix_user,
+    group = params.unix_group,
+    mode=0755
+  )
+
+  if os.path.isfile(params.ranger_admin_default_file):
+    File(params.ranger_admin_default_file, owner=params.unix_user, group=params.unix_group)
+  else:
+    Logger.warning('Required file {0} does not exist, copying the file to {1} path'.format(params.ranger_admin_default_file, ranger_conf))
+    src_file = format('{ranger_home}/ews/webapp/WEB-INF/classes/conf.dist/ranger-admin-default-site.xml')
+    dst_file = format('{ranger_home}/conf/ranger-admin-default-site.xml')
+    Execute(('cp', '-f', src_file, dst_file), sudo=True)
+    File(params.ranger_admin_default_file, owner=params.unix_user, group=params.unix_group)
+
+  if os.path.isfile(params.security_app_context_file):
+    File(params.security_app_context_file, owner=params.unix_user, group=params.unix_group)
+  else:
+    Logger.warning('Required file {0} does not exist, copying the file to {1} path'.format(params.security_app_context_file, ranger_conf))
+    src_file = format('{ranger_home}/ews/webapp/WEB-INF/classes/conf.dist/security-applicationContext.xml')
+    dst_file = format('{ranger_home}/conf/security-applicationContext.xml')
+    Execute(('cp', '-f', src_file, dst_file), sudo=True)
+    File(params.security_app_context_file, owner=params.unix_user, group=params.unix_group)
+
+  if upgrade_type is not None and params.stack_supports_config_versioning:
+    if os.path.islink('/usr/bin/ranger-admin'):
+      Link('/usr/bin/ranger-admin', action="delete")
+
+    Link('/usr/bin/ranger-admin',
+    to=format('{ranger_home}/ews/ranger-admin-services.sh'))
 
   Execute(('ln','-sf', format('{ranger_home}/ews/ranger-admin-services.sh'),'/usr/bin/ranger-admin'),
     not_if=format("ls /usr/bin/ranger-admin"),
@@ -123,64 +179,33 @@ def setup_ranger_admin(rolling_upgrade=False):
     group=params.unix_group,
   )
 
-  do_keystore_setup(rolling_upgrade=rolling_upgrade)
+  if params.stack_supports_ranger_log4j:
+    File(format('{ranger_home}/ews/webapp/WEB-INF/log4j.properties'),
+      owner=params.unix_user,
+      group=params.unix_group,
+      content=params.admin_log4j,
+      mode=0644
+    )
 
+  do_keystore_setup(upgrade_type=upgrade_type)
 
-def setup_ranger_db(rolling_upgrade=False):
+  create_core_site_xml(ranger_conf)
+
+def setup_ranger_db(stack_version=None):
   import params
   
-  File(params.downloaded_custom_connector,
-    content = DownloadSource(params.driver_curl_source),
-    mode = 0644
-  )
-
-  Directory(params.java_share_dir,
-    mode=0755,
-    recursive=True,
-    cd_access="a"
-  )
-
-  if params.db_flavor.lower() != 'sqla':
-    Execute(('cp', '--remove-destination', params.downloaded_custom_connector, params.driver_curl_target),
-      path=["/bin", "/usr/bin/"],
-      sudo=True)
-
-    File(params.driver_curl_target, mode=0644)
-
   ranger_home = params.ranger_home
-  if rolling_upgrade:
-    ranger_home = format("/usr/hdp/{version}/ranger-admin")
+  version = params.version
+  if stack_version is not None:
+    ranger_home = format("{stack_root}/{stack_version}/ranger-admin")
+    version = stack_version
 
-  if params.db_flavor.lower() == 'sqla':
-    Execute(('tar', '-xvf', params.downloaded_custom_connector, '-C', params.tmp_dir), sudo = True)
-
-    Execute(('cp', '--remove-destination', params.jar_path_in_archive, os.path.join(params.ranger_home, 'ews', 'lib')),
-      path=["/bin", "/usr/bin/"],
-      sudo=True)
-
-    Directory(params.jdbc_libs_dir,
-      cd_access="a",
-      recursive=True)
-
-    Execute(as_sudo(['yes', '|', 'cp', params.libs_path_in_archive, params.jdbc_libs_dir], auto_escape=False),
-            path=["/bin", "/usr/bin/"])
-  else:
-    Execute(('cp', '--remove-destination', params.downloaded_custom_connector, os.path.join(params.ranger_home, 'ews', 'lib')),
-      path=["/bin", "/usr/bin/"],
-      sudo=True)
-
-  File(os.path.join(params.ranger_home, 'ews', 'lib',params.jdbc_jar_name), mode=0644)
+  copy_jdbc_connector(stack_version=version)
 
   ModifyPropertiesFile(format("{ranger_home}/install.properties"),
-    properties = params.config['configurations']['admin-properties'],
+    properties = {'audit_store': params.ranger_audit_source_type},
     owner = params.unix_user,
   )
-
-  if params.db_flavor.lower() == 'sqla':
-    ModifyPropertiesFile(format("{ranger_home}/install.properties"),
-      properties = {'SQL_CONNECTOR_JAR': format('{ranger_home}/ews/lib/{jdbc_jar_name}')},
-      owner = params.unix_user,
-    )
 
   env_dict = {'RANGER_ADMIN_HOME':ranger_home, 'JAVA_HOME':params.java_home}
   if params.db_flavor.lower() == 'sqla':
@@ -189,7 +214,7 @@ def setup_ranger_db(rolling_upgrade=False):
   # User wants us to setup the DB user and DB?
   if params.create_db_dbuser:
     Logger.info('Setting up Ranger DB and DB User')
-    dba_setup = format('python {ranger_home}/dba_script.py -q')
+    dba_setup = format('ambari-python-wrap {ranger_home}/dba_script.py -q')
     Execute(dba_setup, 
             environment=env_dict,
             logoutput=True,
@@ -198,7 +223,7 @@ def setup_ranger_db(rolling_upgrade=False):
   else:
     Logger.info('Separate DBA property not set. Assuming Ranger DB and DB User exists!')
 
-  db_setup = format('python {ranger_home}/db_setup.py')
+  db_setup = format('ambari-python-wrap {ranger_home}/db_setup.py')
   Execute(db_setup, 
           environment=env_dict,
           logoutput=True,
@@ -206,18 +231,18 @@ def setup_ranger_db(rolling_upgrade=False):
   )
 
 
-def setup_java_patch(rolling_upgrade=False):
+def setup_java_patch(stack_version=None):
   import params
 
   ranger_home = params.ranger_home
-  if rolling_upgrade:
-    ranger_home = format("/usr/hdp/{version}/ranger-admin")
+  if stack_version is not None:
+    ranger_home = format("{stack_root}/{stack_version}/ranger-admin")
 
   env_dict = {'RANGER_ADMIN_HOME':ranger_home, 'JAVA_HOME':params.java_home}
   if params.db_flavor.lower() == 'sqla':
     env_dict = {'RANGER_ADMIN_HOME':ranger_home, 'JAVA_HOME':params.java_home, 'LD_LIBRARY_PATH':params.ld_lib_path}
 
-  setup_java_patch = format('python {ranger_home}/db_setup.py -javapatch')
+  setup_java_patch = format('ambari-python-wrap {ranger_home}/db_setup.py -javapatch')
   Execute(setup_java_patch, 
           environment=env_dict,
           logoutput=True,
@@ -225,27 +250,15 @@ def setup_java_patch(rolling_upgrade=False):
   )
 
 
-def do_keystore_setup(rolling_upgrade=False): 
+def do_keystore_setup(upgrade_type=None):
   import params
 
   ranger_home = params.ranger_home
   cred_lib_path = params.cred_lib_path
-  cred_setup_prefix = params.cred_setup_prefix
 
-  if rolling_upgrade:
-    ranger_home = format("/usr/hdp/{version}/ranger-admin")
-    cred_lib_path = os.path.join(ranger_home,"cred","lib","*")
-    cred_setup_prefix = (format('{ranger_home}/ranger_credential_helper.py'), '-l', cred_lib_path)
+  if not is_empty(params.ranger_credential_provider_path):
+    ranger_credential_helper(cred_lib_path, params.ranger_jpa_jdbc_credential_alias, params.ranger_ambari_db_password, params.ranger_credential_provider_path)
 
-  if not is_empty(params.ranger_credential_provider_path):    
-    jceks_path = params.ranger_credential_provider_path
-    cred_setup = cred_setup_prefix + ('-f', jceks_path, '-k', params.ranger_jpa_jdbc_credential_alias, '-v', PasswordString(params.ranger_ambari_db_password), '-c', '1')
-
-    Execute(cred_setup, 
-            environment={'RANGER_ADMIN_HOME':ranger_home, 'JAVA_HOME': params.java_home}, 
-            logoutput=True, 
-            sudo=True
-    )
     File(params.ranger_credential_provider_path,
       owner = params.unix_user,
       group = params.unix_group,
@@ -253,13 +266,7 @@ def do_keystore_setup(rolling_upgrade=False):
     )
 
   if not is_empty(params.ranger_credential_provider_path) and (params.ranger_audit_source_type).lower() == 'db' and not is_empty(params.ranger_ambari_audit_db_password):
-    jceks_path = params.ranger_credential_provider_path
-    cred_setup = cred_setup_prefix + ('-f', jceks_path, '-k', params.ranger_jpa_audit_jdbc_credential_alias, '-v', PasswordString(params.ranger_ambari_audit_db_password), '-c', '1')
-    Execute(cred_setup, 
-            environment={'RANGER_ADMIN_HOME':ranger_home, 'JAVA_HOME': params.java_home}, 
-            logoutput=True, 
-            sudo=True
-    )
+    ranger_credential_helper(cred_lib_path, params.ranger_jpa_audit_jdbc_credential_alias, params.ranger_ambari_audit_db_password, params.ranger_credential_provider_path)
 
     File(params.ranger_credential_provider_path,
       owner = params.unix_user,
@@ -267,48 +274,153 @@ def do_keystore_setup(rolling_upgrade=False):
       mode = 0640
     )
 
- 
-def setup_usersync():
+def password_validation(password):
+  import params
+  if password.strip() == "":
+    raise Fail("Blank password is not allowed for Bind user. Please enter valid password.")
+  if re.search("[\\\`'\"]",password):
+    raise Fail("LDAP/AD bind password contains one of the unsupported special characters like \" ' \ `")
+  else:
+    Logger.info("password validated")
+
+def copy_jdbc_connector(stack_version=None):
   import params
 
-  Directory(params.ranger_pid_dir,
-    mode=0750,
+  if params.jdbc_jar_name is None and params.driver_curl_source.endswith("/None"):
+    error_message = format("{db_flavor} jdbc driver cannot be downloaded from {jdk_location}\nPlease run 'ambari-server setup --jdbc-db={db_flavor} --jdbc-driver={{path_to_jdbc}}' on ambari-server host.")
+    raise Fail(error_message)
+
+  if params.driver_curl_source and not params.driver_curl_source.endswith("/None"):
+    if params.previous_jdbc_jar and os.path.isfile(params.previous_jdbc_jar):
+      File(params.previous_jdbc_jar, action='delete')
+
+  File(params.downloaded_custom_connector,
+    content = DownloadSource(params.driver_curl_source),
+    mode = 0644
+  )
+
+  ranger_home = params.ranger_home
+  if stack_version is not None:
+    ranger_home = format("{stack_root}/{stack_version}/ranger-admin")
+
+  driver_curl_target = format("{ranger_home}/ews/lib/{jdbc_jar_name}")
+
+  if params.db_flavor.lower() == 'sqla':
+    Execute(('tar', '-xvf', params.downloaded_custom_connector, '-C', params.tmp_dir), sudo = True)
+
+    Execute(('cp', '--remove-destination', params.jar_path_in_archive, os.path.join(ranger_home, 'ews', 'lib')),
+      path=["/bin", "/usr/bin/"],
+      sudo=True)
+
+    File(os.path.join(ranger_home, 'ews', 'lib', 'sajdbc4.jar'), mode=0644)
+
+    Directory(params.jdbc_libs_dir,
+      cd_access="a",
+      create_parents=True)
+
+    Execute(as_sudo(['yes', '|', 'cp', params.libs_path_in_archive, params.jdbc_libs_dir], auto_escape=False),
+            path=["/bin", "/usr/bin/"])
+  else:
+    Execute(('cp', '--remove-destination', params.downloaded_custom_connector, os.path.join(ranger_home, 'ews', 'lib')),
+      path=["/bin", "/usr/bin/"],
+      sudo=True)
+
+    File(os.path.join(ranger_home, 'ews', 'lib',params.jdbc_jar_name), mode=0644)
+
+  ModifyPropertiesFile(format("{ranger_home}/install.properties"),
+    properties = params.config['configurations']['admin-properties'],
     owner = params.unix_user,
-    group = params.unix_group
-  )  
+  )
+
+  if params.db_flavor.lower() == 'sqla':
+    ModifyPropertiesFile(format("{ranger_home}/install.properties"),
+      properties = {'SQL_CONNECTOR_JAR': format('{ranger_home}/ews/lib/sajdbc4.jar')},
+      owner = params.unix_user,
+    )
+  else:
+    ModifyPropertiesFile(format("{ranger_home}/install.properties"),
+      properties = {'SQL_CONNECTOR_JAR': format('{driver_curl_target}')},
+       owner = params.unix_user,
+    )
+ 
+def setup_usersync(upgrade_type=None):
+  import params
+
+  usersync_home = params.usersync_home
+  ranger_home = params.ranger_home
+  ranger_ugsync_conf = params.ranger_ugsync_conf
+
+  if not is_empty(params.ranger_usersync_ldap_ldapbindpassword) and params.ug_sync_source == 'org.apache.ranger.ldapusersync.process.LdapUserGroupBuilder':
+    password_validation(params.ranger_usersync_ldap_ldapbindpassword)
+
+  Directory(params.ranger_pid_dir,
+    mode=0755,
+    owner = params.unix_user,
+    group = params.user_group,
+    cd_access = "a",
+    create_parents=True
+  )
 
   Directory(params.usersync_log_dir,
     owner = params.unix_user,
-    group = params.unix_group
+    group = params.unix_group,
+    cd_access = 'a',
+    create_parents=True,
+    mode=0755,
+    recursive_ownership = True
+  )
+
+  File(format('{ranger_ugsync_conf}/ranger-usersync-env-logdir.sh'),
+    content = format("export logdir={usersync_log_dir}"),
+    owner = params.unix_user,
+    group = params.unix_group,
+    mode=0755
   )
   
   Directory(format("{ranger_ugsync_conf}/"),
-       owner = params.unix_user
+    owner = params.unix_user
   )
 
+  if upgrade_type is not None:
+    src_file = format('{usersync_home}/conf.dist/ranger-ugsync-default.xml')
+    dst_file = format('{usersync_home}/conf/ranger-ugsync-default.xml')
+    Execute(('cp', '-f', src_file, dst_file), sudo=True)
+
+  if params.stack_supports_ranger_log4j:
+    File(format('{usersync_home}/conf/log4j.properties'),
+      owner=params.unix_user,
+      group=params.unix_group,
+      content=params.usersync_log4j,
+      mode=0644
+    )
+  elif upgrade_type is not None and not params.stack_supports_ranger_log4j:
+    src_file = format('{usersync_home}/conf.dist/log4j.xml')
+    dst_file = format('{usersync_home}/conf/log4j.xml')
+    Execute(('cp', '-f', src_file, dst_file), sudo=True)
+
   XmlConfig("ranger-ugsync-site.xml",
-    conf_dir=params.ranger_ugsync_conf,
+    conf_dir=ranger_ugsync_conf,
     configurations=params.config['configurations']['ranger-ugsync-site'],
     configuration_attributes=params.config['configuration_attributes']['ranger-ugsync-site'],
     owner=params.unix_user,
     group=params.unix_group,
     mode=0644)
 
-  File(params.ranger_ugsync_default_file, owner=params.unix_user, group=params.unix_group)
-  File(params.usgsync_log4j_file, owner=params.unix_user, group=params.unix_group)
-  File(params.cred_validator_file, group=params.unix_group, mode=04555)
+  if os.path.isfile(params.ranger_ugsync_default_file):
+    File(params.ranger_ugsync_default_file, owner=params.unix_user, group=params.unix_group)
 
-  cred_lib = os.path.join(params.usersync_home,"lib","*")
-  cred_setup_prefix = (format('{ranger_home}/ranger_credential_helper.py'), '-l', cred_lib)
+  if os.path.isfile(params.usgsync_log4j_file):
+    File(params.usgsync_log4j_file, owner=params.unix_user, group=params.unix_group)
 
-  cred_setup = cred_setup_prefix + ('-f', params.ugsync_jceks_path, '-k', 'usersync.ssl.key.password', '-v', PasswordString(params.ranger_usersync_keystore_password), '-c', '1')
-  Execute(cred_setup, environment={'RANGER_ADMIN_HOME':params.ranger_home, 'JAVA_HOME': params.java_home}, logoutput=True, sudo=True)
+  if os.path.isfile(params.cred_validator_file):
+    File(params.cred_validator_file, group=params.unix_group, mode=04555)
 
-  cred_setup = cred_setup_prefix + ('-f', params.ugsync_jceks_path, '-k', 'ranger.usersync.ldap.bindalias', '-v', PasswordString(params.ranger_usersync_ldap_ldapbindpassword), '-c', '1')
-  Execute(cred_setup, environment={'RANGER_ADMIN_HOME':params.ranger_home, 'JAVA_HOME': params.java_home}, logoutput=True, sudo=True)
+  ranger_credential_helper(params.ugsync_cred_lib, 'usersync.ssl.key.password', params.ranger_usersync_keystore_password, params.ugsync_jceks_path)
 
-  cred_setup = cred_setup_prefix + ('-f', params.ugsync_jceks_path, '-k', 'usersync.ssl.truststore.password', '-v', PasswordString(params.ranger_usersync_truststore_password), '-c', '1')
-  Execute(cred_setup, environment={'RANGER_ADMIN_HOME':params.ranger_home, 'JAVA_HOME': params.java_home}, logoutput=True, sudo=True)
+  if not is_empty(params.ranger_usersync_ldap_ldapbindpassword) and params.ug_sync_source == 'org.apache.ranger.ldapusersync.process.LdapUserGroupBuilder':
+    ranger_credential_helper(params.ugsync_cred_lib, 'ranger.usersync.ldap.bindalias', params.ranger_usersync_ldap_ldapbindpassword, params.ugsync_jceks_path)
+
+  ranger_credential_helper(params.ugsync_cred_lib, 'usersync.ssl.truststore.password', params.ranger_usersync_truststore_password, params.ugsync_jceks_path)
 
   File(params.ugsync_jceks_path,
        owner = params.unix_user,
@@ -340,3 +452,155 @@ def setup_usersync():
         group = params.unix_group,
         mode = 0640
     )
+
+  create_core_site_xml(ranger_ugsync_conf)
+
+def setup_tagsync(upgrade_type=None):
+  import params
+
+  ranger_tagsync_home = params.ranger_tagsync_home
+  ranger_home = params.ranger_home
+  ranger_tagsync_conf = params.ranger_tagsync_conf
+
+  Directory(format("{ranger_tagsync_conf}"),
+    owner = params.unix_user,
+    group = params.unix_group,
+    create_parents = True
+  )
+
+  Directory(params.ranger_pid_dir,
+    mode=0755,
+    create_parents=True,
+    owner = params.unix_user,
+    group = params.user_group,
+    cd_access = "a",
+  )
+
+  Directory(params.tagsync_log_dir,
+    create_parents = True,
+    owner = params.unix_user,
+    group = params.unix_group,
+    cd_access = "a",
+    mode=0755
+  )
+
+  File(format('{ranger_tagsync_conf}/ranger-tagsync-env-logdir.sh'),
+    content = format("export RANGER_TAGSYNC_LOG_DIR={tagsync_log_dir}"),
+    owner = params.unix_user,
+    group = params.unix_group,
+    mode=0755
+  )
+
+  XmlConfig("ranger-tagsync-site.xml",
+    conf_dir=ranger_tagsync_conf,
+    configurations=params.config['configurations']['ranger-tagsync-site'],
+    configuration_attributes=params.config['configuration_attributes']['ranger-tagsync-site'],
+    owner=params.unix_user,
+    group=params.unix_group,
+    mode=0644)
+
+  PropertiesFile(format('{ranger_tagsync_conf}/atlas-application.properties'),
+    properties = params.tagsync_application_properties,
+    mode=0755,
+    owner=params.unix_user,
+    group=params.unix_group
+  )
+
+  File(format('{ranger_tagsync_conf}/log4j.properties'),
+    owner=params.unix_user,
+    group=params.unix_group,
+    content=params.tagsync_log4j,
+    mode=0644
+  )
+
+  File(params.tagsync_services_file,
+    mode = 0755,
+  )
+
+  Execute(('ln','-sf', format('{tagsync_services_file}'),'/usr/bin/ranger-tagsync'),
+    not_if=format("ls /usr/bin/ranger-tagsync"),
+    only_if=format("ls {tagsync_services_file}"),
+    sudo=True)
+
+  create_core_site_xml(ranger_tagsync_conf)
+
+def ranger_credential_helper(lib_path, alias_key, alias_value, file_path):
+  import params
+
+  java_bin = format('{java_home}/bin/java')
+  file_path = format('jceks://file{file_path}')
+  cmd = (java_bin, '-cp', lib_path, 'org.apache.ranger.credentialapi.buildks', 'create', alias_key, '-value', PasswordString(alias_value), '-provider', file_path)
+  Execute(cmd, environment={'JAVA_HOME': params.java_home}, logoutput=True, sudo=True)
+
+def create_core_site_xml(conf_dir):
+  import params
+
+  if params.stack_supports_ranger_kerberos:
+    if params.has_namenode:
+      XmlConfig("core-site.xml",
+                conf_dir=conf_dir,
+                configurations=params.config['configurations']['core-site'],
+                configuration_attributes=params.config['configuration_attributes']['core-site'],
+                owner=params.unix_user,
+                group=params.unix_group,
+                mode=0644
+      )
+    else:
+      Logger.warning('HDFS service not installed. Creating core-site.xml file.')
+      XmlConfig("core-site.xml",
+        conf_dir=conf_dir,
+        configurations=params.core_site_property,
+        configuration_attributes={},
+        owner=params.unix_user,
+        group=params.unix_group,
+        mode=0644
+      )
+
+def setup_ranger_audit_solr():
+  import params
+
+  if params.security_enabled and params.stack_supports_ranger_kerberos:
+
+    if params.solr_jaas_file is not None:
+      File(format("{solr_jaas_file}"),
+        content=Template("ranger_solr_jaas_conf.j2"),
+        owner=params.unix_user
+      )
+
+  check_znode()
+
+  solr_cloud_util.upload_configuration_to_zk(
+    zookeeper_quorum = params.zookeeper_quorum,
+    solr_znode = params.solr_znode,
+    config_set = params.ranger_solr_config_set,
+    config_set_dir = params.ranger_solr_conf,
+    tmp_dir = params.tmp_dir,
+    java64_home = params.java_home,
+    jaas_file=params.solr_jaas_file,
+    retry=30, interval=5)
+
+  solr_cloud_util.create_collection(
+    zookeeper_quorum = params.zookeeper_quorum,
+    solr_znode = params.solr_znode,
+    collection = params.ranger_solr_collection_name,
+    config_set = params.ranger_solr_config_set,
+    java64_home = params.java_home,
+    shards = params.ranger_solr_shards,
+    replication_factor = int(params.replication_factor),
+    jaas_file = params.solr_jaas_file)
+
+def setup_ranger_admin_passwd_change():
+  import params
+
+  if params.admin_password != params.default_admin_password:
+    cmd = format('ambari-python-wrap {ranger_home}/db_setup.py -changepassword {admin_username} {default_admin_password!p} {admin_password!p}')
+    Logger.info('Updating admin password')
+    Execute(cmd, environment={'JAVA_HOME': params.java_home, 'RANGER_ADMIN_HOME': params.ranger_home}, user=params.unix_user)
+
+@retry(times=10, sleep_time=5, err_class=Fail)
+def check_znode():
+  import params
+  solr_cloud_util.check_znode(
+    zookeeper_quorum=params.zookeeper_quorum,
+    solr_znode=params.solr_znode,
+    java64_home=params.java_home)

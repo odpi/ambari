@@ -18,19 +18,19 @@ limitations under the License.
 
 """
 
-from resource_management import *
+from resource_management.libraries.script.script import Script
 import os
 
 # server configurations
 config = Script.get_config()
 
-hdp_root = None
+stack_root = None
 slider_home = None
 slider_bin_dir = None
 slider_conf_dir = None
 storm_slider_conf_dir = None
 try:
-  hdp_root = os.path.abspath(os.path.join(os.environ["HADOOP_HOME"],".."))
+  stack_root = os.path.abspath(os.path.join(os.environ["HADOOP_HOME"],".."))
   slider_home = os.environ['SLIDER_HOME']
   slider_bin_dir = os.path.join(slider_home, 'bin')
   slider_conf_dir = os.path.join(slider_home, 'conf')

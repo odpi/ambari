@@ -21,19 +21,20 @@ require('utils/ajax/ajax');
 
 describe('App.ajax', function() {
 
+  window.performance = {
+    now: function() {
+      return 1;
+    }
+  };
+
   beforeEach(function() {
+    App.ajax.send.restore();
+    sinon.spy(App.ajax, 'send'); // no sense to test stubbed function, so going to spy on it
     App.set('apiPrefix', '/api/v1');
     App.set('clusterName', 'tdk');
   });
 
   describe('#send', function() {
-    beforeEach(function() {
-      sinon.spy($, 'ajax');
-    });
-
-    afterEach(function() {
-      $.ajax.restore();
-    });
     it('Without sender', function() {
       expect(App.ajax.send({})).to.equal(null);
       expect($.ajax.called).to.equal(false);
@@ -110,17 +111,6 @@ describe('App.ajax', function() {
 
   describe('#formatRequest', function() {
 
-    it('App.testMode = true', function() {
-      sinon.stub(App, 'get', function(k) {
-        if ('testMode' === k) return true;
-        return Em.get(App, k);
-      });
-      var r = App.ajax.fakeFormatRequest({real:'/', mock: '/some_url'}, {});
-      expect(r.type).to.equal('GET');
-      expect(r.url).to.equal('/some_url');
-      expect(r.dataType).to.equal('json');
-      App.get.restore();
-    });
     var tests = [
       {
         urlObj: {
@@ -138,16 +128,76 @@ describe('App.ajax', function() {
     ];
     tests.forEach(function(test) {
       it(test.m, function() {
-        sinon.stub(App, 'get', function(k) {
-          if ('testMode' === k) return false;
-          return Em.get(App, k);
-        });
         var r = App.ajax.fakeFormatRequest(test.urlObj, test.data);
         expect(r.type).to.equal(test.e.type);
         expect(r.url).to.equal(test.e.url);
-        App.get.restore();
       });
     });
   });
 
+  describe("#doGetAsPost()", function () {
+    beforeEach(function () {
+      sinon.stub(App, 'dateTime').returns(1);
+    });
+    afterEach(function () {
+      App.dateTime.restore();
+    });
+    it("url does not have '?'", function () {
+      var opt = {
+        type: 'GET',
+        url: '',
+        headers: {}
+      };
+      expect(App.ajax.fakeDoGetAsPost({}, opt)).to.eql({
+        type: 'POST',
+        url: '?_=1',
+        headers: {"X-Http-Method-Override": "GET"}
+      });
+    });
+    it("url has '?'", function () {
+      var opt = {
+        type: 'GET',
+        url: 'root?params',
+        headers: {}
+      };
+      expect(App.ajax.fakeDoGetAsPost({}, opt)).to.eql({
+        type: 'POST',
+        url: 'root?_=1',
+        headers: {"X-Http-Method-Override": "GET"},
+        data: "{\"RequestInfo\":{\"query\":\"params\"}}"
+      });
+    });
+  });
+  
+  describe('#abortRequests', function () {
+
+    var xhr = {
+        abort: Em.K
+      },
+      requests;
+
+    beforeEach(function () {
+      sinon.spy(xhr, 'abort');
+      xhr.isForcedAbort = false;
+      requests = [xhr, xhr];
+      App.ajax.abortRequests(requests);
+    });
+
+    afterEach(function () {
+      xhr.abort.restore();
+    });
+
+    it('should abort all requests', function () {
+      expect(xhr.abort.calledTwice).to.be.true;
+    });
+
+    it('should mark request as aborted', function () {
+      expect(xhr.isForcedAbort).to.be.true;
+    });
+
+    it('should clear requests array', function () {
+      expect(requests).to.have.length(0);
+    });
+    
+  });
 });

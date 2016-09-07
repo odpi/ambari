@@ -18,17 +18,24 @@
 
 import Ember from 'ember';
 import constants from 'hive/utils/constants';
+import ENV from '../config/environment';
 
 export default Ember.Controller.extend({
   databaseService: Ember.inject.service(constants.namingConventions.database),
   notifyService: Ember.inject.service(constants.namingConventions.notify),
+  ldapAuthenticationService: Ember.inject.service(constants.namingConventions.ldapAuthentication),
 
   pageCount: 10,
 
+  previousSelectedDatabaseName : "" ,
   selectedDatabase: Ember.computed.alias('databaseService.selectedDatabase'),
   databases: Ember.computed.alias('databaseService.databases'),
 
   tableSearchResults: Ember.Object.create(),
+
+  isDatabaseRefreshInProgress: false,
+  showColumnsResultAlert: false,
+  textColumnSearchTerm:'',
 
   tableControls: [
     {
@@ -92,12 +99,18 @@ export default Ember.Controller.extend({
   selectedDatabaseChanged: function () {
     var self = this;
 
+    this.resetSearch();
+
     this.set('isLoading', true);
 
     this.get('databaseService').getAllTables().then(function () {
       self.set('isLoading', false);
-    }, function (err) {
-      self._handleError(err);
+      self.set('previousSelectedDatabaseName',self.get('selectedDatabase').get('name'));
+      self.get('notifyService').info("Selected database : "+self.get('selectedDatabase').get('name'));
+    }, function (error) {
+      self.get('notifyService').pushError("Error while selecting database : "+self.get('selectedDatabase').get('name'),error.responseJSON.message+"\n"+error.responseJSON.trace);
+      self.get('databaseService').setDatabaseByName(self.get('previousSelectedDatabaseName'));
+      self.set('isLoading', false);
     });
   }.observes('selectedDatabase'),
 
@@ -147,20 +160,113 @@ export default Ember.Controller.extend({
 
   getDatabases: function () {
     var self = this;
-    var selectedDatabase = this.get('selectedDatabase');
+    var selectedDatabase = this.get('selectedDatabase.name') || 'default';
+
+    this.set('isDatabaseRefreshInProgress', true);
 
     this.set('isLoading', true);
 
     this.get('databaseService').getDatabases().then(function (databases) {
       self.set('isLoading');
+      self.get('databaseService').setDatabaseByName(selectedDatabase);
     }).catch(function (error) {
       self._handleError(error);
+
+      if(error.status == 401) {
+         self.send('openLdapPasswordModal');
+      }
+    }).finally(function() {
+      self.set('isDatabaseRefreshInProgress', false);
     });
   }.on('init'),
 
+  syncDatabases: function() {
+    this.set('isDatabaseRefreshInProgress', true);
+    var oldDatabaseNames = this.store.all('database').mapBy('name');
+    var self = this;
+    return this.get('databaseService').getDatabasesFromServer().then(function(data) {
+      // Remove the databases from store which are not in server
+      data.forEach(function(dbName) {
+        if(!oldDatabaseNames.contains(dbName)) {
+          self.store.createRecord('database', {
+            id: dbName,
+            name: dbName
+          });
+        }
+      });
+      // Add the databases in store which are new in server
+      oldDatabaseNames.forEach(function(dbName) {
+        if(!data.contains(dbName)) {
+          self.store.find('database', dbName).then(function(db) {
+            self.store.unloadRecord(db);
+          });
+        }
+      });
+    }).finally(function() {
+      self.set('isDatabaseRefreshInProgress', false);
+    });
+  },
+
+  initiateDatabaseSync: function() {
+    // This was required so that the unit test would not stall
+    if(ENV.environment !== "test") {
+      Ember.run.later(this, function() {
+        if (this.get('isDatabaseRefreshInProgress') === false) {
+          this.syncDatabases();
+          this.initiateDatabaseSync();
+        }
+      }, 15000);
+    }
+  }.on('init'),
+
+  resetSearch: function() {
+    var resultsTab = this.get('tabs').findBy('view', constants.namingConventions.databaseSearch);
+    var databaseExplorerTab = this.get('tabs').findBy('view', constants.namingConventions.databaseTree);
+    var tableSearchResults = this.get('tableSearchResults');
+    resultsTab.set('visible', false);
+    this.set('selectedTab', databaseExplorerTab);
+    this.set('tableSearchTerm', '');
+    this.set('columnSearchTerm', '');
+    tableSearchResults.set('tables', undefined);
+    tableSearchResults.set('hasNext', undefined);
+  },
+
+
   actions: {
     refreshDatabaseExplorer: function () {
-      this.getDatabases();
+      if (this.get('isDatabaseRefreshInProgress') === false) {
+        this.getDatabases();
+        this.resetSearch();
+      } else {
+        console.log("Databases refresh is in progress. Skipping this request.");
+      }
+    },
+
+    openLdapPasswordModal: function(){
+
+      var self = this,
+        defer = Ember.RSVP.defer();
+
+      this.send('openModal', 'modal-save', {
+        heading: "modals.authenticationLDAP.heading",
+        text:"",
+        type: "password",
+        defer: defer
+      });
+
+      defer.promise.then(function (text) {
+        var ldapAuthPromise = self.get('ldapAuthenticationService').authenticateLdapPassword(text);
+
+        ldapAuthPromise.then(function (data) {
+          console.log( "LDAP done: " + data );
+          self.getDatabases();
+          self.syncDatabases();
+        }, function (error) {
+          console.log( "LDAP fail: " + error );
+          self.get('notifyService').error( "Wrong Credentials." );
+        })
+      });
+
     },
 
     loadSampleData: function (tableName, database) {
@@ -242,6 +348,8 @@ export default Ember.Controller.extend({
 
       searchTerm = searchTerm ? searchTerm.toLowerCase() : '';
 
+      this.set('showColumnsResultAlert', false);
+
       this.set('tablesSearchTerm', searchTerm);
       resultsTab.set('visible', true);
       this.set('selectedTab', resultsTab);
@@ -266,17 +374,32 @@ export default Ember.Controller.extend({
 
       searchTerm = searchTerm ? searchTerm.toLowerCase() : '';
 
-      this.set('selectedTab', resultsTab);
+      this.set('columnSearchTerm', searchTerm);
+      this.set('textColumnSearchTerm', searchTerm);
 
+      this.set('selectedTab', resultsTab);
       this.set('isLoading', true);
+      this.set('showColumnsResultAlert', false);
+
+      var tableCount = tables.length || 0;
+      var noColumnMatchTableCount = 0;
 
       tables.forEach(function (table) {
         self.get('databaseService').getColumnsPage(database.get('name'), table, searchTerm, true).then(function (result) {
+
+          if(Ember.isEmpty(result.columns)){
+            noColumnMatchTableCount = noColumnMatchTableCount + 1;
+          }
           table.set('columns', result.columns);
           table.set('hasNext', result.hasNext);
 
           if (tables.indexOf(table) === tables.get('length') -1) {
             self.set('isLoading', false);
+          }
+
+          // This will execute only in the last interation
+          if(noColumnMatchTableCount === tableCount) {
+            self.set('showColumnsResultAlert', true);
           }
         }, function (err) {
           self._handleError(err);

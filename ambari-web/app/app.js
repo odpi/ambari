@@ -18,6 +18,7 @@
 
 // Application bootstrapper
 require('utils/ember_reopen');
+require('utils/ember_computed');
 var stringUtils = require('utils/string_utils');
 
 module.exports = Em.Application.create({
@@ -34,7 +35,18 @@ module.exports = Em.Application.create({
   }),
   isAdmin: false,
   isOperator: false,
+  isClusterUser: false,
   isPermissionDataLoaded: false,
+  auth: null,
+  isOnlyViewUser: function() {
+    return App.auth && (App.auth.length == 0 || (App.isAuthorized('VIEW.USE') && App.auth.length == 1));
+  }.property('auth'),
+
+  /**
+   * @type {boolean}
+   * @default false
+   */
+  isKerberosEnabled: false,
 
   /**
    * state of stack upgrade process
@@ -44,6 +56,9 @@ module.exports = Em.Application.create({
    *  - IN_PROGRESS
    *  - HOLDING
    *  - COMPLETED
+   *  - ABORTED
+   *  - HOLDING_FAILED
+   *  - HOLDING_TIMEDOUT
    * @type {String}
    */
   upgradeState: 'INIT',
@@ -52,83 +67,81 @@ module.exports = Em.Application.create({
    * flag is true when upgrade process is running
    * @returns {boolean}
    */
-  upgradeInProgress: function() {
-    return ["IN_PROGRESS"].contains(this.get('upgradeState'));
-  }.property('upgradeState'),
+  upgradeInProgress: Em.computed.equal('upgradeState', 'IN_PROGRESS'),
 
   /**
    * flag is true when upgrade process is waiting for user action
-   * to procced, retry, perform manual steps etc.
+   * to proceed, retry, perform manual steps etc.
    * @returns {boolean}
    */
   upgradeHolding: function() {
-    return this.get('upgradeState').contains("HOLDING");
-  }.property('upgradeState'),
+    return this.get('upgradeState').contains("HOLDING") || this.get('upgradeAborted');
+  }.property('upgradeState', 'upgradeAborted'),
 
   /**
    * flag is true when upgrade process is aborted
+   * SHOULD behave similar to HOLDING_FAILED state
    * @returns {boolean}
    */
-  upgradeAborted: function() {
-    return this.get('upgradeState') === "ABORTED";
-  }.property('upgradeState'),
+  upgradeAborted: function () {
+    return this.get('upgradeState') === "ABORTED" && !App.router.get('mainAdminStackAndUpgradeController.isSuspended');
+  }.property('upgradeState', 'router.mainAdminStackAndUpgradeController.isSuspended'),
+
+  /**
+   * flag is true when upgrade process is suspended
+   * @returns {boolean}
+   */
+  upgradeSuspended: function () {
+    return this.get('upgradeState') === "ABORTED" && App.router.get('mainAdminStackAndUpgradeController.isSuspended');
+  }.property('upgradeState', 'router.mainAdminStackAndUpgradeController.isSuspended'),
 
   /**
    * RU is running
    * @type {boolean}
    */
-  upgradeIsRunning: function() {
-    return this.get('upgradeInProgress') || this.get('upgradeHolding');
-  }.property('upgradeInProgress', 'upgradeHolding'),
+  upgradeIsRunning: Em.computed.or('upgradeInProgress', 'upgradeHolding'),
 
   /**
-   * flag is true when upgrade process is running or aborted
+   * flag is true when upgrade process is running or suspended
    * or wizard used by another user
    * @returns {boolean}
    */
   wizardIsNotFinished: function () {
-    return this.get('upgradeIsRunning') || this.get('upgradeAborted') || App.router.get('wizardWatcherController.isNonWizardUser');
-  }.property('upgradeIsRunning', 'upgradeAborted', 'router.wizardWatcherController.isNonWizardUser'),
+    return this.get('upgradeIsRunning') ||
+           this.get('upgradeSuspended') ||
+           App.router.get('wizardWatcherController.isNonWizardUser');
+  }.property('upgradeIsRunning', 'upgradeAborted', 'router.wizardWatcherController.isNonWizardUser', 'upgradeSuspended'),
 
   /**
-   * compute user access rights by permission type
-   * types:
-   *  - ADMIN
-   *  - MANAGER
-   *  - OPERATOR
-   *  - ONLY_ADMIN
-   * prefix "upgrade_" mean that element will not be unconditionally blocked while stack upgrade running
-   * @param type {string}
-   * @return {boolean}
+   * Options:
+   *  - ignoreWizard: ignore when some wizard is running by another user (default `false`)
+   *
+   * @param {string} authRoles
+   * @param {object} options
+   * @returns {boolean}
    */
-  isAccessible: function (type) {
-    if (!App.get('supports.opsDuringRollingUpgrade') && !['INIT', 'COMPLETED'].contains(this.get('upgradeState')) && !type.contains('upgrade_')) {
+  isAuthorized: function (authRoles, options) {
+    options = $.extend({ignoreWizard: false}, options);
+    var result = false;
+    authRoles = $.map(authRoles.split(","), $.trim);
+
+    // When Upgrade running(not suspended) only operations related to upgrade should be allowed
+    if ((!this.get('upgradeSuspended') && !authRoles.contains('CLUSTER.UPGRADE_DOWNGRADE_STACK')) &&
+        !App.get('supports.opsDuringRollingUpgrade') &&
+        !['INIT', 'COMPLETED'].contains(this.get('upgradeState')) ||
+        !App.auth){
       return false;
     }
 
-    if (App.router.get('wizardWatcherController').get('isNonWizardUser')) {
+    if (!options.ignoreWizard && App.router.get('wizardWatcherController.isNonWizardUser')) {
       return false;
     }
 
-    if (type.contains('upgrade_')) {
-      //slice off "upgrade_" prefix to have actual permission type
-      type = type.slice(8);
-    }
+    authRoles.forEach(function (auth) {
+      result = result || App.auth.contains(auth);
+    });
 
-    switch (type) {
-      case 'ADMIN':
-        return this.get('isAdmin');
-      case 'NON_ADMIN':
-        return !this.get('isAdmin');
-      case 'MANAGER':
-        return this.get('isAdmin') || this.get('isOperator');
-      case 'OPERATOR':
-        return this.get('isOperator');
-      case 'ONLY_ADMIN':
-        return this.get('isAdmin') && !this.get('isOperator');
-      default:
-        return false;
-    }
+    return result;
   },
 
   isStackServicesLoaded: false,
@@ -172,11 +185,26 @@ module.exports = Em.Application.create({
    * for now is used to disable move/HA actions
    * @type {boolean}
    */
-  isSingleNode: function() {
-    return this.get('allHostNames.length') === 1;
-  }.property('allHostNames.length'),
+  isSingleNode: Em.computed.equal('allHostNames.length', 1),
 
   allHostNames: [],
+
+  /**
+   * This object is populated to keep track of uninstalled components to be included in the layout for recommendation/validation call
+   * @type {object}
+   * keys = componentName, hostName
+   */
+  componentToBeAdded: {},
+
+
+  /**
+   * This object is populated to keep track of installed components to be excluded in the layout for recommendation/validation call
+   * @type {object}
+   * keys = componentName, hostName
+   */
+  componentToBeDeleted: {},
+
+  uiOnlyConfigDerivedFromTheme: [],
 
   currentStackVersionNumber: function () {
     var regExp = new RegExp(this.get('currentStackName') + '-');
@@ -187,31 +215,7 @@ module.exports = Em.Application.create({
     return (stringUtils.compareVersions(this.get('currentStackVersionNumber'), "2.3") > -1);
   }.property('currentStackVersionNumber'),
 
-  isHadoop22Stack: function () {
-    return (stringUtils.compareVersions(this.get('currentStackVersionNumber'), "2.2") > -1);
-  }.property('currentStackVersionNumber'),
-
-  /**
-   * Determines if current stack is 2.0.*
-   * @type {boolean}
-   */
-  isHadoop20Stack: function () {
-    return (stringUtils.compareVersions(this.get('currentStackVersionNumber'), "2.1") == -1 && stringUtils.compareVersions(this.get('currentStackVersionNumber'), "2.0") > -1);
-  }.property('currentStackVersionNumber'),
-
-  isHadoopWindowsStack: function() {
-    return this.get('currentStackName') == "HDPWIN";
-  }.property('currentStackName'),
-
-  /**
-   * when working with enhanced configs we should rely on stack version
-   * as version that is below 2.2 doesn't supports it
-   * even if flag <code>supports.enhancedConfigs<code> is true
-   * @type {boolean}
-   */
-  isClusterSupportsEnhancedConfigs: function() {
-    return this.get('isHadoop22Stack') && this.get('supports.enhancedConfigs');
-  }.property('isHadoop22Stack', 'supports.enhancedConfigs'),
+  isHadoopWindowsStack: Em.computed.equal('currentStackName', 'HDPWIN'),
 
   /**
    * If NameNode High Availability is enabled
@@ -220,8 +224,7 @@ module.exports = Em.Application.create({
    * @type {bool}
    */
   isHaEnabled: function () {
-    var isHDFSInstalled = App.Service.find().findProperty('serviceName','HDFS');
-    return !!isHDFSInstalled && !this.HostComponent.find().someProperty('componentName', 'SECONDARY_NAMENODE');
+    return App.Service.find('HDFS').get('isLoaded') && !App.HostComponent.find().someProperty('componentName', 'SECONDARY_NAMENODE');
   }.property('router.clusterController.dataLoadList.services', 'router.clusterController.isServiceContentFullyLoaded'),
 
   /**
@@ -308,6 +311,10 @@ module.exports = Em.Application.create({
    * @type {Em.Object}
    */
   components: Em.Object.create({
+    isMasterAddableOnlyOnHA: function () {
+      return App.StackServiceComponent.find().filterProperty('isMasterAddableOnlyOnHA').mapProperty('componentName')
+    }.property('App.router.clusterController.isLoaded'),
+
     allComponents: function () {
       return App.StackServiceComponent.find().mapProperty('componentName')
     }.property('App.router.clusterController.isLoaded'),
@@ -358,6 +365,10 @@ module.exports = Em.Application.create({
 
     clients: function () {
       return App.StackServiceComponent.find().filterProperty('isClient').mapProperty('componentName')
+    }.property('App.router.clusterController.isLoaded'),
+
+    nonHDP: function () {
+      return App.StackServiceComponent.find().filterProperty('isNonHDPComponent').mapProperty('componentName')
     }.property('App.router.clusterController.isLoaded')
   })
 });

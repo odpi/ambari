@@ -63,6 +63,56 @@ App.AddHostController = App.WizardController.extend({
   }),
 
   /**
+   * Load data for all steps until <code>current step</code>
+   */
+  loadMap: {
+    '1': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.load('hosts');
+          this.load('installOptions');
+          this.load('cluster');
+        }
+      }
+    ],
+    '2': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.loadServices();
+        }
+      }
+    ],
+    '3': [
+      {
+        type: 'async',
+        callback: function () {
+          var self = this,
+            dfd = $.Deferred();
+          this.loadClients();
+          this.loadServices();
+          this.loadMasterComponentHosts().done(function () {
+            self.loadSlaveComponentHosts();
+            self.load('hosts');
+            dfd.resolve();
+          });
+          return dfd.promise();
+        }
+      }
+    ],
+    '5': [
+      {
+        type: 'sync',
+        callback: function () {
+          this.loadServiceConfigProperties();
+          this.getServiceConfigGroups();
+        }
+      }
+    ]
+  },
+
+  /**
    * save info about wizard progress, particularly current step of wizard
    * @param currentStep
    * @param completed
@@ -164,7 +214,6 @@ App.AddHostController = App.WizardController.extend({
       });
     }
     this.set("content.slaveComponentHosts", slaveComponentHosts);
-    console.log("AddHostController.loadSlaveComponentHosts: loaded hosts ", slaveComponentHosts);
   },
 
   /**
@@ -176,7 +225,6 @@ App.AddHostController = App.WizardController.extend({
     var clients = this.getClientsToInstall(services, serviceComponents);
     this.setDBProperty('clientInfo', clients);
     this.set('content.clients', clients);
-    console.log("AddHostController.saveClients: saved list ", clients);
   },
 
   /**
@@ -283,7 +331,7 @@ App.AddHostController = App.WizardController.extend({
             var serviceName = service.get('serviceName');
             var configGroups = this.get('content.configGroups').filterProperty('ConfigGroup.tag', serviceName);
             var configGroupsNames = configGroups.mapProperty('ConfigGroup.group_name');
-            var defaultGroupName = service.get('displayName') + ' Default';
+            var defaultGroupName = 'Default';
             var selectedService = selectedServices.findProperty('serviceId', serviceName);
             configGroupsNames.unshift(defaultGroupName);
             if (selectedService) {
@@ -326,7 +374,7 @@ App.AddHostController = App.WizardController.extend({
         } else {
           var configGroups = this.get('content.configGroups').filterProperty('ConfigGroup.tag', serviceName);
           var configGroupsNames = configGroups.mapProperty('ConfigGroup.group_name').sort();
-          var defaultGroupName = service.get('displayName') + ' Default';
+          var defaultGroupName = 'Default';
           configGroupsNames.unshift(defaultGroupName);
           selectedServices.push({
             serviceId: serviceName,
@@ -349,33 +397,6 @@ App.AddHostController = App.WizardController.extend({
       serviceConfigProperties = App.db.get('Installer', 'serviceConfigProperties');
     }
     this.set('content.serviceConfigProperties', serviceConfigProperties);
-    console.log("AddHostController.loadServiceConfigProperties: loaded config ", serviceConfigProperties);
-  },
-  /**
-   * Load data for all steps until <code>current step</code>
-   */
-  loadAllPriorSteps: function () {
-    var step = this.get('currentStep');
-    switch (step) {
-      case '7':
-      case '6':
-      case '5':
-        this.loadServiceConfigProperties();
-        this.getServiceConfigGroups();
-      case '4':
-      case '3':
-        this.loadClients();
-        this.loadServices();
-        this.loadMasterComponentHosts();
-        this.loadSlaveComponentHosts();
-        this.load('hosts');
-      case '2':
-        this.loadServices();
-      case '1':
-        this.load('hosts');
-        this.load('installOptions');
-        this.load('cluster');
-    }
   },
 
   /**
@@ -407,6 +428,8 @@ App.AddHostController = App.WizardController.extend({
   /**
    * send request to server in order to install services
    * @param isRetry
+   * @param callback
+   * @param errorCallback
    */
   installServices: function (isRetry, callback, errorCallback) {
     callback = callback || Em.K;

@@ -20,6 +20,9 @@ limitations under the License.
 import os
 
 #Used in subsequent imports from params
+from resource_management.libraries.script.script import Script
+from resource_management.libraries.functions.default import default
+from resource_management.libraries.functions.format import format
 from install_params import exclude_packages
 from status_params import *
 
@@ -42,7 +45,7 @@ hdfs_exclude_file = default("/clusterHostInfo/decom_dn_hosts", [])
 exclude_file_path = config['configurations']['hdfs-site']['dfs.hosts.exclude']
 # HDFS High Availability properties
 dfs_ha_enabled = False
-dfs_ha_nameservices = default("/configurations/hdfs-site/dfs.nameservices", None)
+dfs_ha_nameservices = default("/configurations/hdfs-site/dfs.internal.nameservices", None)
 dfs_ha_namenode_ids = default(format("/configurations/hdfs-site/dfs.ha.namenodes.{dfs_ha_nameservices}"), None)
 
 namenode_id = None

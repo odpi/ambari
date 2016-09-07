@@ -18,8 +18,17 @@
 
 package org.apache.ambari.server.stack;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.state.stack.ConfigUpgradePack;
 import org.apache.ambari.server.state.stack.RepositoryXml;
 import org.apache.ambari.server.state.stack.StackMetainfoXml;
 import org.apache.ambari.server.state.stack.StackRoleCommandOrder;
@@ -29,16 +38,6 @@ import org.codehaus.jackson.map.ObjectMapper;
 import org.codehaus.jackson.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.xml.bind.JAXBException;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
 
 /**
  * Encapsulates IO operations on a stack definition stack directory.
@@ -95,8 +94,12 @@ public class StackDirectory extends StackDefinitionDirectory {
   /**
    * map of upgrade pack name to upgrade pack
    */
-  //todo: should be a collection but upgrade pack doesn't have a name attribute
   private Map<String, UpgradePack> upgradePacks;
+
+  /**
+   * Config delta from prev stack
+   */
+  private ConfigUpgradePack configUpgradePack;
 
   /**
    * metainfo file representation
@@ -255,11 +258,17 @@ public class StackDirectory extends StackDefinitionDirectory {
   }
 
   /**
+   * @return Config delta from prev stack or null if no config upgrade patches available
+   */
+  public ConfigUpgradePack getConfigUpgradePack() {
+    return configUpgradePack;
+  }
+
+  /**
    * Obtain the object representation of the stack role_command_order.json file
    *
    * @return object representation of the stack role_command_order.json file
    */
-
   public StackRoleCommandOrder getRoleCommandOrder() {
     return roleCommandOrder;
   }
@@ -319,12 +328,12 @@ public class StackDirectory extends StackDefinitionDirectory {
       if (repositoryFile.exists()) {
         try {
           repoFile = unmarshaller.unmarshal(RepositoryXml.class, repositoryFile);
-        } catch (JAXBException e) {
+        } catch (Exception e) {
           repoFile = new RepositoryXml();
           repoFile.setValid(false);
           String msg = "Unable to parse repo file at location: " +
                        repositoryFile.getAbsolutePath();
-          repoFile.setErrors(msg);
+          repoFile.addError(msg);
           LOG.warn(msg);
         }
       }
@@ -355,12 +364,12 @@ public class StackDirectory extends StackDefinitionDirectory {
 
       try {
         metaInfoXml = unmarshaller.unmarshal(StackMetainfoXml.class, stackMetaInfoFile);
-      } catch (JAXBException e) {
+      } catch (Exception e) {
         metaInfoXml = new StackMetainfoXml();
         metaInfoXml.setValid(false);
         String msg = "Unable to parse stack metainfo.xml file at location: " +
                      stackMetaInfoFile.getAbsolutePath();
-        metaInfoXml.setErrors(msg);
+        metaInfoXml.addError(msg);
         LOG.warn(msg);
       }
     }
@@ -402,25 +411,34 @@ public class StackDirectory extends StackDefinitionDirectory {
     serviceDirectories = dirs;
   }
 
+
   /**
    * Parse all stack upgrade files for the stack.
    *
-   * @param subDirs  stack sub directories
+   * @param subDirs stack sub directories
    * @throws AmbariException if unable to parse stack upgrade file
    */
   private void parseUpgradePacks(Collection<String> subDirs) throws AmbariException {
-    Map<String, UpgradePack> upgradeMap = new HashMap<String, UpgradePack>();
+    Map<String, UpgradePack> upgradeMap = new HashMap<>();
+    ConfigUpgradePack configUpgradePack = null;
     if (subDirs.contains(UPGRADE_PACK_FOLDER_NAME)) {
       File f = new File(getAbsolutePath() + File.separator + UPGRADE_PACK_FOLDER_NAME);
       if (f.isDirectory()) {
         upgradesDir = f.getAbsolutePath();
         for (File upgradeFile : f.listFiles(XML_FILENAME_FILTER)) {
-          try {
-            upgradeMap.put(FilenameUtils.removeExtension(upgradeFile.getName()),
-                unmarshaller.unmarshal(UpgradePack.class, upgradeFile));
-          } catch (JAXBException e) {
-            throw new AmbariException("Unable to parse stack upgrade file at location: " +
-                upgradeFile.getAbsolutePath(), e);
+          if (upgradeFile.getName().toLowerCase().startsWith(CONFIG_UPGRADE_XML_FILENAME_PREFIX)) {
+            if (configUpgradePack == null) {
+              configUpgradePack = parseConfigUpgradePack(upgradeFile);
+            }
+            else { // If user messed things up with lower/upper case filenames
+              throw new AmbariException(String.format("There are multiple files with name like %s" + upgradeFile.getAbsolutePath()));
+            }
+          }
+          else {
+            String upgradePackName = FilenameUtils.removeExtension(upgradeFile.getName());
+            UpgradePack pack = parseUpgradePack(upgradePackName, upgradeFile);
+            pack.setName(upgradePackName);
+            upgradeMap.put(upgradePackName, pack);
           }
         }
       }
@@ -430,32 +448,67 @@ public class StackDirectory extends StackDefinitionDirectory {
       LOG.info("Stack '{}' doesn't contain an upgrade directory ", getPath());
     }
 
-    if (! upgradeMap.isEmpty()) {
+    if (!upgradeMap.isEmpty()) {
       upgradePacks = upgradeMap;
     }
+
+    if (configUpgradePack != null) {
+      this.configUpgradePack = configUpgradePack;
+    } else {
+      LOG.info("Stack '{}' doesn't contain config upgrade pack file", getPath());
+    }
+  }
+
+  private UpgradePack parseUpgradePack(final String packName, File upgradeFile) throws AmbariException {
+    UpgradePack pack = null;
+    try {
+      pack = unmarshaller.unmarshal(UpgradePack.class, upgradeFile);
+      pack.setName(packName);
+    }
+    catch (Exception e) {
+      if (upgradeFile == null) {
+        throw new AmbariException("Null upgrade pack");
+      }
+      throw new AmbariException("Unable to parse stack upgrade file at location: " + upgradeFile.getAbsolutePath(), e);
+    }
+    return pack;
+  }
+
+  private ConfigUpgradePack parseConfigUpgradePack(File upgradeFile) throws AmbariException {
+    ConfigUpgradePack pack = null;
+    try {
+      pack = unmarshaller.unmarshal(ConfigUpgradePack.class, upgradeFile);
+    }
+    catch (Exception e) {
+      if (upgradeFile == null) {
+        throw new AmbariException("Null config upgrade pack");
+      }
+      throw new AmbariException("Unable to parse stack upgrade file at location: " + upgradeFile.getAbsolutePath(), e);
+    }
+    return pack;
   }
 
   /**
    * Parse role command order file
    */
-
   private void parseRoleCommandOrder() {
     HashMap<String, Object> result = null;
     ObjectMapper mapper = new ObjectMapper();
     try {
-      TypeReference<Map<String, Object>> rcoElementTypeReference = new TypeReference<Map<String, Object>>() {
-      };
+      TypeReference<Map<String, Object>> rcoElementTypeReference = new TypeReference<Map<String, Object>>() {};
       if (rcoFilePath != null) {
         File file = new File(rcoFilePath);
         result = mapper.readValue(file, rcoElementTypeReference);
         LOG.info("Role command order info was loaded from file: {}", file.getAbsolutePath());
       } else {
-        InputStream rcoInputStream = ClassLoader.getSystemResourceAsStream(ROLE_COMMAND_ORDER_FILE);
-        result = mapper.readValue(rcoInputStream, rcoElementTypeReference);
-        LOG.info("Role command order info was loaded from classpath: " +
-            ClassLoader.getSystemResource(ROLE_COMMAND_ORDER_FILE));
+        LOG.info("Stack '{}' doesn't contain role command order file", getPath());
+        result = new HashMap<String, Object>();
       }
       roleCommandOrder = new StackRoleCommandOrder(result);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Role Command Order for " + rcoFilePath);
+        roleCommandOrder.printRoleCommandOrder(LOG);
+      }
     } catch (IOException e) {
       LOG.error(String.format("Can not read role command order info %s", rcoFilePath), e);
     }

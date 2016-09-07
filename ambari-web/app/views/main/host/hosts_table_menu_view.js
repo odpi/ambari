@@ -17,10 +17,16 @@
  */
 
 var App = require('app');
+var O = Em.Object;
 
+/**
+ * @class HostTableMenuView
+ */
 App.HostTableMenuView = Em.View.extend({
 
   templateName: require('templates/main/host/bulk_operation_menu'),
+
+  controllerBinding: 'App.router.bulkOperationsController',
 
   menuItems: function () {
     return {
@@ -30,38 +36,29 @@ App.HostTableMenuView = Em.View.extend({
     };
   }.property('App.router.clusterController.isLoaded'),
 
-  components: function(){
-    var menuItems = [
-    Em.Object.create({
-      serviceName: 'HDFS',
-      componentName: 'DATANODE',
-      masterComponentName: 'NAMENODE',
-      componentNameFormatted: Em.I18n.t('dashboard.services.hdfs.datanodes')
-    }),
-    Em.Object.create({
-      serviceName: 'YARN',
-      componentName: 'NODEMANAGER',
-      masterComponentName: 'RESOURCEMANAGER',
-      componentNameFormatted: Em.I18n.t('dashboard.services.yarn.nodeManagers')
-    }),
-    Em.Object.create({
-      serviceName: 'HBASE',
-      componentName: 'HBASE_REGIONSERVER',
-      masterComponentName: 'HBASE_MASTER',
-      componentNameFormatted: Em.I18n.t('dashboard.services.hbase.regionServers')
-    }),
-    Em.Object.create({
-      serviceName: 'STORM',
-      componentName: 'SUPERVISOR',
-      masterComponentName: 'SUPERVISOR',
-      componentNameFormatted: Em.I18n.t('dashboard.services.storm.supervisors')
-    })];
-
-    return menuItems.filter(function(item){
-      return App.Service.find().findProperty('serviceName',item.serviceName);
+  components: function () {
+    var serviceNames = App.Service.find().mapProperty('serviceName');
+    var menuItems = this.getBulkMenuItemsPerServiceComponent();
+    return menuItems.filter(function (item) {
+      return serviceNames.contains(item.serviceName);
     });
   }.property(),
 
+  getBulkMenuItemsPerServiceComponent: function(){
+    var menuItems = [];
+    App.StackServiceComponent.find().forEach(function (stackComponent) {
+      if(stackComponent.get('hasBulkCommandsDefinition')){
+        var menuItem = O.create({
+          serviceName: stackComponent.get('serviceName'),
+          componentName: stackComponent.get('componentName'),
+          masterComponentName: stackComponent.get('bulkCommandsMasterComponentName'),
+          componentNameFormatted: stackComponent.get('bulkCommandsDisplayName')
+        });
+        menuItems.push(menuItem);
+      }
+    }, this);
+    return menuItems;
+  },
 
   /**
    * slaveItemView build second-level menu
@@ -93,63 +90,93 @@ App.HostTableMenuView = Em.View.extend({
 
     operationsInfo: function () {
       var content = this.get('content');
-      var menuItems = Em.A([
-        Em.Object.create({
-          label: Em.I18n.t('common.start'),
-          operationData: Em.Object.create({
-            action: App.HostComponentStatus.started,
-            message: Em.I18n.t('common.start'),
-            componentName: content.componentName,
-            serviceName: content.serviceName,
-            componentNameFormatted: content.componentNameFormatted
+      var menuItems = Em.A();
+      if (App.isAuthorized("SERVICE.START_STOP")) {
+        menuItems.pushObjects([
+          O.create({
+            label: Em.I18n.t('common.start'),
+            operationData: O.create({
+              action: App.HostComponentStatus.started,
+              message: Em.I18n.t('common.start'),
+              componentName: content.componentName,
+              serviceName: content.serviceName,
+              componentNameFormatted: content.componentNameFormatted
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('common.stop'),
+            operationData: O.create({
+              action: App.HostComponentStatus.stopped,
+              message: Em.I18n.t('common.stop'),
+              componentName: content.componentName,
+              serviceName: content.serviceName,
+              componentNameFormatted: content.componentNameFormatted
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('common.restart'),
+            operationData: O.create({
+              action: 'RESTART',
+              message: Em.I18n.t('common.restart'),
+              componentName: content.componentName,
+              serviceName: content.serviceName,
+              componentNameFormatted: content.componentNameFormatted
+            })
           })
-        }),
-        Em.Object.create({
-          label: Em.I18n.t('common.stop'),
-          operationData: Em.Object.create({
-            action: App.HostComponentStatus.stopped,
-            message: Em.I18n.t('common.stop'),
-            componentName: content.componentName,
-            serviceName: content.serviceName,
-            componentNameFormatted: content.componentNameFormatted
+        ])
+      }
+      if (App.isAuthorized("HOST.ADD_DELETE_COMPONENTS")) {
+        menuItems.pushObjects([
+          O.create({
+            label: Em.I18n.t('common.add'),
+            operationData: O.create({
+              action: 'ADD',
+              message: Em.I18n.t('common.add'),
+              componentName: content.componentName,
+              serviceName: content.serviceName,
+              componentNameFormatted: content.componentNameFormatted
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('common.delete'),
+            delete: true,
+            operationData: O.create({
+              action: 'DELETE',
+              message: Em.I18n.t('common.delete'),
+              componentName: content.componentName,
+              serviceName: content.serviceName,
+              componentNameFormatted: content.componentNameFormatted
+            })
           })
-        }),
-        Em.Object.create({
-          label: Em.I18n.t('common.restart'),
-          operationData: Em.Object.create({
-            action: 'RESTART',
-            message: Em.I18n.t('common.restart'),
-            componentName: content.componentName,
-            serviceName: content.serviceName,
-            componentNameFormatted: content.componentNameFormatted
+        ])
+      }
+      if (App.isAuthorized("SERVICE.DECOMMISSION_RECOMMISSION") && App.get('components.decommissionAllowed').contains(content.componentName)) {
+        menuItems.pushObjects([
+          O.create({
+            label: Em.I18n.t('common.decommission'),
+            decommission: true,
+            operationData: O.create({
+              action: 'DECOMMISSION',
+              message: Em.I18n.t('common.decommission'),
+              componentName: content.masterComponentName,
+              realComponentName: content.componentName,
+              serviceName: content.serviceName,
+              componentNameFormatted: content.componentNameFormatted
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('common.recommission'),
+            decommission: true,
+            operationData: O.create({
+              action: 'DECOMMISSION_OFF',
+              message: Em.I18n.t('common.recommission'),
+              componentName: content.masterComponentName,
+              realComponentName: content.componentName,
+              serviceName: content.serviceName,
+              componentNameFormatted: content.componentNameFormatted
+            })
           })
-        })
-      ]);
-      if (App.get('components.decommissionAllowed').contains(content.componentName)) {
-        menuItems.pushObject(Em.Object.create({
-          label: Em.I18n.t('common.decommission'),
-          decommission: true,
-          operationData: Em.Object.create({
-            action: 'DECOMMISSION',
-            message: Em.I18n.t('common.decommission'),
-            componentName: content.masterComponentName,
-            realComponentName: content.componentName,
-            serviceName: content.serviceName,
-            componentNameFormatted: content.componentNameFormatted
-          })
-        }));
-        menuItems.pushObject(Em.Object.create({
-          label: Em.I18n.t('common.recommission'),
-          decommission: true,
-          operationData: Em.Object.create({
-            action: 'DECOMMISSION_OFF',
-            message: Em.I18n.t('common.recommission'),
-            componentName: content.masterComponentName,
-            realComponentName: content.componentName,
-            serviceName: content.serviceName,
-            componentNameFormatted: content.componentNameFormatted
-          })
-        }));
+        ]);
       }
       return menuItems;
     }.property("content"),
@@ -161,13 +188,8 @@ App.HostTableMenuView = Em.View.extend({
     commonOperationView: Em.View.extend({
       tagName: 'li',
 
-      /**
-       * click function use
-       * App.MainHostView as a thirl level parent
-       * and runs it's function
-       */
       click: function () {
-        this.get('parentView.parentView.parentView').bulkOperationConfirm(this.get('content'), this.get('selection'));
+        this.get('controller').bulkOperationConfirm(this.get('content'), this.get('selection'));
       }
     }),
 
@@ -187,23 +209,18 @@ App.HostTableMenuView = Em.View.extend({
 
       tooltipMsg: function () {
         return (this.get('disabledElement') == 'disabled') ?
-           Em.I18n.t('hosts.decommission.tooltip.warning').format(this.get('content.message'),  App.format.role(this.get('content.componentName'))) : '';
-      }.property('disabledElement','content.componentName'),
+          Em.I18n.t('hosts.decommission.tooltip.warning').format(this.get('content.message'), App.format.role(this.get('content.componentName'), false)) : '';
+      }.property('disabledElement', 'content.componentName'),
 
       disabledElement: function () {
-        return (this.get('service.workStatus') != 'STARTED') ? 'disabled' : '';
+        return this.get('service.workStatus') == 'STARTED' ? '' : 'disabled';
       }.property('service.workStatus'),
 
-      /**
-       * click function use
-       * App.MainHostView as a thirl level parent
-       * and runs it's function
-       */
       click: function () {
         if (this.get('disabledElement') == 'disabled') {
           return;
         }
-        this.get('parentView.parentView.parentView').bulkOperationConfirm(this.get('content'), this.get('selection'));
+        this.get('controller').bulkOperationConfirm(this.get('content'), this.get('selection'));
       },
 
       didInsertElement: function () {
@@ -237,54 +254,79 @@ App.HostTableMenuView = Em.View.extend({
      * @returns {Array}
      */
     operationsInfo: function () {
-      return [
-        Em.Object.create({
-          label: Em.I18n.t('hosts.host.details.startAllComponents'),
-          operationData: Em.Object.create({
-            action: 'STARTED',
-            actionToCheck: 'INSTALLED',
-            message: Em.I18n.t('hosts.host.details.startAllComponents')
+      var result = [];
+      if (App.isAuthorized("SERVICE.START_STOP")) {
+        result = result.concat([
+          O.create({
+            label: Em.I18n.t('hosts.host.details.startAllComponents'),
+            operationData: O.create({
+              action: 'STARTED',
+              actionToCheck: 'INSTALLED',
+              message: Em.I18n.t('hosts.host.details.startAllComponents')
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('hosts.host.details.stopAllComponents'),
+            operationData: O.create({
+              action: 'INSTALLED',
+              actionToCheck: 'STARTED',
+              message: Em.I18n.t('hosts.host.details.stopAllComponents')
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('hosts.table.menu.l2.restartAllComponents'),
+            operationData: O.create({
+              action: 'RESTART',
+              message: Em.I18n.t('hosts.table.menu.l2.restartAllComponents')
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('hosts.table.menu.l2.reinstallFailedComponents'),
+            operationData: O.create({
+              action: 'REINSTALL',
+              message: Em.I18n.t('hosts.table.menu.l2.reinstallFailedComponents')
+            })
           })
-        }),
-        Em.Object.create({
-          label: Em.I18n.t('hosts.host.details.stopAllComponents'),
-          operationData: Em.Object.create({
-            action: 'INSTALLED',
-            actionToCheck: 'STARTED',
-            message: Em.I18n.t('hosts.host.details.stopAllComponents')
+        ]);
+      }
+
+      if (App.isAuthorized("HOST.TOGGLE_MAINTENANCE")) {
+        result = result.concat([
+          O.create({
+            label: Em.I18n.t('passiveState.turnOn'),
+            operationData: O.create({
+              state: 'ON',
+              action: 'PASSIVE_STATE',
+              message: Em.I18n.t('passiveState.turnOnFor').format('hosts')
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('passiveState.turnOff'),
+            operationData: O.create({
+              state: 'OFF',
+              action: 'PASSIVE_STATE',
+              message: Em.I18n.t('passiveState.turnOffFor').format('hosts')
+            })
           })
-        }),
-        Em.Object.create({
-          label: Em.I18n.t('hosts.table.menu.l2.restartAllComponents'),
-          operationData: Em.Object.create({
-            action: 'RESTART',
-            message: Em.I18n.t('hosts.table.menu.l2.restartAllComponents')
-          })
-        }),
-        Em.Object.create({
-          label: Em.I18n.t('passiveState.turnOn'),
-          operationData: Em.Object.create({
-            state: 'ON',
-            action: 'PASSIVE_STATE',
-            message: Em.I18n.t('passiveState.turnOnFor').format('hosts')
-          })
-        }),
-        Em.Object.create({
-          label: Em.I18n.t('passiveState.turnOff'),
-          operationData: Em.Object.create({
-            state: 'OFF',
-            action: 'PASSIVE_STATE',
-            message: Em.I18n.t('passiveState.turnOffFor').format('hosts')
-          })
-        }),
-        Em.Object.create({
-          label: Em.I18n.t('hosts.host.details.setRackId'),
-          operationData: Em.Object.create({
-            action: 'SET_RACK_INFO',
-            message: Em.I18n.t('hosts.host.details.setRackId').format('hosts')
-          })
+        ]);
+      }
+      result = result.concat(O.create({
+        label: Em.I18n.t('hosts.host.details.setRackId'),
+        operationData: O.create({
+          action: 'SET_RACK_INFO',
+          message: Em.I18n.t('hosts.host.details.setRackId').format('hosts')
         })
-      ];
+      }));
+      if (App.isAuthorized("HOST.ADD_DELETE_HOSTS")) {
+        result = result.concat(O.create({
+          label: Em.I18n.t('hosts.host.details.deleteHosts'),
+          operationData: O.create({
+            action: 'DELETE',
+            message: Em.I18n.t('hosts.host.details.deleteHosts')
+          })
+        }));
+      }
+      return result;
     }.property(),
 
     /**
@@ -294,14 +336,10 @@ App.HostTableMenuView = Em.View.extend({
     operationView: Em.View.extend({
       tagName: 'li',
 
-      /**
-       * click function use
-       * App.MainHostView as a thirl level parent
-       * and runs it's function
-       */
       click: function () {
-        this.get('parentView.parentView.parentView').bulkOperationConfirm(this.get('content'), this.get('selection'));
+        this.get('controller').bulkOperationConfirm(this.get('content'), this.get('selection'));
       }
     })
   })
+
 });

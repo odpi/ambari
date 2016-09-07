@@ -19,7 +19,6 @@
 
 var App = require('app');
 require('messages');
-var filters = require('views/common/filter_view');
 require('mixins/common/userPref');
 require('mixins/common/localStorage');
 require('views/main/dashboard/widgets');
@@ -29,11 +28,11 @@ describe('App.MainDashboardWidgetsView', function () {
   var view = App.MainDashboardWidgetsView.create();
 
   describe('#setInitPrefObject', function () {
-    var host_metrics_widgets_count = 4;
-    var hdfs_widgets_count = 7;
-    var hbase_widgets_count = 4;
-    var yarn_widgets_count = 4;
-    var total_widgets_count = 20;
+    var hostMetricsWidgetsCount = 4;
+    var hdfsWidgetsCount = 7;
+    var hbaseWidgetsCount = 4;
+    var yarnWidgetsCount = 4;
+    var totalWidgetsCount = 20;
     var tests = Em.A([
       {
         models: {
@@ -43,7 +42,7 @@ describe('App.MainDashboardWidgetsView', function () {
           yarn_model: null
         },
         e: {
-          visibleL: total_widgets_count - host_metrics_widgets_count - hdfs_widgets_count - hbase_widgets_count - yarn_widgets_count - 1,
+          visibleL: totalWidgetsCount - hostMetricsWidgetsCount - hdfsWidgetsCount - hbaseWidgetsCount - yarnWidgetsCount - 1,
           hiddenL: 0
         },
         m: 'All models are null'
@@ -56,7 +55,7 @@ describe('App.MainDashboardWidgetsView', function () {
           yarn_model: null
         },
         e: {
-          visibleL: total_widgets_count - hdfs_widgets_count - hbase_widgets_count - yarn_widgets_count - 1,
+          visibleL: totalWidgetsCount - hdfsWidgetsCount - hbaseWidgetsCount - yarnWidgetsCount - 1,
           hiddenL: 0
         },
         m: 'hdfs_model, hbase_model, yarn_model are null'
@@ -69,7 +68,7 @@ describe('App.MainDashboardWidgetsView', function () {
           yarn_model: null
         },
         e: {
-          visibleL: total_widgets_count - hbase_widgets_count - yarn_widgets_count - 1,
+          visibleL: totalWidgetsCount - hbaseWidgetsCount - yarnWidgetsCount - 1,
           hiddenL: 0
         },
         m: 'hbase_model, yarn_model are null'
@@ -82,7 +81,7 @@ describe('App.MainDashboardWidgetsView', function () {
           yarn_model: null
         },
         e: {
-          visibleL: total_widgets_count - hbase_widgets_count - yarn_widgets_count - 1,
+          visibleL: totalWidgetsCount - hbaseWidgetsCount - yarnWidgetsCount - 1,
           hiddenL: 0
         },
         m: 'hbase_model and yarn_model are null'
@@ -95,7 +94,7 @@ describe('App.MainDashboardWidgetsView', function () {
           yarn_model: null
         },
         e: {
-          visibleL: total_widgets_count - yarn_widgets_count - 1,
+          visibleL: totalWidgetsCount - yarnWidgetsCount - 1,
           hiddenL: 1
         },
         m: 'yarn_model is null'
@@ -108,34 +107,41 @@ describe('App.MainDashboardWidgetsView', function () {
           yarn_model: {}
         },
         e: {
-          visibleL: total_widgets_count,
+          visibleL: totalWidgetsCount,
           hiddenL: 1
         },
         m: 'All models are not null'
       }
     ]);
     tests.forEach(function (test) {
-      it(test.m, function () {
-        view.set('host_metrics_model', test.models.host_metrics_model);
-        view.set('hdfs_model', test.models.hdfs_model);
-        view.set('hbase_model', test.models.hbase_model);
-        view.set('yarn_model', test.models.yarn_model);
-        view.setInitPrefObject();
-        expect(view.get('initPrefObject.visible.length')).to.equal(test.e.visibleL);
-        expect(view.get('initPrefObject.hidden.length')).to.equal(test.e.hiddenL);
+      describe(test.m, function () {
+
+        beforeEach(function () {
+          view.set('host_metrics_model', test.models.host_metrics_model);
+          view.set('hdfs_model', test.models.hdfs_model);
+          view.set('hbase_model', test.models.hbase_model);
+          view.set('yarn_model', test.models.yarn_model);
+          view.setInitPrefObject();
+        });
+
+        it('visible.length is ' + test.e.visibleL, function () {
+          expect(view.get('initPrefObject.visible.length')).to.equal(test.e.visibleL);
+        });
+
+        it('hidden.length is ' + test.e.hiddenL, function () {
+          expect(view.get('initPrefObject.hidden.length')).to.equal(test.e.hiddenL);
+        });
+
       });
     });
   });
 
   describe('#persistKey', function () {
     beforeEach(function () {
-      sinon.stub(App.router, 'get', function (k) {
-        if ('loginName' === k) return 'tdk';
-        return Em.get(App.router, k);
-      });
+      sinon.stub(App, 'get').withArgs('router.loginName').returns('tdk');
     });
     afterEach(function () {
-      App.router.get.restore();
+      App.get.restore();
     });
     it('Check it', function () {
       expect(view.get('persistKey')).to.equal('user-pref-tdk-dashboard');
@@ -143,24 +149,32 @@ describe('App.MainDashboardWidgetsView', function () {
   });
 
   describe("#didInsertElement()", function () {
-    before(function () {
+    beforeEach(function () {
       sinon.stub(view, 'setWidgetsDataModel', Em.K);
       sinon.stub(view, 'setInitPrefObject', Em.K);
       sinon.stub(view, 'setOnLoadVisibleWidgets', Em.K);
       sinon.stub(Em.run, 'next', Em.K);
+      view.didInsertElement();
     });
-    after(function () {
+    afterEach(function () {
       view.setWidgetsDataModel.restore();
       view.setInitPrefObject.restore();
       view.setOnLoadVisibleWidgets.restore();
       Em.run.next.restore();
     });
-    it("", function () {
-      view.didInsertElement();
+    it("setWidgetsDataModel is called once", function () {
       expect(view.setWidgetsDataModel.calledOnce).to.be.true;
+    });
+    it("setInitPrefObject is called once", function () {
       expect(view.setInitPrefObject.calledOnce).to.be.true;
+    });
+    it("setOnLoadVisibleWidgets is called once", function () {
       expect(view.setOnLoadVisibleWidgets.calledOnce).to.be.true;
+    });
+    it("makeSortable is called in the next loop", function () {
       expect(Em.run.next.calledWith(view, 'makeSortable')).to.be.true;
+    });
+    it("isDataLoaded is true", function () {
       expect(view.get('isDataLoaded')).to.be.true
     });
   });
@@ -218,45 +232,26 @@ describe('App.MainDashboardWidgetsView', function () {
         });
         sinon.stub(view, 'widgetsMapper').returns(widget);
       });
+
       afterEach(function () {
         view.getUserPref.restore();
         view.widgetsMapper.restore();
       });
-      it("testMode is on", function () {
-        App.set('testMode', true);
-        plusButtonFilterView.set('hiddenWidgets', [widget]);
-        plusButtonFilterView.applyFilter();
-        expect(view.getUserPref.called).to.be.false;
-        expect(plusButtonFilterView.get('visibleWidgets')).not.to.be.empty;
-        expect(plusButtonFilterView.get('hiddenWidgets')).to.be.empty;
-      });
+
       it("testMode is off", function () {
-        App.set('testMode', false);
         plusButtonFilterView.applyFilter();
         expect(view.getUserPref.calledOnce).to.be.true;
       });
     });
 
     describe("#applyFilterComplete()", function () {
-      var widget = {checked: true};
       beforeEach(function () {
         sinon.stub(view, 'postUserPref');
         sinon.stub(view, 'translateToReal');
-      });
-      afterEach(function () {
-        view.postUserPref.restore();
-        view.translateToReal.restore();
-      });
-      beforeEach(function () {
         sinon.stub(App.router, 'get', function (k) {
           if ('loginName' === k) return 'tdk';
           return Em.get(App.router, k);
         });
-      });
-      afterEach(function () {
-        App.router.get.restore();
-      });
-      it("", function () {
         plusButtonFilterView.set('hiddenWidgets', [
           Em.Object.create({
             checked: true,
@@ -277,7 +272,16 @@ describe('App.MainDashboardWidgetsView', function () {
         }));
         view.set('persistKey', 'key');
         plusButtonFilterView.applyFilterComplete();
+      });
+      afterEach(function () {
+        view.postUserPref.restore();
+        view.translateToReal.restore();
+        App.router.get.restore();
+      });
+      it("postUserPref is called once", function () {
         expect(view.postUserPref.calledOnce).to.be.true;
+      });
+      it("translateToReal is called with correct data", function () {
         expect(view.translateToReal.getCall(0).args[0]).to.eql(Em.Object.create({
           dashboardVersion: 'new',
           visible: [1],
@@ -286,6 +290,8 @@ describe('App.MainDashboardWidgetsView', function () {
           ],
           threshold: 'threshold'
         }));
+      });
+      it("1 hidden widget", function () {
         expect(plusButtonFilterView.get('hiddenWidgets.length')).to.equal(1);
       });
     });
@@ -337,34 +343,35 @@ describe('App.MainDashboardWidgetsView', function () {
       sinon.stub(view, 'translateToReal', Em.K);
       sinon.stub(view, 'getUserPref').returns({complete: Em.K});
     });
+
     afterEach(function () {
       view.translateToReal.restore();
       view.getUserPref.restore();
     });
 
-    it("testMode is true", function () {
-      App.set('testMode', true);
-      view.setOnLoadVisibleWidgets();
-      expect(view.translateToReal.calledOnce).to.be.true;
-    });
     it("testMode is false", function () {
-      App.set('testMode', false);
       view.setOnLoadVisibleWidgets();
       expect(view.getUserPref.calledOnce).to.be.true;
     });
   });
 
   describe("#removeWidget()", function () {
-    it("", function () {
-      var widget = {};
-      var value = {
+    var widget;
+    var value;
+    beforeEach(function () {
+      widget = {};
+      value = {
         visible: [widget],
         hidden: [
           [widget]
         ]
       };
       value = view.removeWidget(value, widget);
+    });
+    it("value.visible is empty", function () {
       expect(value.visible).to.be.empty;
+    });
+    it("value.hidden is empty", function () {
       expect(value.hidden).to.be.empty;
     });
   });
@@ -402,12 +409,12 @@ describe('App.MainDashboardWidgetsView', function () {
 
   describe("#persistKey", function () {
     before(function () {
-      sinon.stub(App.router, 'get').withArgs('loginName').returns('user');
+      sinon.stub(App, 'get').withArgs('router.loginName').returns('user');
     });
     after(function () {
-      App.router.get.restore();
+      App.get.restore();
     });
-    it("", function () {
+    it("depends on router.loginName", function () {
       view.propertyDidChange('persistKey');
       expect(view.get('persistKey')).to.equal('user-pref-user-dashboard');
     });
@@ -442,29 +449,46 @@ describe('App.MainDashboardWidgetsView', function () {
   });
 
   describe("#resetAllWidgets()", function () {
-    before(function () {
-      sinon.stub(App, 'showConfirmationPopup', Em.K);
-    });
-    after(function () {
-      App.showConfirmationPopup.restore();
-    });
-    it("", function () {
-      view.resetAllWidgets();
-      expect(App.showConfirmationPopup.calledOnce).to.be.true;
-    });
-  });
 
-  describe("#gangliaUrl", function () {
-    before(function () {
-      sinon.stub(App.router, 'get').withArgs('clusterController.gangliaUrl').returns('url');
+    beforeEach(function () {
+      sinon.stub(App, 'showConfirmationPopup', Em.clb);
+      sinon.stub(view, 'postUserPref', Em.K);
+      sinon.stub(view, 'setDBProperty', Em.K);
+      sinon.stub(view, 'translateToReal', Em.K);
+      view.setProperties({
+        currentTimeRangeIndex: 1,
+        customStartTime: 1000,
+        customEndTime: 2000
+      });
+      view.resetAllWidgets();
     });
-    after(function () {
-      App.router.get.restore();
+
+    afterEach(function () {
+      App.showConfirmationPopup.restore();
+      view.postUserPref.restore();
+      view.setDBProperty.restore();
+      view.translateToReal.restore();
     });
-    it("", function () {
-      view.propertyDidChange('gangliaUrl');
-      expect(view.get('gangliaUrl')).to.equal('url/?r=hour&cs=&ce=&m=&s=by+name&c=HDPSlaves&tab=m&vn=');
+
+    it('persist reset', function () {
+      expect(view.postUserPref.calledOnce).to.be.true;
     });
+    it('local storage reset', function () {
+      expect(view.setDBProperty.calledOnce).to.be.true;
+    });
+    it('time range reset', function () {
+      expect(view.get('currentTimeRangeIndex')).to.equal(0);
+    });
+    it('custom start time reset', function () {
+      expect(view.get('customStartTime')).to.be.null;
+    });
+    it('custom end time reset', function () {
+      expect(view.get('customEndTime')).to.be.null;
+    });
+    it('default settings application', function () {
+      expect(view.translateToReal.calledOnce).to.be.true;
+    });
+
   });
 
   describe('#checkServicesChange', function () {
@@ -488,7 +512,7 @@ describe('App.MainDashboardWidgetsView', function () {
     Em.keys(widgetsMap).forEach(function (item, index, array) {
       it(notEmptyModelTitle.format(item), function () {
         array.forEach(function (modelName) {
-          view.set(modelName, modelName == item ? {} : null);
+          view.set(modelName, modelName === item ? {} : null);
         });
         expect(view.checkServicesChange(emptyCurrentPref).visible).to.eql(widgetsMap[item]);
       });
@@ -498,7 +522,7 @@ describe('App.MainDashboardWidgetsView', function () {
       it(emptyModelTitle.format(item), function () {
         var expected = [];
         array.forEach(function (modelName) {
-          if (modelName == item) {
+          if (modelName === item) {
             view.set(modelName, null);
           } else {
             view.set(modelName, {});

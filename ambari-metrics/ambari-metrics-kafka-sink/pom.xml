@@ -22,11 +22,11 @@ limitations under the License.
   <parent>
     <artifactId>ambari-metrics</artifactId>
     <groupId>org.apache.ambari</groupId>
-    <version>2.0.0-SNAPSHOT</version>
+    <version>2.0.0.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>ambari-metrics-kafka-sink</artifactId>
-  <version>2.0.0-SNAPSHOT</version>
+  <version>2.0.0.0-SNAPSHOT</version>
   <name>Ambari Metrics Kafka Sink</name>
   <packaging>jar</packaging>
   <build>
@@ -43,7 +43,7 @@ limitations under the License.
               <goal>copy-dependencies</goal>
             </goals>
             <configuration>
-              <includeArtifactIds>commons-codec,commons-collections,commons-httpclient,commons-lang,commons-logging,jackson-core-asl,jackson-mapper-asl,jackson-xc</includeArtifactIds>
+              <includeArtifactIds>commons-codec,commons-collections,commons-lang,commons-logging,jackson-core-asl,jackson-mapper-asl,jackson-xc</includeArtifactIds>
               <outputDirectory>${project.build.directory}/lib</outputDirectory>
             </configuration>
           </execution>
@@ -94,8 +94,8 @@ limitations under the License.
             <configuration>
               <name>ambariVersion</name>
               <value>${project.version}</value>
-              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
-              <replacement>$1.$2.$3</replacement>
+              <regex>^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)(\.|-).*</regex>
+              <replacement>$1.$2.$3.$4</replacement>
               <failIfNoMatch>false</failIfNoMatch>
             </configuration>
           </execution>
@@ -111,6 +111,27 @@ limitations under the License.
             <phase>none</phase>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.vafer</groupId>
+        <artifactId>jdeb</artifactId>
+        <version>1.0.1</version>
+        <executions>
+          <execution>
+            <!--Stub execution on direct plugin call - workaround for ambari deb build process-->
+            <id>stub-execution</id>
+            <phase>none</phase>
+            <goals>
+              <goal>jdeb</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <skip>true</skip>
+          <attach>false</attach>
+          <submodules>false</submodules>
+          <controlDir>${project.basedir}/../src/main/package/deb/control</controlDir>
+        </configuration>
       </plugin>
     </plugins>
   </build>

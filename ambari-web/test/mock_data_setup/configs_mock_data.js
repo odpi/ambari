@@ -107,15 +107,15 @@ module.exports = {
         });
       });
     } else {
-      for (var serviceName in configTags) {
-        configTags[serviceName].forEach(function(tag) {
+      Object.keys(configTags).forEach(function (sName) {
+        configTags[sName].forEach(function(tag) {
           configTagsObject.push({
             siteName: tag,
             tagName: "version1",
             newTagName: null
           });
         });
-      }
+      });
     }
     return configTagsObject.uniq();
   },
@@ -248,7 +248,7 @@ module.exports = {
         "isOverridable":true,
         "showLabel":true,
         "serviceName":"STORM",
-        "displayType":"advanced",
+        "displayType":"string",
         "displayName":"single_line_property",
         "category":"AdvancedStormSite"
       },

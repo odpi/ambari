@@ -21,6 +21,10 @@ package org.apache.ambari.server.topology;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.ambari.server.controller.internal.BaseClusterRequest;
+import org.apache.ambari.server.controller.internal.ProvisionClusterRequest;
+import org.apache.ambari.server.state.Host;
+
 /**
  * Persistence abstraction.
  */
@@ -28,12 +32,12 @@ public interface PersistedState {
   /**
    * Persist a topology request.
    *
-   * @param topologyRequest  topologyh request to persist
+   * @param topologyRequest  topology request to persist
    *
    * @return a persisted topology request which is a wrapper around a TopologyRequest which
    * adds an id that can be used to refer to the persisted entity
    */
-  PersistedTopologyRequest persistTopologyRequest(TopologyRequest topologyRequest);
+  PersistedTopologyRequest persistTopologyRequest(BaseClusterRequest topologyRequest);
 
   /**
    * Persist a logical request.
@@ -66,4 +70,13 @@ public interface PersistedState {
    * @return map of cluster topology to list of logical requests
    */
   Map<ClusterTopology, List<LogicalRequest>> getAllRequests();
+
+  void registerInTopologyHostInfo(Host host);
+
+  /**
+   * Returns provision request for a cluster
+   * @param clusterId
+   * @return
+   */
+  LogicalRequest getProvisionRequest(long clusterId);
 }

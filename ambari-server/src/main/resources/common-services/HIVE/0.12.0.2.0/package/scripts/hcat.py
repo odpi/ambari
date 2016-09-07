@@ -18,10 +18,19 @@ limitations under the License.
 
 """
 
-from resource_management import *
+# Python Imports
+import os
 import sys
+
+# Local Imports
+from resource_management.libraries.resources.xml_config import XmlConfig
+from resource_management.libraries.functions.format import format
+from resource_management.core.resources.system import Directory, File
+from resource_management.core.source import InlineTemplate
 from ambari_commons.os_family_impl import OsFamilyFuncImpl, OsFamilyImpl
+from resource_management.libraries.functions.setup_atlas_hook import has_atlas_in_cluster, setup_atlas_hook
 from ambari_commons import OSConst
+from ambari_commons.constants import SERVICE
 
 
 @OsFamilyFuncImpl(os_family=OSConst.WINSRV_FAMILY)
@@ -40,24 +49,22 @@ def hcat():
 def hcat():
   import params
 
-  from setup_atlas_hive import setup_atlas_hive
-
   Directory(params.hive_conf_dir,
-            recursive=True,
-            owner=params.hcat_user,
+            create_parents = True,
+            owner=params.webhcat_user,
             group=params.user_group,
   )
 
 
   Directory(params.hcat_conf_dir,
-            recursive=True,
-            owner=params.hcat_user,
+            create_parents = True,
+            owner=params.webhcat_user,
             group=params.user_group,
   )
 
   Directory(params.hcat_pid_dir,
             owner=params.webhcat_user,
-            recursive=True
+            create_parents = True
   )
 
   XmlConfig("hive-site.xml",
@@ -69,9 +76,12 @@ def hcat():
             mode=0644)
 
   File(format("{hcat_conf_dir}/hcat-env.sh"),
-       owner=params.hcat_user,
+       owner=params.webhcat_user,
        group=params.user_group,
        content=InlineTemplate(params.hcat_env_sh_template)
   )
 
-  setup_atlas_hive()
+  # Generate atlas-application.properties.xml file
+  if has_atlas_in_cluster():
+    atlas_hook_filepath = os.path.join(params.hive_config_dir, params.atlas_hook_filename)
+    setup_atlas_hook(SERVICE.HIVE, params.hive_atlas_application_properties, atlas_hook_filepath, params.hive_user, params.user_group)

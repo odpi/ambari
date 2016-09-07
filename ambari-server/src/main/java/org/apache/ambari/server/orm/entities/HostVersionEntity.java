@@ -31,10 +31,11 @@ import javax.persistence.NamedQueries;
 import javax.persistence.NamedQuery;
 import javax.persistence.Table;
 import javax.persistence.TableGenerator;
+import javax.persistence.UniqueConstraint;
 
 import org.apache.ambari.server.state.RepositoryVersionState;
 
-@Table(name = "host_version")
+@Table(name = "host_version", uniqueConstraints = @UniqueConstraint(name = "UQ_host_repo", columnNames = { "repo_version_id", "host_id" }))
 @Entity
 @TableGenerator(name = "host_version_id_generator",
     table = "ambari_sequences", pkColumnName = "sequence_name", valueColumnName = "sequence_value"
@@ -62,6 +63,15 @@ import org.apache.ambari.server.state.RepositoryVersionState;
         "SELECT hostVersion FROM HostVersionEntity hostVersion JOIN hostVersion.hostEntity host JOIN host.clusterEntities clusters " +
             "WHERE clusters.clusterName=:clusterName AND hostVersion.repositoryVersion.stack.stackName=:stackName AND hostVersion.repositoryVersion.stack.stackVersion=:stackVersion AND hostVersion.repositoryVersion.version=:version AND " +
             "hostVersion.hostEntity.hostName=:hostName"),
+
+    @NamedQuery(name = "hostVersionByClusterHostIdAndState", query =
+        "SELECT hostVersion FROM HostVersionEntity hostVersion JOIN hostVersion.hostEntity host JOIN host.clusterEntities clusters " +
+            "WHERE clusters.clusterId=:clusterId AND hostVersion.hostId=:hostId AND hostVersion.state=:state"),
+
+    @NamedQuery(name = "hostVersionByClusterStackVersionAndHostId", query =
+        "SELECT hostVersion FROM HostVersionEntity hostVersion JOIN hostVersion.hostEntity host JOIN host.clusterEntities clusters " +
+        "WHERE hostVersion.hostId=:hostId AND clusters.clusterId=:clusterId AND hostVersion.repositoryVersion.stack.stackName=:stackName " +
+        "AND hostVersion.repositoryVersion.stack.stackVersion=:stackVersion AND hostVersion.repositoryVersion.version=:version")
 })
 public class HostVersionEntity {
 
@@ -150,7 +160,6 @@ public class HostVersionEntity {
   public int hashCode() {
     final int prime = 31;
     int result = 1;
-    result = prime * result + ((hostEntity == null) ? 0 : hostEntity.hashCode());
     result = prime * result + ((hostEntity == null) ? 0 : hostEntity.hashCode());
     result = prime * result + ((id == null) ? 0 : id.hashCode());
     result = prime * result + ((repositoryVersion == null) ? 0 : repositoryVersion.hashCode());

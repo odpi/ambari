@@ -28,6 +28,8 @@ import threading
 import urllib2
 import pprint
 from random import randint
+import subprocess
+import functools
 
 import hostname
 import security
@@ -45,13 +47,18 @@ from ambari_agent.ClusterConfiguration import  ClusterConfiguration
 from ambari_agent.RecoveryManager import  RecoveryManager
 from ambari_agent.HeartbeatHandlers import HeartbeatStopHandlers, bind_signal_handlers
 from ambari_agent.ExitHelper import ExitHelper
+from resource_management.libraries.functions.version import compare_versions
+from ambari_commons.os_utils import get_used_ram
+
 logger = logging.getLogger(__name__)
 
 AGENT_AUTO_RESTART_EXIT_CODE = 77
 
+AGENT_RAM_OVERUSE_MESSAGE = "Ambari-agent RAM usage {used_ram} MB went above {config_name}={max_ram} MB. Restarting ambari-agent to clean the RAM."
+
 class Controller(threading.Thread):
 
-  def __init__(self, config, heartbeat_stop_callback = None, range=30):
+  def __init__(self, config, server_hostname, heartbeat_stop_callback = None, range=30):
     threading.Thread.__init__(self)
     logger.debug('Initializing Controller RPC thread.')
     if heartbeat_stop_callback is None:
@@ -63,13 +70,13 @@ class Controller(threading.Thread):
     self.credential = None
     self.config = config
     self.hostname = hostname.hostname(config)
-    self.serverHostname = hostname.server_hostname(config)
+    self.serverHostname = server_hostname
     server_secured_url = 'https://' + self.serverHostname + \
                          ':' + config.get('server', 'secured_url_port')
     self.registerUrl = server_secured_url + '/agent/v1/register/' + self.hostname
     self.heartbeatUrl = server_secured_url + '/agent/v1/heartbeat/' + self.hostname
     self.componentsUrl = server_secured_url + '/agent/v1/components/'
-    self.netutil = NetUtil(heartbeat_stop_callback)
+    self.netutil = NetUtil(self.config, heartbeat_stop_callback)
     self.responseId = -1
     self.repeatRegistration = False
     self.isRegistered = False
@@ -81,24 +88,42 @@ class Controller(threading.Thread):
     self.heartbeat_stop_callback = heartbeat_stop_callback
     # List of callbacks that are called at agent registration
     self.registration_listeners = []
-    self.recovery_manager = RecoveryManager()
 
     # pull config directory out of config
     cache_dir = config.get('agent', 'cache_dir')
     if cache_dir is None:
       cache_dir = '/var/lib/ambari-agent/cache'
 
+    self.max_ram_soft = int(config.get('agent','memory_threshold_soft_mb', default=0))
+    self.max_ram_hard = int(config.get('agent','memory_threshold_hard_mb', default=0))
+
     stacks_cache_dir = os.path.join(cache_dir, FileCache.STACKS_CACHE_DIRECTORY)
     common_services_cache_dir = os.path.join(cache_dir, FileCache.COMMON_SERVICES_DIRECTORY)
     host_scripts_cache_dir = os.path.join(cache_dir, FileCache.HOST_SCRIPTS_CACHE_DIRECTORY)
-    alerts_cache_dir = os.path.join(cache_dir, 'alerts')
-    cluster_config_cache_dir = os.path.join(cache_dir, 'cluster_configuration')
+    alerts_cache_dir = os.path.join(cache_dir, FileCache.ALERTS_CACHE_DIRECTORY)
+    cluster_config_cache_dir = os.path.join(cache_dir, FileCache.CLUSTER_CONFIGURATION_CACHE_DIRECTORY)
+    recovery_cache_dir = os.path.join(cache_dir, FileCache.RECOVERY_CACHE_DIRECTORY)
+
+    self.heartbeat_idle_interval_min = int(self.config.get('heartbeat', 'idle_interval_min')) if self.config.get('heartbeat', 'idle_interval_min') else self.netutil.HEARTBEAT_IDLE_INTERVAL_DEFAULT_MIN_SEC
+    if self.heartbeat_idle_interval_min < 1:
+      self.heartbeat_idle_interval_min = 1
+
+    self.heartbeat_idle_interval_max = int(self.config.get('heartbeat', 'idle_interval_max')) if self.config.get('heartbeat', 'idle_interval_max') else self.netutil.HEARTBEAT_IDLE_INTERVAL_DEFAULT_MAX_SEC
+
+    if self.heartbeat_idle_interval_min > self.heartbeat_idle_interval_max:
+      raise Exception("Heartbeat minimum interval={0} seconds can not be greater than the maximum interval={1} seconds !".format(self.heartbeat_idle_interval_min, self.heartbeat_idle_interval_max))
+
+    self.get_heartbeat_interval = functools.partial(self.netutil.get_agent_heartbeat_idle_interval_sec, self.heartbeat_idle_interval_min, self.heartbeat_idle_interval_max)
+
+    self.recovery_manager = RecoveryManager(recovery_cache_dir)
 
     self.cluster_configuration = ClusterConfiguration(cluster_config_cache_dir)
 
-    self.alert_scheduler_handler = AlertSchedulerHandler(alerts_cache_dir, 
+    self.move_data_dir_mount_file()
+
+    self.alert_scheduler_handler = AlertSchedulerHandler(alerts_cache_dir,
       stacks_cache_dir, common_services_cache_dir, host_scripts_cache_dir,
-      self.cluster_configuration, config)
+      self.cluster_configuration, config, self.recovery_manager)
 
     self.alert_scheduler_handler.start()
 
@@ -161,18 +186,19 @@ class Controller(threading.Thread):
         logger.info("Registration Successful (response id = %s)", self.responseId)
 
         self.isRegistered = True
+
+        # always update cached cluster configurations on registration
+        # must be prior to any other operation
+        self.cluster_configuration.update_configurations_from_heartbeat(ret)
+        self.recovery_manager.update_configuration_from_registration(ret)
+        self.config.update_configuration_from_registration(ret)
+        logger.debug("Updated config:" + str(self.config))
+
         if 'statusCommands' in ret.keys():
           logger.debug("Got status commands on registration.")
           self.addToStatusQueue(ret['statusCommands'])
         else:
           self.hasMappedComponents = False
-
-        # always update cached cluster configurations on registration
-        self.cluster_configuration.update_configurations_from_heartbeat(ret)
-
-        self.recovery_manager.update_configuration_from_registration(ret)
-        self.config.update_configuration_from_registration(ret)
-        logger.debug("Updated config:" + str(self.config))
 
         # always update alert definitions on registration
         self.alert_scheduler_handler.update_definitions(ret)
@@ -214,7 +240,9 @@ class Controller(threading.Thread):
     else:
       if not LiveStatus.SERVICES:
         self.updateComponents(commands[0]['clusterName'])
+      self.recovery_manager.process_status_commands(commands)
       self.actionQueue.put_status(commands)
+    pass
 
   # For testing purposes
   DEBUG_HEARTBEAT_RETRIES = 0
@@ -229,18 +257,38 @@ class Controller(threading.Thread):
     self.DEBUG_SUCCESSFULL_HEARTBEATS = 0
     retry = False
     certVerifFailed = False
-    hb_interval = self.config.get('heartbeat', 'state_interval')
+    state_interval = self.config.get('heartbeat', 'state_interval_seconds', '60')
+
+    # last time when state was successfully sent to server
+    last_state_timestamp = 0.0
+
+    # in order to be able to check from logs that heartbeats processing
+    # still running we log a message. However to avoid generating too
+    # much log when the heartbeat runs at a higher rate (e.g. 1 second intervals)
+    # we log the message at the same interval as 'state interval'
+    heartbeat_running_msg_timestamp = 0.0
 
     while not self.DEBUG_STOP_HEARTBEATING:
+      heartbeat_interval = self.netutil.HEARTBEAT_IDLE_INTERVAL_DEFAULT_MAX_SEC
+
       try:
+        crt_time = time.time()
+        if crt_time - heartbeat_running_msg_timestamp > int(state_interval):
+          logger.info("Heartbeat with server is running...")
+          heartbeat_running_msg_timestamp = crt_time
+
+        send_state = False
         if not retry:
+          if crt_time - last_state_timestamp > int(state_interval):
+            send_state = True
+
           data = json.dumps(
-              self.heartbeat.build(self.responseId, int(hb_interval), self.hasMappedComponents))
+              self.heartbeat.build(self.responseId, send_state, self.hasMappedComponents))
         else:
           self.DEBUG_HEARTBEAT_RETRIES += 1
 
-        if logger.isEnabledFor(logging.DEBUG):
-          logger.debug("Sending Heartbeat (id = %s): %s", self.responseId, data)
+
+        logger.debug("Sending Heartbeat (id = %s): %s", self.responseId, data)
 
         response = self.sendRequest(self.heartbeatUrl, data)
         exitStatus = 0
@@ -252,14 +300,25 @@ class Controller(threading.Thread):
 
         serverId = int(response['responseId'])
 
-        logger.info('Heartbeat response received (id = %s)', serverId)
+
+        logger.debug('Heartbeat response received (id = %s)', serverId)
+
+        cluster_size = int(response['clusterSize']) if 'clusterSize' in response.keys() else -1
+
+        # TODO: this needs to be revised if hosts can be shared across multiple clusters
+        heartbeat_interval = self.get_heartbeat_interval(cluster_size) \
+          if cluster_size > 0 \
+          else self.netutil.HEARTBEAT_IDLE_INTERVAL_DEFAULT_MAX_SEC
+
+
+        logger.debug("Heartbeat interval is %s seconds", heartbeat_interval)
 
         if 'hasMappedComponents' in response.keys():
           self.hasMappedComponents = response['hasMappedComponents'] is not False
 
         if 'hasPendingTasks' in response.keys():
-          self.recovery_manager.set_paused(response['hasPendingTasks'])
-
+          has_pending_tasks = bool(response['hasPendingTasks'])
+          self.recovery_manager.set_paused(has_pending_tasks)
 
         if 'registrationCommand' in response.keys():
           # check if the registration command is None. If none skip
@@ -269,11 +328,22 @@ class Controller(threading.Thread):
             self.repeatRegistration = True
             return
 
+        used_ram = get_used_ram()/1000
+        # dealing with a possible memory leaks
+        if self.max_ram_soft and used_ram >= self.max_ram_soft and not self.actionQueue.tasks_in_progress_or_pending():
+          logger.error(AGENT_RAM_OVERUSE_MESSAGE.format(used_ram=used_ram, config_name="memory_threshold_soft_mb", max_ram=self.max_ram_soft))
+          self.restartAgent()
+        if self.max_ram_hard and used_ram >= self.max_ram_hard:
+          logger.error(AGENT_RAM_OVERUSE_MESSAGE.format(used_ram=used_ram, config_name="memory_threshold_hard_mb", max_ram=self.max_ram_hard))
+          self.restartAgent()
+
         if serverId != self.responseId + 1:
           logger.error("Error in responseId sequence - restarting")
           self.restartAgent()
         else:
           self.responseId = serverId
+          if send_state:
+            last_state_timestamp = time.time()
 
         # if the response contains configurations, update the in-memory and
         # disk-based configuration cache (execution and alert commands have this)
@@ -290,7 +360,6 @@ class Controller(threading.Thread):
 
         if 'statusCommands' in response_keys:
           # try storing execution command details and desired state
-          self.recovery_manager.process_status_commands(response['statusCommands'])
           self.addToStatusQueue(response['statusCommands'])
 
         if not self.actionQueue.tasks_in_progress_or_pending():
@@ -315,6 +384,10 @@ class Controller(threading.Thread):
         if retry:
           logger.info("Reconnected to %s", self.heartbeatUrl)
 
+        if "recoveryConfig" in response:
+          # update the list of components enabled for recovery
+          self.recovery_manager.update_configuration_from_registration(response)
+
         retry = False
         certVerifFailed = False
         self.DEBUG_SUCCESSFULL_HEARTBEATS += 1
@@ -323,6 +396,7 @@ class Controller(threading.Thread):
       except ssl.SSLError:
         self.repeatRegistration=False
         self.isRegistered = False
+        logger.exception("SSLError while trying to heartbeat.")
         return
       except Exception, err:
         if "code" in err:
@@ -352,27 +426,34 @@ class Controller(threading.Thread):
         time.sleep(delay)
 
       # Sleep for some time
-      timeout = self.netutil.HEARTBEAT_IDDLE_INTERVAL_SEC \
-                - self.netutil.MINIMUM_INTERVAL_BETWEEN_HEARTBEATS
+      timeout = heartbeat_interval - self.netutil.MINIMUM_INTERVAL_BETWEEN_HEARTBEATS
+
       if 0 == self.heartbeat_stop_callback.wait(timeout, self.netutil.MINIMUM_INTERVAL_BETWEEN_HEARTBEATS):
         # Stop loop when stop event received
         logger.info("Stop event received")
         self.DEBUG_STOP_HEARTBEATING=True
 
   def run(self):
-    self.actionQueue = ActionQueue(self.config, controller=self)
-    self.actionQueue.start()
-    self.register = Register(self.config)
-    self.heartbeat = Heartbeat(self.actionQueue, self.config, self.alert_scheduler_handler.collector())
-
-    opener = urllib2.build_opener()
-    urllib2.install_opener(opener)
-
-    while True:
-      self.repeatRegistration = False
-      self.registerAndHeartbeat()
-      if not self.repeatRegistration:
-        break
+    try:
+      self.actionQueue = ActionQueue(self.config, controller=self)
+      self.actionQueue.start()
+      self.register = Register(self.config)
+      self.heartbeat = Heartbeat(self.actionQueue, self.config, self.alert_scheduler_handler.collector())
+  
+      opener = urllib2.build_opener()
+      urllib2.install_opener(opener)
+  
+      while True:
+        self.repeatRegistration = False
+        self.registerAndHeartbeat()
+        if not self.repeatRegistration:
+          logger.info("Finished heartbeating and registering cycle")
+          break
+    except:
+      logger.exception("Controller thread failed with exception:")
+      raise
+    
+    logger.info("Controller thread has successfully finished")
 
   def registerAndHeartbeat(self):
     registerResponse = self.registerWithServer()
@@ -391,8 +472,10 @@ class Controller(threading.Thread):
         for callback in self.registration_listeners:
           callback()
 
-        time.sleep(self.netutil.HEARTBEAT_IDDLE_INTERVAL_SEC)
+        time.sleep(self.netutil.HEARTBEAT_IDLE_INTERVAL_DEFAULT_MAX_SEC)
         self.heartbeatWithServer()
+      else:
+        logger.info("Registration response from %s didn't contain 'response' as a key".format(self.serverHostname))
 
   def restartAgent(self):
     ExitHelper().exit(AGENT_AUTO_RESTART_EXIT_CODE)
@@ -403,7 +486,7 @@ class Controller(threading.Thread):
 
     try:
       if self.cachedconnect is None: # Lazy initialization
-        self.cachedconnect = security.CachedHTTPSConnection(self.config)
+        self.cachedconnect = security.CachedHTTPSConnection(self.config, self.serverHostname)
       req = urllib2.Request(url, data, {'Content-Type': 'application/json',
                                         'Accept-encoding': 'gzip'})
       response = self.cachedconnect.request(req)
@@ -434,6 +517,29 @@ class Controller(threading.Thread):
     logger.debug("LiveStatus.SERVICES" + str(LiveStatus.SERVICES))
     logger.debug("LiveStatus.CLIENT_COMPONENTS" + str(LiveStatus.CLIENT_COMPONENTS))
     logger.debug("LiveStatus.COMPONENTS" + str(LiveStatus.COMPONENTS))
+
+  def move_data_dir_mount_file(self):
+    """
+    In Ambari 2.1.2, we moved the dfs_data_dir_mount.hist to a static location
+    because /etc/hadoop/conf points to a symlink'ed location that would change during
+    Stack Upgrade.
+    """
+    try:
+      if compare_versions(self.version, "2.1.2") >= 0:
+        source_file = "/etc/hadoop/conf/dfs_data_dir_mount.hist"
+        destination_file = "/var/lib/ambari-agent/data/datanode/dfs_data_dir_mount.hist"
+        if os.path.exists(source_file) and not os.path.exists(destination_file):
+          command = "mkdir -p %s" % os.path.dirname(destination_file)
+          logger.info("Moving Data Dir Mount History file. Executing command: %s" % command)
+          return_code = subprocess.call(command, shell=True)
+          logger.info("Return code: %d" % return_code)
+
+          command = "mv %s %s" % (source_file, destination_file)
+          logger.info("Moving Data Dir Mount History file. Executing command: %s" % command)
+          return_code = subprocess.call(command, shell=True)
+          logger.info("Return code: %d" % return_code)
+    except Exception, e:
+      logger.info("Exception in move_data_dir_mount_file(). Error: {0}".format(str(e)))
 
 def main(argv=None):
   # Allow Ctrl-C

@@ -45,6 +45,7 @@ import org.apache.ambari.server.RoleCommand;
 import org.apache.ambari.server.actionmanager.Stage;
 import org.apache.ambari.server.actionmanager.StageFactory;
 import org.apache.ambari.server.agent.ExecutionCommand;
+import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.ActionExecutionContext;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Host;
@@ -63,6 +64,7 @@ import org.codehaus.jackson.map.ObjectMapper;
 import org.codehaus.jackson.map.SerializationConfig;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.Sets;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
 
@@ -74,6 +76,8 @@ public class StageUtils {
 
   private static final Log LOG = LogFactory.getLog(StageUtils.class);
   protected static final String AMBARI_SERVER_HOST = "ambari_server_host";
+  protected static final String AMBARI_SERVER_PORT = "ambari_server_port";
+  protected static final String AMBARI_SERVER_USE_SSL = "ambari_server_use_ssl";
   protected static final String HOSTS_LIST = "all_hosts";
   protected static final String PORTS = "all_ping_ports";
   protected static final String RACKS = "all_racks";
@@ -90,6 +94,9 @@ public class StageUtils {
   @Inject
   private static TopologyManager topologyManager;
 
+  @Inject
+  private static Configuration configuration;
+  
   @Inject
   public StageUtils(StageFactory stageFactory) {
     StageUtils.stageFactory = stageFactory;
@@ -129,6 +136,11 @@ public class StageUtils {
     StageUtils.topologyManager = topologyManager;
   }
 
+  //todo: proper static injection
+  public static void setConfiguration(Configuration configuration) {
+    StageUtils.configuration = configuration;
+  }
+
   static {
     componentToClusterInfoKeyMap.put("NAMENODE", "namenode_host");
     componentToClusterInfoKeyMap.put("JOBTRACKER", "jtnode_host");
@@ -152,8 +164,6 @@ public class StageUtils {
     componentToClusterInfoKeyMap.put("DATANODE", "slave_hosts");
     componentToClusterInfoKeyMap.put("TASKTRACKER", "mapred_tt_hosts");
     componentToClusterInfoKeyMap.put("HBASE_REGIONSERVER", "hbase_rs_hosts");
-    componentToClusterInfoKeyMap.put("KERBEROS_SERVER", "kdc_host");
-    componentToClusterInfoKeyMap.put("KERBEROS_ADMIN_CLIENT", "kerberos_adminclient_host");
     componentToClusterInfoKeyMap.put("ACCUMULO_MASTER", "accumulo_master_hosts");
     componentToClusterInfoKeyMap.put("ACCUMULO_MONITOR", "accumulo_monitor_hosts");
     componentToClusterInfoKeyMap.put("ACCUMULO_GC", "accumulo_gc_hosts");
@@ -277,7 +287,7 @@ public class StageUtils {
     }
 
     // add hosts from topology manager
-    Map<String, Collection<String>> pendingHostComponents = topologyManager.getProjectedTopology();
+    Map<String, Collection<String>> pendingHostComponents = topologyManager.getPendingHostComponents();
     for (String hostname : pendingHostComponents.keySet()) {
       if (!hostsSet.contains(hostname)) {
         hostsSet.add(hostname);
@@ -413,14 +423,17 @@ public class StageUtils {
 
     // Fill server host
     /*
-     * Note: We don't replace server host name by an index (like we do
+     * Note: We don't replace server host name, port, ssl usage by an index (like we do
      * with component hostnames), because if ambari-agent is not installed
      * at ambari-server host, then allHosts map will not contain
      * ambari-server hostname.
      */
-    TreeSet<String> serverHost = new TreeSet<String>();
-    serverHost.add(getHostName());
-    clusterHostInfo.put(AMBARI_SERVER_HOST, serverHost);
+    clusterHostInfo.put(AMBARI_SERVER_HOST, Sets.newHashSet(getHostName()));
+    
+    boolean serverUseSsl = configuration.getApiSSLAuthentication();
+    int port = serverUseSsl ? configuration.getClientSSLApiPort() : configuration.getClientApiPort();
+    clusterHostInfo.put(AMBARI_SERVER_PORT, Sets.newHashSet(Integer.toString(port)));
+    clusterHostInfo.put(AMBARI_SERVER_USE_SSL, Sets.newHashSet(Boolean.toString(serverUseSsl)));
 
     return clusterHostInfo;
   }
@@ -439,7 +452,7 @@ public class StageUtils {
    * @throws AmbariException if an index fails to map to a host name
    */
   public static Map<String, Set<String>> substituteHostIndexes(Map<String, Set<String>> clusterHostInfo) throws AmbariException {
-    Set<String> keysToSkip = new HashSet<String>(Arrays.asList(HOSTS_LIST, PORTS, AMBARI_SERVER_HOST, RACKS, IPV4_ADDRESSES));
+    Set<String> keysToSkip = new HashSet<String>(Arrays.asList(HOSTS_LIST, PORTS, AMBARI_SERVER_HOST, AMBARI_SERVER_PORT, AMBARI_SERVER_USE_SSL, RACKS, IPV4_ADDRESSES));
     String[] allHosts = {};
     if (clusterHostInfo.get(HOSTS_LIST) != null) {
       allHosts = clusterHostInfo.get(HOSTS_LIST).toArray(new String[clusterHostInfo.get(HOSTS_LIST).size()]);
@@ -541,6 +554,10 @@ public class StageUtils {
     return result;
   }
 
+  public static String getHostName() {
+    return server_hostname;
+  }
+
   /**
    * Splits a range to its explicit set of values.
    * <p/>
@@ -576,9 +593,5 @@ public class StageUtils {
         endOfRange.toString() :
         startOfRange + separator + endOfRange;
     return rangeItem;
-  }
-
-  public static String getHostName() {
-    return server_hostname;
   }
 }

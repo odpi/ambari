@@ -46,6 +46,7 @@ data_cleanup_max_size_MB = 100
 ping_port=8670
 cache_dir={ps}var{ps}lib{ps}ambari-agent{ps}cache
 parallel_execution=0
+system_resource_overrides={ps}etc{ps}resource_overrides
 
 [services]
 
@@ -61,6 +62,12 @@ passphrase_env_var_name=AMBARI_PASSPHRASE
 state_interval = 6
 dirs={ps}etc{ps}hadoop,{ps}etc{ps}hadoop{ps}conf,{ps}var{ps}run{ps}hadoop,{ps}var{ps}log{ps}hadoop
 log_lines_count=300
+iddle_interval_min=1
+iddle_interval_max=10
+
+
+[logging]
+log_command_executes = 0
 
 """.format(ps=os.sep)
 
@@ -89,6 +96,7 @@ servicesToPidNames = {
   'KERBEROS_SERVER': 'kadmind.pid',
   'HIVE_SERVER': 'hive-server.pid',
   'HIVE_METASTORE': 'hive.pid',
+  'HIVE_SERVER_INTERACTIVE' : 'hive-interactive.pid',
   'MYSQL_SERVER': 'mysqld.pid',
   'HUE_SERVER': '/var/run/hue/supervisor.pid',
   'WEBHCAT_SERVER': 'webhcat.pid',
@@ -140,13 +148,14 @@ pidPathVars = [
 ]
 
 
-
-
 class AmbariConfig:
   TWO_WAY_SSL_PROPERTY = "security.server.two_way_ssl"
   AMBARI_PROPERTIES_CATEGORY = 'agentConfig'
   SERVER_CONNECTION_INFO = "{0}/connection_info"
   CONNECTION_PROTOCOL = "https"
+
+  # linux open-file limit
+  ULIMIT_OPEN_FILES_KEY = 'ulimit.open.files'
 
   config = None
   net = None
@@ -154,12 +163,12 @@ class AmbariConfig:
   def __init__(self):
     global content
     self.config = ConfigParser.RawConfigParser()
-    self.net = NetUtil()
+    self.net = NetUtil(self)
     self.config.readfp(StringIO.StringIO(content))
 
   def get(self, section, value, default=None):
     try:
-      return self.config.get(section, value)
+      return str(self.config.get(section, value)).strip()
     except ConfigParser.Error, err:
       if default != None:
         return default
@@ -202,11 +211,18 @@ class AmbariConfig:
       return os.path.join(os.environ['AMBARI_AGENT_LOG_DIR'], "ambari-agent.log")
     else:
       return os.path.join(os.sep, "var", "log", "ambari-agent", "ambari-agent.log")
+    
+  @staticmethod
+  def getAlertsLogFile():
+    if 'AMBARI_AGENT_LOG_DIR' in os.environ:
+      return os.path.join(os.environ['AMBARI_AGENT_LOG_DIR'], "ambari-agent.log")
+    else:
+      return os.path.join(os.sep, "var", "log", "ambari-agent", "ambari-alerts.log")
 
   @staticmethod
   def getOutFile():
-    if 'AMBARI_AGENT_OUT_DIR' in os.environ:
-      return os.path.join(os.environ['AMBARI_AGENT_OUT_DIR'], "ambari-agent.out")
+    if 'AMBARI_AGENT_LOG_DIR' in os.environ:
+      return os.path.join(os.environ['AMBARI_AGENT_LOG_DIR'], "ambari-agent.out")
     else:
       return os.path.join(os.sep, "var", "log", "ambari-agent", "ambari-agent.out")
 
@@ -233,13 +249,13 @@ class AmbariConfig:
         pass
     return default
 
-  def get_api_url(self):
+  def get_api_url(self, server_hostname):
     return "%s://%s:%s" % (self.CONNECTION_PROTOCOL,
-                           hostname.server_hostname(self),
+                           server_hostname,
                            self.get('server', 'url_port'))
 
-  def isTwoWaySSLConnection(self):
-    req_url = self.get_api_url()
+  def isTwoWaySSLConnection(self, server_hostname):
+    req_url = self.get_api_url(server_hostname)
     response = self.getServerOption(self.SERVER_CONNECTION_INFO.format(req_url), self.TWO_WAY_SSL_PROPERTY, 'false')
     if response is None:
       return False
@@ -251,6 +267,15 @@ class AmbariConfig:
   def get_parallel_exec_option(self):
     return int(self.get('agent', 'parallel_execution', 0))
 
+  def get_ulimit_open_files(self):
+    open_files_config_val =  int(self.get('agent', self.ULIMIT_OPEN_FILES_KEY, 0))
+    open_files_ulimit = int(open_files_config_val) if (open_files_config_val and int(open_files_config_val) > 0) else 0
+    return open_files_ulimit
+
+  def set_ulimit_open_files(self, value):
+    self.set('agent', self.ULIMIT_OPEN_FILES_KEY, value)
+
+
   def update_configuration_from_registration(self, reg_resp):
     if reg_resp and AmbariConfig.AMBARI_PROPERTIES_CATEGORY in reg_resp:
       if not self.has_section(AmbariConfig.AMBARI_PROPERTIES_CATEGORY):
@@ -260,17 +285,39 @@ class AmbariConfig:
         logger.info("Updating config property (%s) with value (%s)", k, v)
     pass
 
-def updateConfigServerHostname(configFile, new_host):
+def isSameHostList(hostlist1, hostlist2):
+  is_same = True
+
+  if (hostlist1 is not None and hostlist2 is not None):
+    if (len(hostlist1) != len(hostlist2)):
+      is_same = False
+    else:
+      host_lookup = {}
+      for item1 in hostlist1:
+        host_lookup[item1.lower()] = True
+      for item2 in hostlist2:
+        if item2.lower() in host_lookup:
+          del host_lookup[item2.lower()]
+        else:
+          is_same = False
+          break
+    pass
+  elif (hostlist1 is not None or hostlist2 is not None):
+    is_same = False
+  return is_same
+
+def updateConfigServerHostname(configFile, new_hosts):
   # update agent config file
   agent_config = ConfigParser.ConfigParser()
   agent_config.read(configFile)
-  server_host = agent_config.get('server', 'hostname')
-  if new_host is not None and server_host != new_host:
-    print "Updating server host from " + server_host + " to " + new_host
-    agent_config.set('server', 'hostname', new_host)
-    with (open(configFile, "wb")) as new_agent_config:
-      agent_config.write(new_agent_config)
-
+  server_hosts = agent_config.get('server', 'hostname')
+  if new_hosts is not None:
+      new_host_names = hostname.arrayFromCsvString(new_hosts)
+      if not isSameHostList(server_hosts, new_host_names):
+        print "Updating server hostname from " + server_hosts + " to " + new_hosts
+        agent_config.set('server', 'hostname', new_hosts)
+        with (open(configFile, "wb")) as new_agent_config:
+          agent_config.write(new_agent_config)
 
 def main():
   print AmbariConfig().config

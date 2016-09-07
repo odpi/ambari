@@ -39,6 +39,15 @@ describe('#Auth', function () {
       });
       $window = _$window_;
       $httpBackend = _$httpBackend_;
+      var re = /api\/v1\/services\/AMBARI\/components\/AMBARI_SERVER.+/;
+      $httpBackend.whenGET(re).respond(200, {
+          RootServiceComponents: {
+            component_version: 2.2,
+            properties: {
+              'user.inactivity.timeout.default': 20
+            }
+          }
+      });
       $httpBackend.whenGET(/\/api\/v1\/logout\?_=\d+/).respond(200,{message: "successfully logged out"});
       $httpBackend.whenGET(/\/api\/v1\/views.+/)
         .respond(200,{
@@ -88,6 +97,8 @@ describe('#Auth', function () {
             }
           ]
         });
+      $httpBackend.whenGET(/\/persist\/user-pref-.*/).respond(200, {data: {data: {addingNewRepository: true}}});
+      $httpBackend.whenGET(/\/api\/v1\/users\/admin\/authorizations.*/).respond(200, {data: {data: {items: [{AuthorizationInfo : {authorization_id : "AMBARI.RENAME_CLUSTER"}}]}}});
       scope = $rootScope.$new();
       scope.$apply();
       ctrl = $controller('MainCtrl', {$scope: scope});
@@ -95,7 +106,11 @@ describe('#Auth', function () {
 
     it('should reset window.location and ambari localstorage', function () {
       scope.signOut();
-      chai.expect($window.location.pathname).to.be.empty;
+
+      runs(function() {
+        chai.expect($window.location.pathname).to.be.empty;
+      });
+
       var data = JSON.parse(localStorage.ambari);
       chai.expect(data.app.authenticated).to.equal(undefined);
       chai.expect(data.app.loginName).to.equal(undefined);

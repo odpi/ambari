@@ -140,7 +140,7 @@ namenode_formatted_mark_dir = format("/var/lib/hdfs/namenode/formatted/")
 fs_checkpoint_dir = config['configurations']['hdfs-site']['dfs.namenode.checkpoint.dir']
 
 dfs_data_dir = config['configurations']['hdfs-site']['dfs.datanode.data.dir']
-data_dir_mount_file = config['configurations']['hadoop-env']['dfs.datanode.data.dir.mount.file']
+data_dir_mount_file = "/var/lib/ambari-agent/data/datanode/dfs_data_dir_mount.hist"
 
 dfs_dn_addr = default('/configurations/hdfs-site/dfs.datanode.address', None)
 dfs_dn_http_addr = default('/configurations/hdfs-site/dfs.datanode.http.address', None)
@@ -149,7 +149,10 @@ dfs_http_policy = default('/configurations/hdfs-site/dfs.http.policy', None)
 
 # HDFS High Availability properties
 dfs_ha_enabled = False
-dfs_ha_nameservices = default("/configurations/hdfs-site/dfs.nameservices", None)
+dfs_ha_nameservices = default('/configurations/hdfs-site/dfs.internal.nameservices', None)
+if dfs_ha_nameservices is None:
+  dfs_ha_nameservices = default('/configurations/hdfs-site/dfs.nameservices', None)
+
 dfs_ha_namenode_ids = default(format("/configurations/hdfs-site/dfs.ha.namenodes.{dfs_ha_nameservices}"), None)
 
 namenode_id = None

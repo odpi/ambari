@@ -38,17 +38,10 @@ App.WizardWatcherController = Em.Controller.extend(App.UserPref, {
   controllerName: null,
 
   /**
-   * @type {Function}
-   */
-  mock: Em.K,
-
-  /**
    * define whether Wizard is running
    * @type {boolean}
    */
-  isWizardRunning: function() {
-    return !Em.isNone(this.get('wizardUser'));
-  }.property('wizardUser'),
+  isWizardRunning: Em.computed.bool('wizardUser'),
 
   /**
    * @type {string}
@@ -103,5 +96,9 @@ App.WizardWatcherController = Em.Controller.extend(App.UserPref, {
       this.set('wizardUser', data.userName);
       this.set('controllerName', data.controllerName);
     }
+  },
+
+  getUserPrefErrorCallback: function () {
+    this.resetUser();
   }
 });

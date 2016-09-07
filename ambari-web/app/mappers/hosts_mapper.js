@@ -50,6 +50,7 @@ App.hostsMapper = App.QuickDataMapper.create({
     mem_total: 'metrics.memory.mem_total',
     mem_free: 'metrics.memory.mem_free',
     last_heart_beat_time: "Hosts.last_heartbeat_time",
+    raw_last_heart_beat_time: "Hosts.last_heartbeat_time",
     os_arch: 'Hosts.os_arch',
     os_type: 'Hosts.os_type',
     ip: 'Hosts.ip',
@@ -58,6 +59,7 @@ App.hostsMapper = App.QuickDataMapper.create({
   },
   hostComponentConfig: {
     component_name: 'HostRoles.component_name',
+    display_name: 'HostRoles.display_name',
     service_id: 'HostRoles.service_name',
     passive_state: 'HostRoles.maintenance_state',
     work_status: 'HostRoles.state',
@@ -77,6 +79,16 @@ App.hostsMapper = App.QuickDataMapper.create({
     host_id: 'host_name',
     is_visible: 'is_visible'
   },
+  hostComponentLogsConfig: {
+    name: 'logging.name',
+    service_name: 'HostRoles.service_name',
+    host_name: 'HostRoles.host_name',
+    log_file_names_type: 'array',
+    log_file_names_key: 'logging.logs',
+    log_file_names: {
+      item: 'name'
+    }
+  },
   map: function (json, returnMapped) {
     returnMapped = !!returnMapped;
     console.time('App.hostsMapper execution time');
@@ -90,9 +102,16 @@ App.hostsMapper = App.QuickDataMapper.create({
       var currentServiceComponentsMap = App.get('componentConfigMapper').buildServiceComponentMap(cacheServices);
       var newHostComponentsMap = {};
       var selectedHosts = App.db.getSelectedHosts('mainHostController');
-      var stackUpgradeSupport = App.get('supports.stackUpgrade');
       var clusterName = App.get('clusterName');
       var advancedHostComponents = [];
+      var hostComponentLogs = [];
+
+      // Create a map for quick access on existing hosts
+      var hosts = App.Host.find().toArray();
+      var hostsMap = {};
+      for (var p = 0; p < hosts.length; p++) {
+        hostsMap[hosts[p].get('hostName')] = hosts[p];
+      }
 
       // Use normal for loop instead of foreach to enhance performance
       for (var index = 0; index < json.items.length; index++) {
@@ -135,37 +154,43 @@ App.hostsMapper = App.QuickDataMapper.create({
           if (component.passive_state !== 'OFF') {
             componentsInPassiveState.push(id);
           }
+          if (host_component.hasOwnProperty('logging')) {
+            var logParsed = this.parseIt(host_component, this.hostComponentLogsConfig);
+            logParsed.id = logParsed.host_name + '_' + logParsed.name;
+            logParsed.host_component_id = host_component.id;
+            component.component_logs_id = logParsed.id;
+            hostComponentLogs.push(logParsed);
+          }
         }
 
-        if (stackUpgradeSupport) {
-          var currentVersion = item.stack_versions.findProperty('HostStackVersions.state', 'CURRENT');
-          var currentVersionNumber = currentVersion && currentVersion.repository_versions
-            ? Em.get(currentVersion.repository_versions[0], 'RepositoryVersions.repository_version') : '';
-          for (var j = 0; j < item.stack_versions.length; j++) {
-            var stackVersion = item.stack_versions[j];
-            stackVersion.host_name = item.Hosts.host_name;
-            stackVersion.is_visible = stringUtils.compareVersions(Em.get(stackVersion.repository_versions[0], 'RepositoryVersions.repository_version'), currentVersionNumber) >= 0
-              || App.get('supports.displayOlderVersions') || !currentVersionNumber;
-            stackVersions.push(this.parseIt(stackVersion, this.stackVersionConfig));
-          }
+        var currentVersion = item.stack_versions.findProperty('HostStackVersions.state', 'CURRENT');
+        var currentVersionNumber = currentVersion && currentVersion.repository_versions
+          ? Em.get(currentVersion.repository_versions[0], 'RepositoryVersions.repository_version') : '';
+        for (var j = 0; j < item.stack_versions.length; j++) {
+          var stackVersion = item.stack_versions[j];
+          stackVersion.host_name = item.Hosts.host_name;
+          stackVersion.is_visible = stringUtils.compareVersions(Em.get(stackVersion.repository_versions[0], 'RepositoryVersions.repository_version'), currentVersionNumber) >= 0
+            || App.get('supports.displayOlderVersions') || !currentVersionNumber;
+          stackVersions.push(this.parseIt(stackVersion, this.stackVersionConfig));
         }
 
         var alertsSummary = item.alerts_summary;
         item.critical_warning_alerts_count = alertsSummary ? (alertsSummary.CRITICAL || 0) + (alertsSummary.WARNING || 0) : 0;
         item.cluster_id = clusterName;
-        item.index = index;
+        var existingHost = hostsMap[item.Hosts.host_name];
+        // There is no need to override existing index in host detail view since old model(already have indexes) will not be cleared.
+        item.index = (existingHost && !json.itemTotal)? existingHost.get('index'): index;
 
-        if (stackUpgradeSupport) {
-          this.config = $.extend(this.config, {
-            stack_versions_key: 'stack_versions',
-            stack_versions_type: 'array',
-            stack_versions: {
-              item: 'HostStackVersions.id'
-            }
-          })
-        }
+        this.config = $.extend(this.config, {
+          stack_versions_key: 'stack_versions',
+          stack_versions_type: 'array',
+          stack_versions: {
+            item: 'HostStackVersions.id'
+          }
+        });
         var parsedItem = this.parseIt(item, this.config);
-        parsedItem.is_requested = true;
+
+        parsedItem.last_heart_beat_time = App.dateTimeWithTimeZone(parsedItem.last_heart_beat_time);
         parsedItem.selected = selectedHosts.contains(parsedItem.host_name);
         parsedItem.not_started_components = notStartedComponents;
         parsedItem.components_in_passive_state = componentsInPassiveState;
@@ -182,15 +207,16 @@ App.hostsMapper = App.QuickDataMapper.create({
 
 
       for (var k = 0; k < advancedHostComponents.length; k++) {
-        var id = advancedHostComponents[k];
-        if (componentsIdMap[id]) componentsIdMap[id].display_name_advanced = App.HostComponent.find(id).get('displayNameAdvanced');
-      };
-      App.store.commit();
-      if (stackUpgradeSupport) {
-        App.store.loadMany(App.HostStackVersion, stackVersions);
+        var key = advancedHostComponents[k];
+        if (componentsIdMap[key]) componentsIdMap[key].display_name_advanced = App.HostComponent.find(key).get('displayNameAdvanced');
       }
+
+      App.store.commit();
+      App.store.loadMany(App.HostStackVersion, stackVersions);
+      App.store.loadMany(App.HostComponentLog, hostComponentLogs);
       App.store.loadMany(App.HostComponent, components);
-      if (App.router.get('currentState.parentState.name') != 'hostDetails') {
+      //"itemTotal" present only for Hosts page request
+      if (!Em.isNone(json.itemTotal)) {
         App.Host.find().clear();
       }
       App.store.loadMany(App.Host, hostsWithFullInfo);
@@ -205,21 +231,20 @@ App.hostsMapper = App.QuickDataMapper.create({
   },
 
   /**
+
    * set metric fields of hosts
    * @param {object} data
    */
   setMetrics: function (data) {
     var hosts = this.get('model').find();
-    for (var i = 0; i < hosts.length; i++) {
-      var host = hosts[i];
-      if (host.get('isRequested')) {
-        var hostMetrics = data.items.findProperty('Hosts.host_name', host.get('hostName'));
-        host.setProperties({
-          diskTotal: Em.get(hostMetrics, 'metrics.disk.disk_total'),
-          diskFree: Em.get(hostMetrics, 'metrics.disk.disk_free'),
-          loadOne: Em.get(hostMetrics, 'metrics.load.load_one')
-        });
-      }
+    for (var i = 0; i < hosts.content.length; i++) {
+      var host = hosts.objectAt(i);
+      var hostMetrics = data.items.findProperty('Hosts.host_name', host.get('hostName'));
+      host.setProperties({
+        diskTotal: Em.get(hostMetrics, 'metrics.disk.disk_total'),
+        diskFree: Em.get(hostMetrics, 'metrics.disk.disk_free'),
+        loadOne: Em.get(hostMetrics, 'metrics.load.load_one')
+      });
     }
   }
 });

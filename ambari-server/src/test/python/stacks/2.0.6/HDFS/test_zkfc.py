@@ -31,14 +31,14 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "start",
                        config_file = "ha_default.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Directory', '/usr/lib/hadoop/lib/native/Linux-i386-32',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('Directory', '/usr/lib/hadoop/lib/native/Linux-amd64-64',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('Link', '/usr/lib/hadoop/lib/native/Linux-i386-32/libsnappy.so',
         to = '/usr/lib/hadoop/lib/libsnappy.so',
@@ -49,7 +49,7 @@ class TestZkfc(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
                               group = 'root',
-                              recursive = True,
+                              create_parents = True,
                               )
     self.assertResourceCalled('File', '/etc/security/limits.d/hdfs.conf',
                               content = Template('hdfs.conf.j2'),
@@ -89,11 +89,13 @@ class TestZkfc(RMFTestCase):
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
-                              recursive = True,
+                              create_parents = True,
+                              group = 'hadoop'
                               )
     self.assertResourceCalled('Directory', '/var/log/hadoop/hdfs',
                               owner = 'hdfs',
-                              recursive = True,
+                              create_parents = True,
+                              group = 'hadoop'
                               )
     self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid',
         action = ['delete'],
@@ -111,20 +113,14 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "stop",
                        config_file = "ha_default.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
-    )
-    self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid',
-        action = ['delete'],
-        not_if = "ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E test -f /var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid && ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E pgrep -F /var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid",
     )
     self.assertResourceCalled('Execute', "ambari-sudo.sh su hdfs -l -s /bin/bash -c '[RMF_EXPORT_PLACEHOLDER]ulimit -c unlimited ;  /usr/lib/hadoop/sbin/hadoop-daemon.sh --config /etc/hadoop/conf stop zkfc'",
         environment = {'HADOOP_LIBEXEC_DIR': '/usr/lib/hadoop/libexec'},
-        not_if = None,
-    )
-    self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid',
-                              action = ['delete'],
-                              )
+        only_if = "ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E test -f /var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid && ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E pgrep -F /var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid")
+
+    self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid', action = ['delete'])
     self.assertNoMoreResources()
 
   def test_start_secured(self):
@@ -132,14 +128,14 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "start",
                        config_file = "ha_secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Directory', '/usr/lib/hadoop/lib/native/Linux-i386-32',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('Directory', '/usr/lib/hadoop/lib/native/Linux-amd64-64',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('Link', '/usr/lib/hadoop/lib/native/Linux-i386-32/libsnappy.so',
         to = '/usr/lib/hadoop/lib/libsnappy.so',
@@ -150,7 +146,7 @@ class TestZkfc(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
                               group = 'root',
-                              recursive = True,
+                              create_parents = True,
                               )
     self.assertResourceCalled('File', '/etc/security/limits.d/hdfs.conf',
                               content = Template('hdfs.conf.j2'),
@@ -190,11 +186,13 @@ class TestZkfc(RMFTestCase):
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
-                              recursive = True,
+                              create_parents = True,
+                              group = 'hadoop'
                               )
     self.assertResourceCalled('Directory', '/var/log/hadoop/hdfs',
                               owner = 'hdfs',
-                              recursive = True,
+                              create_parents = True,
+                              group = 'hadoop'
                               )
     self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid',
         action = ['delete'],
@@ -211,20 +209,14 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "stop",
                        config_file = "ha_secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
-    )
-    self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid',
-        action = ['delete'],
-        not_if = "ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E test -f /var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid && ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E pgrep -F /var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid",
     )
     self.assertResourceCalled('Execute', "ambari-sudo.sh su hdfs -l -s /bin/bash -c '[RMF_EXPORT_PLACEHOLDER]ulimit -c unlimited ;  /usr/lib/hadoop/sbin/hadoop-daemon.sh --config /etc/hadoop/conf stop zkfc'",
         environment = {'HADOOP_LIBEXEC_DIR': '/usr/lib/hadoop/libexec'},
-        not_if = None,
-    )
-    self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid',
-                              action = ['delete'],
-                              )
+        only_if = "ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E test -f /var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid && ambari-sudo.sh [RMF_ENV_PLACEHOLDER] -H -E pgrep -F /var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid")
+
+    self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid', action = ['delete'])
     self.assertNoMoreResources()
 
   def test_start_with_ha_active_namenode_bootstrap(self):
@@ -232,14 +224,14 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "start",
                        config_file="ha_bootstrap_active_node.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Directory', '/usr/lib/hadoop/lib/native/Linux-i386-32',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('Directory', '/usr/lib/hadoop/lib/native/Linux-amd64-64',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('Link', '/usr/lib/hadoop/lib/native/Linux-i386-32/libsnappy.so',
         to = '/usr/lib/hadoop/lib/libsnappy.so',
@@ -250,7 +242,7 @@ class TestZkfc(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
                               group = 'root',
-                              recursive = True,
+                              create_parents = True,
                               )
     self.assertResourceCalled('File', '/etc/security/limits.d/hdfs.conf',
                               content = Template('hdfs.conf.j2'),
@@ -291,11 +283,13 @@ class TestZkfc(RMFTestCase):
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
-                              recursive = True,
+                              create_parents = True,
+                              group = 'hadoop'
                               )
     self.assertResourceCalled('Directory', '/var/log/hadoop/hdfs',
                               owner = 'hdfs',
-                              recursive = True,
+                              create_parents = True,
+                              group = 'hadoop'
                               )
     self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid',
         action = ['delete'],
@@ -312,14 +306,14 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "start",
                        config_file="ha_bootstrap_standby_node.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     self.assertResourceCalled('Directory', '/usr/lib/hadoop/lib/native/Linux-i386-32',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('Directory', '/usr/lib/hadoop/lib/native/Linux-amd64-64',
-        recursive = True,
+        create_parents = True,
     )
     self.assertResourceCalled('Link', '/usr/lib/hadoop/lib/native/Linux-i386-32/libsnappy.so',
         to = '/usr/lib/hadoop/lib/libsnappy.so',
@@ -330,7 +324,7 @@ class TestZkfc(RMFTestCase):
     self.assertResourceCalled('Directory', '/etc/security/limits.d',
                               owner = 'root',
                               group = 'root',
-                              recursive = True,
+                              create_parents = True,
                               )
     self.assertResourceCalled('File', '/etc/security/limits.d/hdfs.conf',
                               content = Template('hdfs.conf.j2'),
@@ -371,11 +365,13 @@ class TestZkfc(RMFTestCase):
     )
     self.assertResourceCalled('Directory', '/var/run/hadoop/hdfs',
                               owner = 'hdfs',
-                              recursive = True,
+                              create_parents = True,
+                              group = 'hadoop'
                               )
     self.assertResourceCalled('Directory', '/var/log/hadoop/hdfs',
                               owner = 'hdfs',
-                              recursive = True,
+                              group = 'hadoop',
+                              create_parents = True,
                               )
     self.assertResourceCalled('File', '/var/run/hadoop/hdfs/hadoop-hdfs-zkfc.pid',
         action = ['delete'],
@@ -416,7 +412,7 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "security_status",
                        config_file="secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
@@ -438,7 +434,7 @@ class TestZkfc(RMFTestCase):
                            classname = "ZkfcSlave",
                            command = "security_status",
                            config_file="secured.json",
-                           hdp_stack_version = self.STACK_VERSION,
+                           stack_version = self.STACK_VERSION,
                            target = RMFTestCase.TARGET_COMMON_SERVICES
         )
     except:
@@ -451,7 +447,7 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "security_status",
                        config_file="secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
 
@@ -472,7 +468,7 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "security_status",
                        config_file="secured.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     put_structured_out_mock.assert_called_with({"securityState": "UNSECURED"})
@@ -482,7 +478,7 @@ class TestZkfc(RMFTestCase):
                        classname = "ZkfcSlave",
                        command = "security_status",
                        config_file="default.json",
-                       hdp_stack_version = self.STACK_VERSION,
+                       stack_version = self.STACK_VERSION,
                        target = RMFTestCase.TARGET_COMMON_SERVICES
     )
     put_structured_out_mock.assert_called_with({"securityState": "UNSECURED"})

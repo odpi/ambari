@@ -17,19 +17,25 @@
  */
 package org.apache.ambari.server.upgrade;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.audit.AuditLoggerModule;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.ControllerModule;
 import org.apache.ambari.server.orm.DBAccessor;
+import org.apache.ambari.server.utils.EventBusSynchronizer;
 import org.apache.ambari.server.utils.VersionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +54,7 @@ public class SchemaUpgradeHelper {
   private PersistService persistService;
   private DBAccessor dbAccessor;
   private Configuration configuration;
+  private static final String[] rcaTableNames = {"workflow", "job", "task", "taskAttempt", "hdfsEvent", "mapreduceEvent", "clusterEvent"};
 
   @Inject
   public SchemaUpgradeHelper(Set<UpgradeCatalog> allUpgradeCatalogs,
@@ -137,10 +144,10 @@ public class SchemaUpgradeHelper {
 
     for (UpgradeCatalog upgradeCatalog : candidateCatalogs) {
       if (sourceVersion == null || VersionUtils.compareVersions(sourceVersion,
-        upgradeCatalog.getTargetVersion(), 3) < 0) {
+        upgradeCatalog.getTargetVersion(), 4) < 0) {
         // catalog version is newer than source
         if (VersionUtils.compareVersions(upgradeCatalog.getTargetVersion(),
-          targetVersion, 3) <= 0) {
+          targetVersion, 4) <= 0) {
           // catalog version is older or equal to target
           upgradeCatalogs.add(upgradeCatalog);
         }
@@ -179,8 +186,16 @@ public class SchemaUpgradeHelper {
       catalogBinder.addBinding().to(UpgradeCatalog210.class);
       catalogBinder.addBinding().to(UpgradeCatalog211.class);
       catalogBinder.addBinding().to(UpgradeCatalog212.class);
+      catalogBinder.addBinding().to(UpgradeCatalog2121.class);
       catalogBinder.addBinding().to(UpgradeCatalog220.class);
+      catalogBinder.addBinding().to(UpgradeCatalog221.class);
+      catalogBinder.addBinding().to(UpgradeCatalog222.class);
+      catalogBinder.addBinding().to(UpgradeCatalog230.class);
+      catalogBinder.addBinding().to(UpgradeCatalog240.class);
+      catalogBinder.addBinding().to(UpgradeCatalog250.class);
       catalogBinder.addBinding().to(FinalUpgradeCatalog.class);
+
+      EventBusSynchronizer.synchronizeAmbariEventPublisher(binder());
     }
   }
 
@@ -214,12 +229,13 @@ public class SchemaUpgradeHelper {
     }
   }
 
-  public void executeDMLUpdates(List<UpgradeCatalog> upgradeCatalogs) throws AmbariException {
+  public void executeDMLUpdates(List<UpgradeCatalog> upgradeCatalogs, String ambariUpgradeConfigUpdatesFileName) throws AmbariException {
     LOG.info("Executing DML changes.");
 
     if (upgradeCatalogs != null && !upgradeCatalogs.isEmpty()) {
       for (UpgradeCatalog upgradeCatalog : upgradeCatalogs) {
         try {
+          upgradeCatalog.setConfigUpdatesFileName(ambariUpgradeConfigUpdatesFileName);
           upgradeCatalog.upgradeData();
         } catch (Exception e) {
           LOG.error("Upgrade failed. ", e);
@@ -257,6 +273,48 @@ public class SchemaUpgradeHelper {
     }
   }
 
+  public void cleanUpRCATables() {
+    LOG.info("Cleaning up RCA tables.");
+    for (String tableName : rcaTableNames) {
+      try {
+        if (dbAccessor.tableExists(tableName)) {
+          dbAccessor.truncateTable(tableName);
+        }
+      } catch (Exception e) {
+        LOG.warn("Error cleaning rca table " + tableName, e);
+      }
+    }
+    try {
+      cleanUpTablesFromRCADatabase();
+    } catch (Exception e) {
+      LOG.warn("Error cleaning rca tables from ambarirca db", e);
+    }
+  }
+
+  private void cleanUpTablesFromRCADatabase() throws ClassNotFoundException, SQLException {
+    String driverName = configuration.getRcaDatabaseDriver();
+    String connectionURL = configuration.getRcaDatabaseUrl();
+    if (connectionURL.contains(Configuration.HOSTNAME_MACRO)) {
+      connectionURL = connectionURL.replace(Configuration.HOSTNAME_MACRO, "localhost");
+    }
+    String username = configuration.getRcaDatabaseUser();
+    String password = configuration.getRcaDatabasePassword();
+
+    Class.forName(driverName);
+    try (Connection connection = DriverManager.getConnection(connectionURL, username, password)) {
+      connection.setAutoCommit(true);
+      for (String tableName : rcaTableNames) {
+        String query = "DELETE FROM " + tableName;
+        try (Statement statement = connection.createStatement()) {
+          statement.execute(query);
+        } catch (Exception e) {
+          LOG.warn("Error while executing query: " + query, e);
+        }
+      }
+    }
+  }
+
+
   /**
    * Upgrade Ambari DB schema to the target version passed in as the only
    * argument.
@@ -273,7 +331,7 @@ public class SchemaUpgradeHelper {
         System.exit(1);
       }
 
-      Injector injector = Guice.createInjector(new UpgradeHelperModule());
+      Injector injector = Guice.createInjector(new UpgradeHelperModule(), new AuditLoggerModule());
       SchemaUpgradeHelper schemaUpgradeHelper = injector.getInstance(SchemaUpgradeHelper.class);
 
       String targetVersion = schemaUpgradeHelper.getAmbariServerVersion();
@@ -291,19 +349,24 @@ public class SchemaUpgradeHelper {
       List<UpgradeCatalog> upgradeCatalogs =
         schemaUpgradeHelper.getUpgradePath(sourceVersion, targetVersion);
 
+      String date = new SimpleDateFormat("MM-dd-yyyy_HH:mm:ss").format(new Date());
+      String ambariUpgradeConfigUpdatesFileName = "ambari_upgrade_config_changes_" + date + ".json";
+
       schemaUpgradeHelper.executeUpgrade(upgradeCatalogs);
 
       schemaUpgradeHelper.startPersistenceService();
 
       schemaUpgradeHelper.executePreDMLUpdates(upgradeCatalogs);
 
-      schemaUpgradeHelper.executeDMLUpdates(upgradeCatalogs);
+      schemaUpgradeHelper.executeDMLUpdates(upgradeCatalogs, ambariUpgradeConfigUpdatesFileName);
 
       schemaUpgradeHelper.executeOnPostUpgrade(upgradeCatalogs);
 
       schemaUpgradeHelper.resetUIState();
 
       LOG.info("Upgrade successful.");
+
+      schemaUpgradeHelper.cleanUpRCATables();
 
       schemaUpgradeHelper.stopPersistenceService();
     } catch (Throwable e) {

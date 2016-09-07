@@ -32,34 +32,41 @@ App.ChartClusterMetricsCPU = App.ChartLinearTimeView.extend({
   ajaxIndex: 'dashboard.cluster_metrics.cpu',
 
   title: Em.I18n.t('dashboard.clusterMetrics.cpu'),
-  yAxisFormatter: App.ChartLinearTimeView.PercentageFormatter,
+  displayUnit: '%',
   isTimePagingDisable: false,
-  transformToSeries: function (jsonData) {
-    var seriesArray = [];
-    var idle = null;
+  seriesTemplate: {
+    path: 'metrics.cpu'
+  },
 
-    if (jsonData && jsonData.metrics && jsonData.metrics.cpu) {
-      for (var name in jsonData.metrics.cpu) {
-        var seriesData = jsonData.metrics.cpu[name];
+  getData: function (jsonData) {
+    var dataArray = [],
+      idle = null,
+      data = Em.get(jsonData, this.get('seriesTemplate.path'));
+    if (data) {
+      Object.keys(data).forEach(function (name) {
+        var seriesData = data[name];
         if (seriesData) {
-          var s = this.transformData(seriesData, name);
-          if (name.indexOf("Idle") > -1) {
+          var s = {
+            name: name,
+            data: seriesData
+          };
+          if (name.contains('Idle')) {
             //CPU idle metric should be the last in series array
             idle = s;
-            continue;
+            return;
           }
-          seriesArray.push(s);
+          dataArray.push(s);
         }
-      }
+      });
       if (idle) {
-        seriesArray.push(idle);
+        dataArray.push(idle);
       }
     }
-    return seriesArray;
+    return dataArray;
   },
-  
+
   colorForSeries: function (series) {
-    if (Em.I18n.t('dashboard.clusterMetrics.cpu.displayNames.idle') == series.name){
+    if (series.name && series.name.contains(Em.I18n.t('dashboard.clusterMetrics.cpu.displayNames.idle'))) {
       return '#CFECEC';
     }
     return null;
